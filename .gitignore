@@ -1,0 +1,92 @@
+# Unreal Engine 5 Git ignore
+
+# Compiled binary files
+*.dll
+*.exe
+*.so
+*.dylib
+*.o
+*.obj
+*.pdb
+*.ilk
+*.log
+*.vspscc
+*.vssscc
+*_i.c
+*_p.c
+*.idb
+*.suo
+*.user
+*.sln
+*.vcxproj*
+*.vcproj*
+*.ncb
+*.opensdf
+*.sdf
+*.sln.docstates
+*.cache
+*.pfx
+
+# UE5 specific
+Intermediate/
+DerivedDataCache/
+Saved/
+Binaries/
+*.vcxproj
+*.sln
+*.root
+*.uproject
+*.uasset
+*.umap
+*.ini
+*.ini.*
+*.json
+*.xml
+*.bat
+*.sh
+*.pyc
+*.pyo
+*.db
+*.db-wal
+
+# Asset files (usually checked in)
+# !*.uasset
+# !*.umap
+
+# Rider/Visual Studio
+.idea/
+.vscode/
+.vs/
+*.sln.iml
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+
+# UE5 build tool outputs
+Build/
+*.Build.cs
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.orig
+
+# Crash reports
+*. crashdump
+*.dmp
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# UE5 plugin caches
+*.plugin
