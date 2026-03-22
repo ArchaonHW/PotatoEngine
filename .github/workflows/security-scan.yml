@@ -1,0 +1,190 @@
+﻿name: Security Scan / 摰??
+
+on:
+  push:
+    branches: [ main, develop, 'release/*' ]
+    paths:
+      - 'Source/**'
+      - 'Plugins/**'
+      - 'Config/**'
+      - '.github/workflows/security-scan.yml'
+  pull_request:
+    branches: [ main, develop ]
+    paths:
+      - 'Source/**'
+      - 'Plugins/**'
+      - 'Config/**'
+  schedule:
+    # 瘥予?2暺?銵?/ Run daily at 2 AM
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      scan_type:
+        description: 'Scan Type / ??憿?'
+        required: true
+        default: 'Full'
+        type: choice
+        options:
+          - Full
+          - Code
+          - Dependencies
+          - Quick
+
+jobs:
+  security-scan:
+    name: Security Vulnerability Scan / 摰撘梢???
+    runs-on: windows-latest
+    
+    steps:
+    - name: Checkout code / 瑼Ｗ隞?Ⅳ
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Setup PowerShell / 閮剔蔭 PowerShell
+      uses: actions/setup-powershell@v1
+      
+    - name: Cache scan results / 蝺拙???蝯?
+      uses: actions/cache@v3
+      with:
+        path: Reports/Security
+        key: security-scan-${{ github.sha }}
+        restore-keys: |
+          security-scan-
+
+    - name: Run Security Scan / ?瑁?摰??
+      id: security_scan
+      shell: pwsh
+      run: |
+        $scanType = "${{ github.event.inputs.scan_type || 'Full' }}"
+        Write-Host "Starting security scan: $scanType"
+        
+        & .\Tools\security\SecurityScan.ps1 `
+          -ScanType $scanType `
+          -OutputPath "Reports\Security" `
+          -GenerateReport `
+          -FailOnCritical
+      
+    - name: Upload scan results / 銝??蝯?
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: security-scan-results
+        path: Reports/Security/
+        retention-days: 30
+
+    - name: Comment PR with results / PR閰?蝯?
+      if: github.event_name == 'pull_request' && always()
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const fs = require('fs');
+          const path = 'Reports/Security/scan.log';
+          
+          let scanOutput = '';
+          if (fs.existsSync(path)) {
+            scanOutput = fs.readFileSync(path, 'utf8');
+          }
+          
+          const summary = scanOutput.split('\n').slice(-20).join('\n');
+          
+          const body = `## ?? Security Scan Results / 摰??蝯?
+          
+          \`\`\`
+          ${summary}
+          \`\`\`
+          
+          <details>
+          <summary>View full log / ?亦?摰?亥?</summary>
+          
+          \`\`\`
+          ${scanOutput}
+          \`\`\`
+          
+          </details>
+          `;
+          
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: body
+          });
+
+    - name: Check for critical issues / 瑼Ｘ?湧???
+      if: failure()
+      run: |
+        echo "??Critical security issues found!"
+        echo "?湧?摰???潛嚗?
+        exit 1
+
+    - name: Generate SARIF report / ??SARIF?勗?
+      if: always()
+      shell: pwsh
+      run: |
+        # 頧??搴ARIF?澆??冽GitHub Advanced Security
+        $jsonReport = Get-ChildItem -Path "Reports\Security" -Filter "*.json" | Select-Object -First 1
+        if ($jsonReport) {
+          Write-Host "Found JSON report: $($jsonReport.FullName)"
+          # ?ㄐ?臭誑瘛餃?SARIF頧??摩
+        }
+
+  dependency-review:
+    name: Dependency Review / 靘陷撖拇
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    
+    steps:
+    - name: Checkout code / 瑼Ｗ隞?Ⅳ
+      uses: actions/checkout@v4
+      
+    - name: Dependency Review / 靘陷撖拇
+      uses: actions/dependency-review-action@v3
+      with:
+        fail-on-severity: high
+        comment-summary-in-pr: true
+
+  codeql-analysis:
+    name: CodeQL Analysis / CodeQL??
+    runs-on: windows-latest
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    
+    steps:
+    - name: Checkout code / 瑼Ｗ隞?Ⅳ
+      uses: actions/checkout@v4
+      
+    - name: Initialize CodeQL / ???odeQL
+      uses: github/codeql-action/init@v3
+      with:
+        languages: cpp
+        queries: security-extended,security-and-quality
+    
+    - name: Autobuild / ?芸?瑽遣
+      uses: github/codeql-action/autobuild@v3
+      
+    - name: Perform CodeQL Analysis / ?瑁?CodeQL??
+      uses: github/codeql-action/analyze@v3
+      with:
+        category: "/language:cpp"
+
+  secret-scan:
+    name: Secret Detection / 璈?瑼Ｘ葫
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code / 瑼Ｗ隞?Ⅳ
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    
+    - name: Secret Detection / 璈?瑼Ｘ葫
+      uses: trufflesecurity/trufflehog@main
+      with:
+        path: ./
+        base: main
+        head: HEAD
+        extra_args: --debug --only-verified
