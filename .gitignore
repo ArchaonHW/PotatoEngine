@@ -90,3 +90,39 @@ __pycache__/
 
 # UE5 plugin caches
 *.plugin
+
+# MingGoRTS specific
+Logs/
+TestReports/
+Generated/
+Temp/
+Backup_*
+AutoDebug_*.log
+BuildOutput.log
+SyntaxFix_*.log
+EncodingFixReport_*.txt
+EncodingIssuesReport.txt
+FinalBuildLog.txt
+BuildLog.txt
+BuildOutput.txt
+BuildVerification.txt
+COMPILATION_*.md
+COMPILE_*.cmd
+DEBUG_*.cmd
+FIX_*.cmd
+FIX_*.ps1
+QUICK_*.cmd
+RUN_*.cmd
+VERIFY_*.cmd
+VERIFY_*.ps1
+advanced_fix.py
+batch_fix*.py
+comprehensive_fix.ps1
+create_debugger.py
+fix_*.py
+fix_*.ps1
+final_comprehensive_fix.py
+run_ubt_build.py
+scan_*.cmd
+scan_*.py
+scan_encoding_issues.py
