@@ -97,6 +97,11 @@ TestReports/
 Generated/
 Temp/
 Backup_*
+
+# Allow GitHub config files
+!.github/**/*.json
+!.github/**/*.yml
+!.github/**/*.md
 AutoDebug_*.log
 BuildOutput.log
 SyntaxFix_*.log

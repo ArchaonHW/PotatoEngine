@@ -1,4 +1,4 @@
-﻿name: Security Scan / 摰??
+﻿name: Security Scan / 安全掃描
 
 on:
   push:
@@ -15,12 +15,12 @@ on:
       - 'Plugins/**'
       - 'Config/**'
   schedule:
-    # 瘥予?2暺?銵?/ Run daily at 2 AM
+    # 每天凌晨2點運行 / Run daily at 2 AM
     - cron: '0 2 * * *'
   workflow_dispatch:
     inputs:
       scan_type:
-        description: 'Scan Type / ??憿?'
+        description: 'Scan Type / 掃描類型'
         required: true
         default: 'Full'
         type: choice
@@ -32,19 +32,19 @@ on:
 
 jobs:
   security-scan:
-    name: Security Vulnerability Scan / 摰撘梢???
+    name: Security Vulnerability Scan / 安全漏洞掃描
     runs-on: windows-latest
     
     steps:
-    - name: Checkout code / 瑼Ｗ隞?Ⅳ
+    - name: Checkout code / 檢出代碼
       uses: actions/checkout@v4
       with:
         fetch-depth: 0
 
-    - name: Setup PowerShell / 閮剔蔭 PowerShell
+    - name: Setup PowerShell / 設置 PowerShell
       uses: actions/setup-powershell@v1
       
-    - name: Cache scan results / 蝺拙???蝯?
+    - name: Cache scan results / 緩存掃描結果
       uses: actions/cache@v3
       with:
         path: Reports/Security
@@ -52,7 +52,7 @@ jobs:
         restore-keys: |
           security-scan-
 
-    - name: Run Security Scan / ?瑁?摰??
+    - name: Run Security Scan / 執行安全掃描
       id: security_scan
       shell: pwsh
       run: |
@@ -65,7 +65,7 @@ jobs:
           -GenerateReport `
           -FailOnCritical
       
-    - name: Upload scan results / 銝??蝯?
+    - name: Upload scan results / 上傳掃描結果
       uses: actions/upload-artifact@v4
       if: always()
       with:
@@ -73,7 +73,7 @@ jobs:
         path: Reports/Security/
         retention-days: 30
 
-    - name: Comment PR with results / PR閰?蝯?
+    - name: Comment PR with results / PR評論結果
       if: github.event_name == 'pull_request' && always()
       uses: actions/github-script@v7
       with:
@@ -88,14 +88,14 @@ jobs:
           
           const summary = scanOutput.split('\n').slice(-20).join('\n');
           
-          const body = `## ?? Security Scan Results / 摰??蝯?
+          const body = `## 🔒 Security Scan Results / 安全掃描結果
           
           \`\`\`
           ${summary}
           \`\`\`
           
           <details>
-          <summary>View full log / ?亦?摰?亥?</summary>
+          <summary>View full log / 查看完整日誌</summary>
           
           \`\`\`
           ${scanOutput}
@@ -111,41 +111,41 @@ jobs:
             body: body
           });
 
-    - name: Check for critical issues / 瑼Ｘ?湧???
+    - name: Check for critical issues / 檢查嚴重問題
       if: failure()
       run: |
-        echo "??Critical security issues found!"
-        echo "?湧?摰???潛嚗?
+        echo "❌ Critical security issues found!"
+        echo "發現嚴重安全問題，阻止構建"
         exit 1
 
-    - name: Generate SARIF report / ??SARIF?勗?
+    - name: Generate SARIF report / 生成SARIF報告
       if: always()
       shell: pwsh
       run: |
-        # 頧??搴ARIF?澆??冽GitHub Advanced Security
+        # 轉換掃描結果為SARIF格式以支持GitHub Advanced Security
         $jsonReport = Get-ChildItem -Path "Reports\Security" -Filter "*.json" | Select-Object -First 1
         if ($jsonReport) {
           Write-Host "Found JSON report: $($jsonReport.FullName)"
-          # ?ㄐ?臭誑瘛餃?SARIF頧??摩
+          # 這裡可以添加轉換邏輯將JSON轉為SARIF格式
         }
 
   dependency-review:
-    name: Dependency Review / 靘陷撖拇
+    name: Dependency Review / 依賴審查
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
     
     steps:
-    - name: Checkout code / 瑼Ｗ隞?Ⅳ
+    - name: Checkout code / 檢出代碼
       uses: actions/checkout@v4
       
-    - name: Dependency Review / 靘陷撖拇
+    - name: Dependency Review / 依賴審查
       uses: actions/dependency-review-action@v3
       with:
         fail-on-severity: high
         comment-summary-in-pr: true
 
   codeql-analysis:
-    name: CodeQL Analysis / CodeQL??
+    name: CodeQL Analysis / CodeQL分析
     runs-on: windows-latest
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     permissions:
@@ -154,34 +154,34 @@ jobs:
       security-events: write
     
     steps:
-    - name: Checkout code / 瑼Ｗ隞?Ⅳ
+    - name: Checkout code / 檢出代碼
       uses: actions/checkout@v4
       
-    - name: Initialize CodeQL / ???odeQL
+    - name: Initialize CodeQL / 初始化CodeQL
       uses: github/codeql-action/init@v3
       with:
         languages: cpp
         queries: security-extended,security-and-quality
     
-    - name: Autobuild / ?芸?瑽遣
+    - name: Autobuild / 自動構建
       uses: github/codeql-action/autobuild@v3
       
-    - name: Perform CodeQL Analysis / ?瑁?CodeQL??
+    - name: Perform CodeQL Analysis / 執行CodeQL分析
       uses: github/codeql-action/analyze@v3
       with:
         category: "/language:cpp"
 
   secret-scan:
-    name: Secret Detection / 璈?瑼Ｘ葫
+    name: Secret Detection / 機密檢測
     runs-on: ubuntu-latest
     
     steps:
-    - name: Checkout code / 瑼Ｗ隞?Ⅳ
+    - name: Checkout code / 檢出代碼
       uses: actions/checkout@v4
       with:
         fetch-depth: 0
     
-    - name: Secret Detection / 璈?瑼Ｘ葫
+    - name: Secret Detection / 機密檢測
       uses: trufflesecurity/trufflehog@main
       with:
         path: ./

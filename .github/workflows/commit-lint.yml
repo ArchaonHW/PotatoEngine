@@ -1,0 +1,126 @@
+name: Commit Message Lint
+
+on:
+  pull_request:
+    branches: [ main, develop ]
+    types: [ opened, synchronize, reopened, edited ]
+
+jobs:
+  commitlint:
+    name: Check Commit Messages
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout PR
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        
+    - name: Check Commit Messages
+      uses: wagoid/commitlint-github-action@v5
+      with:
+        configFile: .github/commitlint.config.json
+        failOnWarnings: false
+        
+    - name: Validate PR Title
+      if: github.event_name == 'pull_request'
+      uses: amannn/action-semantic-pull-request@v5
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        types: |
+          feat
+          fix
+          docs
+          style
+          refactor
+          test
+          chore
+          perf
+          ci
+          build
+          revert
+        scopes: |
+          sage
+          ai
+          ui
+          audio
+          blockchain
+          core
+          network
+          memory
+          quest
+          achievement
+          build
+          ci
+          docs
+        requireScope: false
+        subjectMinLength: 5
+        subjectMaxLength: 100
+        validateSingleCommit: true
+        validateSingleCommitMatchesPrTitle: false
+        
+    - name: Comment on Invalid Commits
+      if: failure()
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const body = `## ❌ Commit Message Validation Failed
+          
+          Your commit messages do not follow the [Conventional Commits](https://www.conventionalcommits.org/) specification.
+          
+          ### Required Format:
+          \`\`\`
+          <type>(<scope>): <subject>
+          
+          [optional body]
+          
+          [optional footer(s)]
+          \`\`\`
+          
+          ### Valid Types:
+          - \`feat\`: New feature
+          - \`fix\`: Bug fix
+          - \`docs\`: Documentation changes
+          - \`style\`: Code style changes (formatting, semicolons, etc)
+          - \`refactor\`: Code refactoring
+          - \`test\`: Adding or updating tests
+          - \`chore\`: Build process or auxiliary tool changes
+          - \`perf\`: Performance improvements
+          - \`ci\`: CI/CD changes
+          - \`build\`: Build system changes
+          - \`revert\`: Revert previous commit
+          
+          ### Valid Scopes (optional):
+          - \`sage\`: Sage Command System
+          - \`ai\`: AI System
+          - \`ui\`: UI System
+          - \`audio\`: Audio System
+          - \`blockchain\`: Blockchain System
+          - \`core\`: Core Systems
+          - \`network\`: Network System
+          - \`memory\`: Memory System
+          - \`quest\`: Quest System
+          - \`achievement\`: Achievement System
+          - \`build\`: Build system
+          - \`ci\`: CI/CD
+          - \`docs\`: Documentation
+          
+          ### Examples:
+          \`\`\`
+          feat(sage): implement three authority system
+          
+          fix(ai): resolve image generation timeout
+          
+          docs: update README with installation steps
+          \`\`\`
+          
+          Please amend your commits to follow this format.
+          `;
+          
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: body
+          });
