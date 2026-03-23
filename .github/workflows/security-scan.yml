@@ -42,9 +42,6 @@ jobs:
       with:
         fetch-depth: 0
 
-    - name: Setup PowerShell / 設置 PowerShell
-      uses: actions/setup-powershell@v1
-      
     - name: Cache scan results / 緩存掃描結果
       uses: actions/cache@v4
       with:
