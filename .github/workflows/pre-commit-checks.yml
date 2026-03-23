@@ -20,15 +20,13 @@ jobs:
   syntax-check:
     name: Syntax Validation
     runs-on: windows-latest
+    timeout-minutes: 15
     
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
       with:
         fetch-depth: 0
-
-    - name: Setup PowerShell
-      uses: actions/setup-powershell@v1
 
     - name: Run Syntax Check
       shell: powershell
@@ -43,6 +41,7 @@ jobs:
     name: Unreal Header Validation
     runs-on: windows-latest
     needs: syntax-check
+    timeout-minutes: 10
     
     steps:
     - name: Checkout repository
@@ -54,7 +53,8 @@ jobs:
       run: |
         $changed = git diff --name-only HEAD~1 HEAD | Where-Object { $_ -match '\.(h|cpp)$' }
         if ($changed) {
-          $changed | ForEach-Object { Write-Output "::set-output name=files::$($_)" }
+          $files = $changed -join ','
+          "files=$files" >> $env:GITHUB_OUTPUT
         }
 
     - name: Basic Header Check
@@ -75,16 +75,12 @@ jobs:
     name: Build Verification
     runs-on: windows-latest
     needs: [syntax-check, header-validation]
+    timeout-minutes: 45
     if: github.event_name == 'pull_request'
     
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
-
-    - name: Setup UE5 Environment
-      uses: OrfeasZ/ue5-setup@v1
-      with:
-        version: '5.4'
 
     - name: Generate Project Files
       shell: powershell

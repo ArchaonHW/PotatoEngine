@@ -34,6 +34,7 @@ jobs:
   security-scan:
     name: Security Vulnerability Scan / 安全漏洞掃描
     runs-on: windows-latest
+    timeout-minutes: 20
     
     steps:
     - name: Checkout code / 檢出代碼
@@ -45,7 +46,7 @@ jobs:
       uses: actions/setup-powershell@v1
       
     - name: Cache scan results / 緩存掃描結果
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: Reports/Security
         key: security-scan-${{ github.sha }}
@@ -132,6 +133,7 @@ jobs:
   dependency-review:
     name: Dependency Review / 依賴審查
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     if: github.event_name == 'pull_request'
     
     steps:
@@ -147,6 +149,7 @@ jobs:
   codeql-analysis:
     name: CodeQL Analysis / CodeQL分析
     runs-on: windows-latest
+    timeout-minutes: 30
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     permissions:
       actions: read
@@ -174,6 +177,7 @@ jobs:
   secret-scan:
     name: Secret Detection / 機密檢測
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     
     steps:
     - name: Checkout code / 檢出代碼
