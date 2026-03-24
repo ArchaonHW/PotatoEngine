@@ -98,6 +98,10 @@ Generated/
 Temp/
 Backup_*
 
+# Allow specific JSON files
+!tasks.json
+!**/tasks.json
+
 # Allow GitHub config files
 !.github/**/*.json
 !.github/**/*.yml
