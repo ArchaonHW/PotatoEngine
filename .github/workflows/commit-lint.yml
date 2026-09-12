@@ -41,16 +41,24 @@ jobs:
           build
           revert
         scopes: |
-          sage
-          ai
-          ui
-          audio
-          blockchain
           core
-          network
+          rendering
+          physics
+          audio
+          input
+          resources
+          ecs
+          gameobject
+          events
+          filesystem
+          logging
+          math
           memory
-          quest
-          achievement
+          platform
+          scene
+          serialization
+          time
+          ai
           build
           ci
           docs
@@ -92,25 +100,33 @@ jobs:
           - \`revert\`: Revert previous commit
           
           ### Valid Scopes (optional):
-          - \`sage\`: Sage Command System
-          - \`ai\`: AI System
-          - \`ui\`: UI System
-          - \`audio\`: Audio System
-          - \`blockchain\`: Blockchain System
           - \`core\`: Core Systems
-          - \`network\`: Network System
-          - \`memory\`: Memory System
-          - \`quest\`: Quest System
-          - \`achievement\`: Achievement System
+          - \`rendering\`: Rendering System
+          - \`physics\`: Physics System
+          - \`audio\`: Audio System
+          - \`input\`: Input System
+          - \`resources\`: Resource Management
+          - \`ecs\`: Entity Component System
+          - \`gameobject\`: Game Object System
+          - \`events\`: Event System
+          - \`filesystem\`: File System
+          - \`logging\`: Logging System
+          - \`math\`: Math Library
+          - \`memory\`: Memory Management
+          - \`platform\`: Platform Abstraction
+          - \`scene\`: Scene Management
+          - \`serialization\`: Serialization
+          - \`time\`: Time Management
+          - \`ai\`: AI System
           - \`build\`: Build system
           - \`ci\`: CI/CD
           - \`docs\`: Documentation
           
           ### Examples:
           \`\`\`
-          feat(sage): implement three authority system
+          feat(rendering): implement OpenGL renderer
           
-          fix(ai): resolve image generation timeout
+          fix(physics): resolve collision detection bug
           
           docs: update README with installation steps
           \`\`\`

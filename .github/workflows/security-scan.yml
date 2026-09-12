@@ -4,8 +4,23 @@ on:
   push:
     branches: [ main, develop ]
     paths:
-      - 'Source/**'
-      - 'Plugins/**'
+      - 'Core/**'
+      - 'Rendering/**'
+      - 'Physics/**'
+      - 'Audio/**'
+      - 'Input/**'
+      - 'Resources/**'
+      - 'ECS/**'
+      - 'GameObject/**'
+      - 'Events/**'
+      - 'FileSystem/**'
+      - 'Logging/**'
+      - 'Math/**'
+      - 'Memory/**'
+      - 'Platform/**'
+      - 'Scene/**'
+      - 'Serialization/**'
+      - 'Time/**'
       - '.github/workflows/security-scan.yml'
   pull_request:
     branches: [ main, develop ]
@@ -16,7 +31,7 @@ on:
 jobs:
   security-scan:
     name: Security Scan
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     
     steps:
@@ -24,12 +39,11 @@ jobs:
       uses: actions/checkout@v4
 
     - name: Run Basic Security Check
-      shell: pwsh
       run: |
-        Write-Host "Running security scan..." -ForegroundColor Cyan
-        New-Item -ItemType Directory -Path "Reports\Security" -Force | Out-Null
-        "Security scan completed at $(Get-Date)" | Set-Content "Reports\Security\scan.log"
-        Write-Host "Scan complete" -ForegroundColor Green
+        echo "Running security scan..."
+        mkdir -p Reports/Security
+        echo "Security scan completed at $(date)" > Reports/Security/scan.log
+        echo "Scan complete"
       continue-on-error: true
 
     - name: Upload scan results
