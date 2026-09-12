@@ -1,4 +1,4 @@
-# Unreal Engine 5 Git ignore
+# Potato Engine Git ignore
 
 # Compiled binary files
 *.dll
@@ -27,31 +27,23 @@
 *.cache
 *.pfx
 
-# UE5 specific
-Intermediate/
-DerivedDataCache/
-Saved/
-Binaries/
-*.vcxproj
-*.sln
-*.root
-*.uproject
-*.uasset
-*.umap
-*.ini
-*.ini.*
-*.json
-*.xml
-*.bat
-*.sh
-*.pyc
-*.pyo
-*.db
-*.db-wal
+# CMake build outputs
+build/
+CMakeFiles/
+CMakeCache.txt
+CMakeScripts/
+cmake_install.cmake
+install_manifest.txt
+compile_commands.json
+CTestTestfile.cmake
+_deps/
+*.cmake
 
-# Asset files (usually checked in)
-# !*.uasset
-# !*.umap
+# CMake build directories
+bin/
+lib/
+*.a
+*.lib
 
 # Rider/Visual Studio
 .idea/
@@ -69,10 +61,6 @@ ehthumbs.db
 Thumbs.db
 Desktop.ini
 
-# UE5 build tool outputs
-Build/
-*.Build.cs
-
 # Temporary files
 *.tmp
 *.temp
@@ -80,7 +68,7 @@ Build/
 *.orig
 
 # Crash reports
-*. crashdump
+*.crashdump
 *.dmp
 
 # Python cache
@@ -88,10 +76,7 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-# UE5 plugin caches
-*.plugin
-
-# MingGoRTS specific
+# Potato Engine specific
 Logs/
 TestReports/
 Generated/
@@ -106,32 +91,3 @@ Backup_*
 !.github/**/*.json
 !.github/**/*.yml
 !.github/**/*.md
-AutoDebug_*.log
-BuildOutput.log
-SyntaxFix_*.log
-EncodingFixReport_*.txt
-EncodingIssuesReport.txt
-FinalBuildLog.txt
-BuildLog.txt
-BuildOutput.txt
-BuildVerification.txt
-COMPILATION_*.md
-COMPILE_*.cmd
-DEBUG_*.cmd
-FIX_*.cmd
-FIX_*.ps1
-QUICK_*.cmd
-RUN_*.cmd
-VERIFY_*.cmd
-VERIFY_*.ps1
-advanced_fix.py
-batch_fix*.py
-comprehensive_fix.ps1
-create_debugger.py
-fix_*.py
-fix_*.ps1
-final_comprehensive_fix.py
-run_ubt_build.py
-scan_*.cmd
-scan_*.py
-scan_encoding_issues.py
