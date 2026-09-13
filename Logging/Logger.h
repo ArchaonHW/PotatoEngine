@@ -1,6 +1,5 @@
 #pragma once
 
-#include "Core/CoreTypes.h"
 #include "Core/Interfaces/ILogger.h"
 #include <fstream>
 #include <sstream>
@@ -10,6 +9,7 @@
 #include <condition_variable>
 #include <atomic>
 #include <memory>
+#include <vector>
 
 namespace Potato {
 
@@ -104,8 +104,8 @@ public:
     void SetCategoryEnabled(bool enable) override;
     
     // Logger 特定方法
-    void AddOutput(SharedPtr<ILogOutput> output);
-    void RemoveOutput(SharedPtr<ILogOutput> output);
+    void AddOutput(std::shared_ptr<ILogOutput> output);
+    void RemoveOutput(std::shared_ptr<ILogOutput> output);
     
     void SetAsyncLogging(bool enable);
     void SetBufferSize(size_t size);
@@ -134,9 +134,9 @@ private:
     bool asyncLogging;
     size_t bufferSize;
     
-    std::vector<SharedPtr<ILogOutput>> outputs;
-    UniquePtr<ConsoleOutput> consoleOutput;
-    UniquePtr<FileOutput> fileOutput;
+    std::vector<std::shared_ptr<ILogOutput>> outputs;
+    std::unique_ptr<ConsoleOutput> consoleOutput;
+    std::unique_ptr<FileOutput> fileOutput;
     
     // 異步日誌
     std::queue<LogMessage> logQueue;

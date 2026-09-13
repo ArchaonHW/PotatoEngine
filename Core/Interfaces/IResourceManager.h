@@ -34,8 +34,7 @@ public:
     virtual std::shared_ptr<Mesh> GetMesh(const std::string& path) = 0;
     
     // 著色器管理
-    virtual std::shared_ptr<Shader> LoadShader(const std::string& vertexPath, 
-                                               const std::string& fragmentPath) = 0;
+    virtual std::shared_ptr<Shader> LoadShader(const std::string& vertexPath, const std::string& fragmentPath) = 0;
     virtual void UnloadShader(const std::string& name) = 0;
     virtual std::shared_ptr<Shader> GetShader(const std::string& name) = 0;
     

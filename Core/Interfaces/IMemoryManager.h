@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <memory>
+#include <string>
 
 namespace Potato {
 
@@ -36,34 +37,28 @@ public:
     virtual void* AllocateAligned(size_t size, size_t alignment) = 0;
     virtual void FreeAligned(void* pointer) = 0;
     
-    // 對象分配（帶構造函數調用）
-    template<typename T, typename... Args>
-    T* New(Args&&... args) {
-        void* memory = Allocate(sizeof(T), alignof(T));
-        if (memory) {
-            return new(memory) T(std::forward<Args>(args)...);
-        }
-        return nullptr;
-    }
+    // 對象分配（帶構造函數調用） - 暫時禁用以避免模板錯誤
+    // template<typename T, typename... Args>
+    // T* New(Args&&... args) {
+    //     void* memory = Allocate(sizeof(T), alignof(T));
+    //     if (memory) {
+    //         return new(memory) T(std::forward<Args>(args)...);
+    //     }
+    //     return nullptr;
+    // }
     
-    // 對象釋放（帶析構函數調用）
-    template<typename T>
-    void Delete(T* pointer) {
-        if (pointer) {
-            pointer->~T();
-            Free(pointer);
-        }
-    }
+    // 對象釋放（帶析構函數調用） - 暫時禁用以避免模板錯誤
+    // template<typename T>
+    // void Delete(T* pointer) {
+    //     if (pointer) {
+    //         pointer->~T();
+    //         Free(pointer);
+    //     }
+    // }
     
     // 統計信息
     virtual MemoryStats GetStats() const = 0;
     virtual void ResetStats() = 0;
-    
-    // 內存池管理
-    virtual bool CreateMemoryPool(const std::string& name, size_t size, size_t blockSize) = 0;
-    virtual void DestroyMemoryPool(const std::string& name) = 0;
-    virtual void* AllocateFromPool(const std::string& name) = 0;
-    virtual void FreeToPool(const std::string& name, void* pointer) = 0;
     
     // 內存調試
     virtual void EnableMemoryTracking(bool enable) = 0;

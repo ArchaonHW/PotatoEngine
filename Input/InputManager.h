@@ -1,7 +1,7 @@
 #pragma once
 
 #include "Core/CoreTypes.h"
-#include "Math/Vector2.h"
+#include "MathUtils/Vector2.h"
 #include <string>
 #include <functional>
 #include <unordered_map>

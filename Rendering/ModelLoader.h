@@ -3,9 +3,9 @@
 #include "Core/CoreTypes.h"
 #include "Rendering/OpenGLRenderer.h"
 #include "Rendering/Shader.h"
-#include "Math/Vector2.h"
-#include "Math/Vector3.h"
-#include "Math/Quaternion.h"
+#include "MathUtils/Vector2.h"
+#include "MathUtils/Vector3.h"
+#include "MathUtils/Quaternion.h"
 #include <string>
 #include <vector>
 #include <unordered_map>

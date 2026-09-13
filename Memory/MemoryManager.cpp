@@ -192,7 +192,7 @@ bool MemoryManager::CreateMemoryPool(const std::string& name, size_t size, size_
     }
     
     size_t capacity = size / blockSize;
-    auto pool = MakeUnique<MemoryPool>(name, blockSize, capacity);
+    auto pool = std::make_unique<MemoryPool>(name, blockSize, capacity);
     
     if (pool->GetCapacity() > 0) {
         memoryPools[name] = std::move(pool);

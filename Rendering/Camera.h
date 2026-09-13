@@ -1,10 +1,10 @@
 #pragma once
 
 #include "Core/CoreTypes.h"
-#include "Math/Vector3.h"
-#include "Math/Vector2.h"
-#include "Math/Matrix4.h"
-#include "Math/Quaternion.h"
+#include "MathUtils/Vector3.h"
+#include "MathUtils/Vector2.h"
+#include "MathUtils/Matrix4.h"
+#include "MathUtils/Quaternion.h"
 
 namespace Potato {
 

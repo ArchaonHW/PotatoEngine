@@ -1,7 +1,5 @@
 #pragma once
 
-#include "Core/CoreTypes.h"
-#include "Math/Vector2.h"
 #include <string>
 #include <functional>
 #include <thread>
@@ -12,6 +10,7 @@
 #include <unordered_map>
 #include <memory>
 #include <cstdint>
+#include "MathUtils/Vector2.h"
 
 namespace Potato {
 
@@ -142,7 +141,7 @@ public:
     virtual void Detach() = 0;
     
     virtual bool IsRunning() const = 0;
-    virtual void Sleep(uint32 milliseconds) = 0;
+    virtual void Sleep(uint32_t milliseconds) = 0;
 };
 
 /**
@@ -167,7 +166,7 @@ public:
     virtual void Wait(IMutex& mutex) = 0;
     virtual void NotifyOne() = 0;
     virtual void NotifyAll() = 0;
-    virtual bool WaitFor(IMutex& mutex, uint32 milliseconds) = 0;
+    virtual bool WaitFor(IMutex& mutex, uint32_t milliseconds) = 0;
 };
 
 /**
@@ -223,9 +222,9 @@ public:
     virtual std::string GetWorkingDirectory() const = 0;
     virtual bool SetWorkingDirectory(const std::string& path) = 0;
     
-    virtual uint64 GetTickCount() const = 0;
-    virtual uint64 GetPerformanceCounter() const = 0;
-    virtual uint64 GetPerformanceFrequency() const = 0;
+    virtual uint64_t GetTickCount() const = 0;
+    virtual uint64_t GetPerformanceCounter() const = 0;
+    virtual uint64_t GetPerformanceFrequency() const = 0;
 };
 
 /**
@@ -288,7 +287,7 @@ public:
     void Detach() override;
     
     bool IsRunning() const override;
-    void Sleep(uint32 milliseconds) override;
+    void Sleep(uint32_t milliseconds) override;
     
 private:
     std::function<void()> task;
@@ -323,7 +322,7 @@ public:
     void Wait(IMutex& mutex) override;
     void NotifyOne() override;
     void NotifyAll() override;
-    bool WaitFor(IMutex& mutex, uint32 milliseconds) override;
+    bool WaitFor(IMutex& mutex, uint32_t milliseconds) override;
     
 private:
     std::condition_variable cv;
@@ -362,9 +361,9 @@ public:
     std::string GetWorkingDirectory() const override;
     bool SetWorkingDirectory(const std::string& path) override;
     
-    uint64 GetTickCount() const override;
-    uint64 GetPerformanceCounter() const override;
-    uint64 GetPerformanceFrequency() const override;
+    uint64_t GetTickCount() const override;
+    uint64_t GetPerformanceCounter() const override;
+    uint64_t GetPerformanceFrequency() const override;
     
 private:
     PlatformInfo platformInfo;
@@ -384,7 +383,7 @@ public:
     static PlatformManager& GetInstance();
     
     IPlatformManager* GetImplementation() { return platformManager.get(); }
-    void SetImplementation(UniquePtr<IPlatformManager> impl);
+    void SetImplementation(std::unique_ptr<IPlatformManager> impl);
     
     // 便捷方法
     bool Initialize();
@@ -401,7 +400,7 @@ private:
     PlatformManager();
     ~PlatformManager();
     
-    UniquePtr<IPlatformManager> platformManager;
+    std::unique_ptr<IPlatformManager> platformManager;
 };
 
 // 全局平台管理器

@@ -1,6 +1,5 @@
 #pragma once
 
-#include "Core/CoreTypes.h"
 #include "Core/Interfaces/IMemoryManager.h"
 #include <cstdlib>
 #include <cstring>
@@ -8,19 +7,10 @@
 #include <unordered_map>
 #include <stack>
 #include <vector>
+#include <memory>
+#include <string>
 
 namespace Potato {
-
-/**
- * 內存分配統計
- */
-struct MemoryStats {
-    size_t totalAllocated = 0;
-    size_t totalFreed = 0;
-    size_t currentUsage = 0;
-    size_t peakUsage = 0;
-    size_t allocationCount = 0;
-};
 
 /**
  * 內存分配信息
@@ -86,10 +76,11 @@ public:
     MemoryStats GetStats() const override;
     void ResetStats() override;
     
-    bool CreateMemoryPool(const std::string& name, size_t size, size_t blockSize) override;
-    void DestroyMemoryPool(const std::string& name) override;
-    void* AllocateFromPool(const std::string& name) override;
-    void FreeToPool(const std::string& name, void* pointer) override;
+    // 內存池管理（非接口方法）
+    bool CreateMemoryPool(const std::string& name, size_t size, size_t blockSize);
+    void DestroyMemoryPool(const std::string& name);
+    void* AllocateFromPool(const std::string& name);
+    void FreeToPool(const std::string& name, void* pointer);
     
     void EnableMemoryTracking(bool enable) override;
     void DumpMemoryLeaks() override;
@@ -116,7 +107,7 @@ private:
     MemoryStats stats;
     bool trackingEnabled;
     
-    std::unordered_map<std::string, UniquePtr<MemoryPool>> memoryPools;
+    std::unordered_map<std::string, std::unique_ptr<MemoryPool>> memoryPools;
     std::unordered_map<void*, AllocationInfo> allocationTracker;
     std::mutex mutex;
     
@@ -142,12 +133,3 @@ void ShutdownMemoryManager();
 MemoryManager* GetMemoryManager();
 
 } // namespace Potato
-
-// 調試宏
-#ifdef _DEBUG
-    #define POTATO_NEW(pool) Potato::GetMemoryManager()->AllocateFromPool(pool)
-    #define POTATO_DELETE(pool, ptr) Potato::GetMemoryManager()->FreeToPool(pool, ptr)
-#else
-    #define POTATO_NEW(pool) nullptr
-    #define POTATO_DELETE(pool, ptr) 
-#endif

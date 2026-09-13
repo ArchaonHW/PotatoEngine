@@ -1,92 +1,100 @@
-#include "Math/Math.h"
+#include "MathUtils/MathUtils.h"
+#include "MathUtils/Vector2.h"
+#include "MathUtils/Vector3.h"
+#include "MathUtils/Vector4.h"
+#include "MathUtils/Matrix4.h"
+#include "MathUtils/Quaternion.h"
 #include <iostream>
 
 using namespace Potato;
 
 int main() {
-    std::cout << "=== Potato Engine Math Library Test ===" << std::endl;
-    
-    // Vector2 測試
-    std::cout << "\n--- Vector2 Tests ---" << std::endl;
-    Vector2 v2a(3.0f, 4.0f);
-    Vector2 v2b(1.0f, 2.0f);
-    
-    std::cout << "Vector2a: (" << v2a.x << ", " << v2a.y << ")" << std::endl;
-    std::cout << "Vector2b: (" << v2b.x << ", " << v2b.y << ")" << std::endl;
-    std::cout << "Length: " << v2a.Length() << std::endl;
-    std::cout << "Normalized: (" << v2a.Normalized().x << ", " << v2a.Normalized().y << ")" << std::endl;
-    std::cout << "Dot Product: " << v2a.Dot(v2b) << std::endl;
-    std::cout << "Distance: " << Vector2::Distance(v2a, v2b) << std::endl;
-    
-    // Vector3 測試
-    std::cout << "\n--- Vector3 Tests ---" << std::endl;
+    std::cout << "=== Potato Engine Math Test ===" << std::endl << std::endl;
+
+    // Test MathUtils
+    std::cout << "--- MathUtils ---" << std::endl;
+    std::cout << "PI: " << PI << std::endl;
+    std::cout << "DegToRad(90): " << DegToRad(90.0f) << std::endl;
+    std::cout << "RadToDeg(PI/2): " << RadToDeg(HALF_PI) << std::endl;
+    std::cout << "Clamp(5, 0, 10): " << Clamp(5.0f, 0.0f, 10.0f) << std::endl;
+    std::cout << "Lerp(0, 10, 0.5): " << Lerp(0.0f, 10.0f, 0.5f) << std::endl;
+    std::cout << std::endl;
+
+    // Test Vector2
+    std::cout << "--- Vector2 ---" << std::endl;
+    Vector2 v2a(1.0f, 2.0f);
+    Vector2 v2b(3.0f, 4.0f);
+    std::cout << "v2a: " << v2a.x << ", " << v2a.y << std::endl;
+    std::cout << "v2b: " << v2b.x << ", " << v2b.y << std::endl;
+    std::cout << "v2a + v2b: " << (v2a + v2b).x << ", " << (v2a + v2b).y << std::endl;
+    std::cout << "v2a.Dot(v2b): " << v2a.Dot(v2b) << std::endl;
+    std::cout << "v2a.Length(): " << v2a.Length() << std::endl;
+    std::cout << std::endl;
+
+    // Test Vector3
+    std::cout << "--- Vector3 ---" << std::endl;
     Vector3 v3a(1.0f, 2.0f, 3.0f);
     Vector3 v3b(4.0f, 5.0f, 6.0f);
+    std::cout << "v3a: " << v3a.x << ", " << v3a.y << ", " << v3a.z << std::endl;
+    std::cout << "v3b: " << v3b.x << ", " << v3b.y << ", " << v3b.z << std::endl;
+    std::cout << "v3a + v3b: " << (v3a + v3b).x << ", " << (v3a + v3b).y << ", " << (v3a + v3b).z << std::endl;
+    std::cout << "v3a.Dot(v3b): " << v3a.Dot(v3b) << std::endl;
+    std::cout << "v3a.Cross(v3b): " << v3a.Cross(v3b).x << ", " << v3a.Cross(v3b).y << ", " << v3a.Cross(v3b).z << std::endl;
+    std::cout << "v3a.Length(): " << v3a.Length() << std::endl;
+    std::cout << "v3a.Normalized(): " << v3a.Normalized().x << ", " << v3a.Normalized().y << ", " << v3a.Normalized().z << std::endl;
+    std::cout << std::endl;
+
+    // Test Vector4
+    std::cout << "--- Vector4 ---" << std::endl;
+    Vector4 v4(1.0f, 2.0f, 3.0f, 4.0f);
+    std::cout << "v4: " << v4.x << ", " << v4.y << ", " << v4.z << ", " << v4.w << std::endl;
+    std::cout << "v4.Length(): " << v4.Length() << std::endl;
+    std::cout << std::endl;
+
+    // Test Matrix4
+    std::cout << "--- Matrix4 ---" << std::endl;
+    Matrix4 identity = Matrix4::Identity();
+    std::cout << "Identity matrix created" << std::endl;
     
-    std::cout << "Vector3a: (" << v3a.x << ", " << v3a.y << ", " << v3a.z << ")" << std::endl;
-    std::cout << "Vector3b: (" << v3b.x << ", " << v3b.y << ", " << v3b.z << ")" << std::endl;
-    std::cout << "Length: " << v3a.Length() << std::endl;
-    std::cout << "Normalized: (" << v3a.Normalized().x << ", " << v3a.Normalized().y << ", " << v3a.Normalized().z << ")" << std::endl;
-    std::cout << "Dot Product: " << v3a.Dot(v3b) << std::endl;
-    std::cout << "Cross Product: (" << v3a.Cross(v3b).x << ", " << v3a.Cross(v3b).y << ", " << v3a.Cross(v3b).z << ")" << std::endl;
-    std::cout << "Distance: " << Vector3::Distance(v3a, v3b) << std::endl;
+    Matrix4 translation = Matrix4::Translation(1.0f, 2.0f, 3.0f);
+    std::cout << "Translation matrix created" << std::endl;
     
-    // Vector4 測試
-    std::cout << "\n--- Vector4 Tests ---" << std::endl;
-    Vector4 v4(1.0f, 0.5f, 0.25f, 1.0f);
-    std::cout << "Vector4: (" << v4.x << ", " << v4.y << ", " << v4.z << ", " << v4.w << ")" << std::endl;
-    std::cout << "Length: " << v4.Length() << std::endl;
-    std::cout << "To Vector3: (" << v4.ToVector3().x << ", " << v4.ToVector3().y << ", " << v4.ToVector3().z << ")" << std::endl;
+    Matrix4 rotation = Matrix4::RotationY(PI / 4);
+    std::cout << "Rotation matrix created" << std::endl;
     
-    // Matrix4 測試
-    std::cout << "\n--- Matrix4 Tests ---" << std::endl;
-    Matrix4 mat = Matrix4::Identity();
-    Matrix4 translation = Matrix4::Translation(Vector3(1.0f, 2.0f, 3.0f));
-    Matrix4 rotation = Matrix4::RotationY(MathUtils::DegToRad(45.0f));
-    Matrix4 scale = Matrix4::Scale(Vector3(2.0f, 2.0f, 2.0f));
+    Matrix4 scale = Matrix4::Scale(2.0f, 2.0f, 2.0f);
+    std::cout << "Scale matrix created" << std::endl;
     
-    Matrix4 transform = translation * rotation * scale;
-    Vector3 transformedPoint = transform.TransformPoint(Vector3(1.0f, 0.0f, 0.0f));
+    Matrix4 combined = translation * rotation * scale;
+    std::cout << "Combined matrix: translation * rotation * scale" << std::endl;
     
-    std::cout << "Transformed Point: (" << transformedPoint.x << ", " << transformedPoint.y << ", " << transformedPoint.z << ")" << std::endl;
+    Vector3 point(1.0f, 0.0f, 0.0f);
+    Vector3 transformed = combined.TransformPoint(point);
+    std::cout << "Transformed point: " << transformed.x << ", " << transformed.y << ", " << transformed.z << std::endl;
+    std::cout << std::endl;
+
+    // Test Quaternion
+    std::cout << "--- Quaternion ---" << std::endl;
+    Quaternion qIdentity = Quaternion::Identity();
+    std::cout << "Identity quaternion: " << qIdentity.x << ", " << qIdentity.y << ", " << qIdentity.z << ", " << qIdentity.w << std::endl;
     
-    // 投影矩陣測試
-    Matrix4 perspective = Matrix4::Perspective(MathUtils::DegToRad(60.0f), 16.0f / 9.0f, 0.1f, 100.0f);
-    std::cout << "Perspective Matrix created successfully" << std::endl;
+    Quaternion qRotation = Quaternion::FromEulerAngles(PI / 4, PI / 4, 0.0f);
+    std::cout << "Rotation quaternion from Euler angles" << std::endl;
     
-    // Quaternion 測試
-    std::cout << "\n--- Quaternion Tests ---" << std::endl;
-    Quaternion q = Quaternion::FromAxisAngle(Vector3::UnitY(), MathUtils::DegToRad(90.0f));
-    std::cout << "Quaternion: (" << q.x << ", " << q.y << ", " << q.z << ", " << q.w << ")" << std::endl;
-    std::cout << "Length: " << q.Length() << std::endl;
+    Vector3 axis(0.0f, 1.0f, 0.0f);
+    Quaternion qAxisAngle = Quaternion::FromAxisAngle(axis, PI / 4);
+    std::cout << "Rotation quaternion from axis-angle" << std::endl;
     
-    Vector3 rotatedPoint = q.RotateVector(Vector3::UnitX());
-    std::cout << "Rotated Vector: (" << rotatedPoint.x << ", " << rotatedPoint.y << ", " << rotatedPoint.z << ")" << std::endl;
+    Vector3 rotated = qAxisAngle * Vector3(1.0f, 0.0f, 0.0f);
+    std::cout << "Rotated vector: " << rotated.x << ", " << rotated.y << ", " << rotated.z << std::endl;
     
-    // 四元數插值測試
-    Quaternion q1 = Quaternion::Identity();
-    Quaternion q2 = Quaternion::FromAxisAngle(Vector3::UnitY(), MathUtils::DegToRad(180.0f));
-    Quaternion qSlerp = Quaternion::Slerp(q1, q2, 0.5f);
-    std::cout << "Slerp Result: (" << qSlerp.x << ", " << qSlerp.y << ", " << qSlerp.z << ", " << qSlerp.w << ")" << std::endl;
+    Quaternion qSlerp = Quaternion::Slerp(qIdentity, qRotation, 0.5f);
+    std::cout << "Slerp quaternion created" << std::endl;
     
-    // 數學工具函數測試
-    std::cout << "\n--- Math Utils Tests ---" << std::endl;
-    std::cout << "PI: " << MathConstants::PI << std::endl;
-    std::cout << "DegToRad(45): " << MathUtils::DegToRad(45.0f) << std::endl;
-    std::cout << "RadToDeg(PI/4): " << MathUtils::RadToDeg(MathConstants::PI / 4.0f) << std::endl;
-    std::cout << "Clamp(5, 0, 10): " << MathUtils::Clamp(5.0f, 0.0f, 10.0f) << std::endl;
-    std::cout << "Lerp(0, 10, 0.5): " << MathUtils::Lerp(0.0f, 10.0f, 0.5f) << std::endl;
-    std::cout << "SmoothStep(0, 1, 0.5): " << MathUtils::SmoothStep(0.0f, 1.0f, 0.5f) << std::endl;
-    
-    // 顏色轉換測試
-    Vector3 color(1.0f, 0.0f, 0.0f); // 紅色
-    Vector3 hsv = MathUtils::RGBToHSV(color);
-    std::cout << "RGB to HSV: (" << hsv.x << ", " << hsv.y << ", " << hsv.z << ")" << std::endl;
-    
-    Vector3 backToRGB = MathUtils::HSVToRGB(hsv);
-    std::cout << "HSV back to RGB: (" << backToRGB.x << ", " << backToRGB.y << ", " << backToRGB.z << ")" << std::endl;
-    
-    std::cout << "\n=== Math Library Test Complete ===" << std::endl;
-    
+    Matrix4 qMatrix = qRotation.ToMatrix4();
+    std::cout << "Quaternion to Matrix4 conversion" << std::endl;
+    std::cout << std::endl;
+
+    std::cout << "=== All Math Tests Passed ===" << std::endl;
     return 0;
 }

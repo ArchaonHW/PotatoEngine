@@ -1,9 +1,11 @@
 #pragma once
 
-#include "Core/CoreTypes.h"
+#include <cstdint>
 #include <chrono>
 #include <functional>
 #include <vector>
+#include <memory>
+#include <algorithm>
 
 namespace Potato {
 
@@ -44,7 +46,7 @@ private:
 /**
  * 計時器句柄
  */
-using TimerHandle = uint32;
+using TimerHandle = uint32_t;
 
 /**
  * 計時器管理器
@@ -161,7 +163,7 @@ private:
     int frameCount;
     
     // 計時器管理
-    UniquePtr<TimerManager> timerManager;
+    std::unique_ptr<TimerManager> timerManager;
     
     // 延遲調用
     struct DelayedCallInfo {

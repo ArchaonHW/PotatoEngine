@@ -2,9 +2,9 @@
 
 #include "Core/CoreTypes.h"
 #include "Core/Interfaces/IRenderer.h"
-#include "Math/Vector2.h"
-#include "Math/Vector3.h"
-#include "Math/Matrix4.h"
+#include "MathUtils/Vector2.h"
+#include "MathUtils/Vector3.h"
+#include "MathUtils/Matrix4.h"
 #include <string>
 #include <vector>
 #include <cstdint>

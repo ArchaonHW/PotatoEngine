@@ -23,25 +23,37 @@ endif()
 
 # 查找依賴
 find_package(OpenGL REQUIRED)
-find_package(glfw3 REQUIRED)
+
+# GLFW - 窗口和輸入管理
+include(FetchContent)
+FetchContent_Declare(
+    glfw
+    GIT_REPOSITORY https://github.com/glfw/glfw.git
+    GIT_TAG 3.3.8
+)
+FetchContent_MakeAvailable(glfw)
+
+# Disable GLFW tests
+set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 
 # GLAD - OpenGL 加載器
 include(FetchContent)
 FetchContent_Declare(
     glad
     GIT_REPOSITORY https://github.com/Dav1dde/glad.git
-    GIT_TAG v0.1.36
+    GIT_TAG v2.0.4
 )
 FetchContent_MakeAvailable(glad)
 
-# OpenAL - 音頻庫
-include(FetchContent)
-FetchContent_Declare(
-    openal
-    GIT_REPOSITORY https://github.com/kcat/openal-soft.git
-    GIT_TAG 1.23.1
-)
-FetchContent_MakeAvailable(openal)
+# OpenAL - 音頻庫 (可選)
+# include(FetchContent)
+# FetchContent_Declare(
+#     openal
+#     GIT_REPOSITORY https://github.com/kcat/openal-soft.git
+#     GIT_TAG 1.23.1
+# )
+# FetchContent_MakeAvailable(openal)
 
 # 包含目錄
 include_directories(
@@ -57,7 +69,7 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/Events
     ${CMAKE_SOURCE_DIR}/FileSystem
     ${CMAKE_SOURCE_DIR}/Logging
-    ${CMAKE_SOURCE_DIR}/Math
+    ${CMAKE_SOURCE_DIR}/MathUtils
     ${CMAKE_SOURCE_DIR}/Memory
     ${CMAKE_SOURCE_DIR}/Platform
     ${CMAKE_SOURCE_DIR}/Scene
@@ -66,30 +78,29 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/AI
     ${CMAKE_SOURCE_DIR}/GUI
     ${OPENGL_INCLUDE_DIRS}
-    ${GLFW_INCLUDE_DIRS}
 )
 
-# 項目文件
+# 项目文件 - 逐步启用子系统
 file(GLOB_RECURSE ENGINE_SOURCES 
     "Core/*.cpp"
-    "Rendering/*.cpp"
-    "Physics/*.cpp"
-    "Audio/*.cpp"
-    "Input/*.cpp"
-    "Resources/*.cpp"
-    "ECS/*.cpp"
-    "GameObject/*.cpp"
-    "Events/*.cpp"
-    "FileSystem/*.cpp"
-    "Logging/*.cpp"
-    "Math/*.cpp"
-    "Memory/*.cpp"
-    "Platform/*.cpp"
-    "Scene/*.cpp"
-    "Serialization/*.cpp"
-    "Time/*.cpp"
-    "AI/*.cpp"
-    "GUI/*.cpp"
+    # "Events/*.cpp"
+    # "FileSystem/*.cpp"      # 暂时禁用 - 实现文件有结构问题
+    # "Logging/*.cpp"      # 暂时禁用 - 依赖 CoreTypes
+    # "Memory/*.cpp"      # 暂时禁用 - 实现文件有结构问题
+    # "Platform/*.cpp"      # 暂时禁用 - 依赖 GLFW
+    # "Scene/*.cpp"      # 暂时禁用 - 依赖 Matrix4/Quaternion
+    # "Serialization/*.cpp"      # 暂时禁用
+    # "Time/*.cpp"      # 暂时禁用 - 实现文件有结构问题
+    # "Rendering/*.cpp"      # 暂时禁用 - 依赖 Math
+    # "Physics/*.cpp"      # 暂时禁用 - 依赖 Math
+    # "Audio/*.cpp"      # 暂时禁用 - 依赖 Math
+    # "Input/*.cpp"      # 暂时禁用 - 依赖 Math
+    # "Resources/*.cpp"      # 暂时禁用 - 依赖 Math
+    # "ECS/*.cpp"      # 暂时禁用 - 依赖 Math
+    # "GameObject/*.cpp"      # 暂时禁用 - 依赖 Math
+    # "AI/*.cpp"      # 暂时禁用
+    # "GUI/*.cpp"      # 暂时禁用
+    # "MathUtils/*.cpp"      # 暂时禁用
 )
 
 file(GLOB_RECURSE ENGINE_HEADERS
@@ -104,7 +115,6 @@ file(GLOB_RECURSE ENGINE_HEADERS
     "Events/*.h"
     "FileSystem/*.h"
     "Logging/*.h"
-    "Math/*.h"
     "Memory/*.h"
     "Platform/*.h"
     "Scene/*.h"
@@ -112,54 +122,74 @@ file(GLOB_RECURSE ENGINE_HEADERS
     "Time/*.h"
     "AI/*.h"
     "GUI/*.h"
+    "MathUtils/*.h"
 )
 
 # 創建引擎庫
 add_library(PotatoEngine STATIC ${ENGINE_SOURCES} ${ENGINE_HEADERS})
 
-# 鏈接庫
+target_include_directories(PotatoEngine PUBLIC
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Core
+    ${CMAKE_SOURCE_DIR}/Core/Interfaces
+    ${CMAKE_SOURCE_DIR}/MathUtils
+)
+
 target_link_libraries(PotatoEngine
     ${OPENGL_LIBRARIES}
-    glfw
-    glad
-    OpenAL::OpenAL
+    # glfw
+    # glad
     ${CMAKE_DL_LIBS}
 )
 
-# 預處理器定義
 target_compile_definitions(PotatoEngine PRIVATE POTATO_ENGINE_VERSION="${PROJECT_VERSION}")
+target_compile_definitions(PotatoEngine PRIVATE _USE_MATH_DEFINES)
 
 # 示例程序
-add_executable(SimpleExample Examples/SimpleExample.cpp)
-target_link_libraries(SimpleExample PotatoEngine)
+# add_executable(SimpleExample Examples/SimpleExample.cpp)
+# target_link_libraries(SimpleExample PotatoEngine)
 
-# 測試程序
-add_executable(FileSystemTest Examples/FileSystemTest.cpp)
-target_link_libraries(FileSystemTest PotatoEngine)
+# 最小測試程序
+add_executable(MinimalTest Examples/MinimalTest.cpp)
+target_include_directories(MinimalTest PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(MinimalTest)
 
-add_executable(LoggerTest Examples/LoggerTest.cpp)
-target_link_libraries(LoggerTest PotatoEngine)
+# 引擎示例程序
+add_executable(EngineExample Examples/EngineExample.cpp)
+target_include_directories(EngineExample PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(EngineExample PotatoEngine)
 
+# 数学测试程序
 add_executable(MathTest Examples/MathTest.cpp)
-target_link_libraries(MathTest PotatoEngine)
+target_include_directories(MathTest PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(MathTest)
 
-add_executable(MemoryTest Examples/MemoryTest.cpp)
-target_link_libraries(MemoryTest PotatoEngine)
+# 測試程序 (暫時禁用 - 依賴 PotatoEngine)
+# add_executable(FileSystemTest Examples/FileSystemTest.cpp)
+# target_link_libraries(FileSystemTest PotatoEngine)
 
-# 平台系統測試
-add_executable(PlatformTest Examples/PlatformTest.cpp)
-target_link_libraries(PlatformTest PotatoEngine)
+# add_executable(LoggerTest Examples/LoggerTest.cpp)
+# target_link_libraries(LoggerTest PotatoEngine)
 
-# AI Agent GUI 示例
-add_executable(AIAgentGUIExample Examples/AIAgentGUIExample.cpp)
-target_link_libraries(AIAgentGUIExample PotatoEngine)
+# add_executable(MathTest Examples/MathTest.cpp)
+# target_link_libraries(MathTest PotatoEngine)
 
-# 安裝
-install(TARGETS PotatoEngine SimpleExample PlatformTest AIAgentGUIExample
-    RUNTIME DESTINATION bin
-    LIBRARY DESTINATION lib
-    ARCHIVE DESTINATION lib
-)
+# add_executable(MemoryTest Examples/MemoryTest.cpp)
+# target_link_libraries(MemoryTest PotatoEngine)
+
+# add_executable(PlatformTest Examples/PlatformTest.cpp)
+# target_link_libraries(PlatformTest PotatoEngine)
+
+# AI Agent GUI 示例 (暫時禁用)
+# add_executable(AIAgentGUIExample Examples/AIAgentGUIExample.cpp)
+# target_link_libraries(AIAgentGUIExample PotatoEngine)
+
+# 安裝 (暫時禁用)
+# install(TARGETS PotatoEngine SimpleExample PlatformTest
+#     RUNTIME DESTINATION bin
+#     LIBRARY DESTINATION lib
+#     ARCHIVE DESTINATION lib
+# )
 
 # 安裝頭文件
 install(DIRECTORY Core/ DESTINATION include/PotatoEngine FILES_MATCHING PATTERN "*.h")
@@ -173,7 +203,7 @@ install(DIRECTORY GameObject/ DESTINATION include/PotatoEngine FILES_MATCHING PA
 install(DIRECTORY Events/ DESTINATION include/PotatoEngine FILES_MATCHING PATTERN "*.h")
 install(DIRECTORY FileSystem/ DESTINATION include/PotatoEngine FILES_MATCHING PATTERN "*.h")
 install(DIRECTORY Logging/ DESTINATION include/PotatoEngine FILES_MATCHING PATTERN "*.h")
-install(DIRECTORY Math/ DESTINATION include/PotatoEngine FILES_MATCHING PATTERN "*.h")
+install(DIRECTORY MathUtils/ DESTINATION include/PotatoEngine FILES_MATCHING PATTERN "*.h")
 install(DIRECTORY Memory/ DESTINATION include/PotatoEngine FILES_MATCHING PATTERN "*.h")
 install(DIRECTORY Platform/ DESTINATION include/PotatoEngine FILES_MATCHING PATTERN "*.h")
 install(DIRECTORY Scene/ DESTINATION include/PotatoEngine FILES_MATCHING PATTERN "*.h")

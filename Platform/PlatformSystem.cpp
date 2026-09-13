@@ -609,7 +609,7 @@ PlatformManager& PlatformManager::GetInstance() {
     return instance;
 }
 
-void PlatformManager::SetImplementation(UniquePtr<IPlatformManager> impl) {
+void PlatformManager::SetImplementation(std::unique_ptr<IPlatformManager> impl) {
     platformManager = std::move(impl);
 }
 
@@ -674,7 +674,7 @@ bool InitializePlatformManager() {
     }
     
     // 設置標準平台管理器實現
-    auto standardManager = MakeUnique<StandardPlatformManager>();
+    auto standardManager = std::make_unique<StandardPlatformManager>();
     gPlatformManager->SetImplementation(std::move(standardManager));
     
     return gPlatformManager->Initialize();

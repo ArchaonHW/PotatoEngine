@@ -1,12 +1,12 @@
 #pragma once
 
-#include "Core/CoreTypes.h"
 #include "Core/Interfaces/IFileSystem.h"
 #include <vector>
 #include <string>
 #include <unordered_map>
 #include <mutex>
 #include <filesystem>
+#include <cstdint>
 
 #ifdef _WIN32
     #include <windows.h>
@@ -34,9 +34,9 @@ public:
     bool FileExists(const std::string& path) const override;
     bool DirectoryExists(const std::string& path) const override;
     
-    bool ReadFile(const std::string& path, std::vector<uint8>& data) const override;
+    bool ReadFile(const std::string& path, std::vector<uint8_t>& data) const override;
     bool ReadFileText(const std::string& path, std::string& text) const override;
-    bool WriteFile(const std::string& path, const std::vector<uint8>& data) override;
+    bool WriteFile(const std::string& path, const std::vector<uint8_t>& data) override;
     bool WriteFileText(const std::string& path, const std::string& text) override;
     
     bool CreateFile(const std::string& path) override;
@@ -59,8 +59,8 @@ public:
     std::string GetDirectoryName(const std::string& path) const override;
     
     FileInfo GetFileInfo(const std::string& path) const override;
-    uint64 GetFileSize(const std::string& path) const override;
-    uint64 GetLastModifiedTime(const std::string& path) const override;
+    uint64_t GetFileSize(const std::string& path) const override;
+    uint64_t GetLastModifiedTime(const std::string& path) const override;
     
     std::string GetCurrentDirectory() const override;
     bool SetCurrentDirectory(const std::string& path) override;

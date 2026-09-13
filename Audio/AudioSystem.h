@@ -1,7 +1,7 @@
 #pragma once
 
 #include "Core/CoreTypes.h"
-#include "Math/Vector3.h"
+#include "MathUtils/Vector3.h"
 #include <string>
 #include <vector>
 #include <functional>

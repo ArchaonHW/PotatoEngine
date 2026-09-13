@@ -1,8 +1,8 @@
 #pragma once
 
 #include "Core/CoreTypes.h"
-#include "Math/Vector3.h"
-#include "Math/Matrix4.h"
+#include "MathUtils/Vector3.h"
+#include "MathUtils/Matrix4.h"
 #include "Rendering/Shader.h"
 #include <string>
 #include <vector>
