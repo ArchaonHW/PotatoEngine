@@ -5,7 +5,7 @@ cmake_minimum_required(VERSION 3.15)
 project(PotatoEngine VERSION 1.0.0 LANGUAGES CXX)
 
 # 設置 C++ 標準
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
@@ -24,6 +24,24 @@ endif()
 # 查找依賴
 find_package(OpenGL REQUIRED)
 find_package(glfw3 REQUIRED)
+
+# GLAD - OpenGL 加載器
+include(FetchContent)
+FetchContent_Declare(
+    glad
+    GIT_REPOSITORY https://github.com/Dav1dde/glad.git
+    GIT_TAG v0.1.36
+)
+FetchContent_MakeAvailable(glad)
+
+# OpenAL - 音頻庫
+include(FetchContent)
+FetchContent_Declare(
+    openal
+    GIT_REPOSITORY https://github.com/kcat/openal-soft.git
+    GIT_TAG 1.23.1
+)
+FetchContent_MakeAvailable(openal)
 
 # 包含目錄
 include_directories(
@@ -45,6 +63,8 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/Scene
     ${CMAKE_SOURCE_DIR}/Serialization
     ${CMAKE_SOURCE_DIR}/Time
+    ${CMAKE_SOURCE_DIR}/AI
+    ${CMAKE_SOURCE_DIR}/GUI
     ${OPENGL_INCLUDE_DIRS}
     ${GLFW_INCLUDE_DIRS}
 )
@@ -68,6 +88,8 @@ file(GLOB_RECURSE ENGINE_SOURCES
     "Scene/*.cpp"
     "Serialization/*.cpp"
     "Time/*.cpp"
+    "AI/*.cpp"
+    "GUI/*.cpp"
 )
 
 file(GLOB_RECURSE ENGINE_HEADERS
@@ -88,6 +110,8 @@ file(GLOB_RECURSE ENGINE_HEADERS
     "Scene/*.h"
     "Serialization/*.h"
     "Time/*.h"
+    "AI/*.h"
+    "GUI/*.h"
 )
 
 # 創建引擎庫
@@ -97,6 +121,8 @@ add_library(PotatoEngine STATIC ${ENGINE_SOURCES} ${ENGINE_HEADERS})
 target_link_libraries(PotatoEngine
     ${OPENGL_LIBRARIES}
     glfw
+    glad
+    OpenAL::OpenAL
     ${CMAKE_DL_LIBS}
 )
 
@@ -120,18 +146,41 @@ target_link_libraries(MathTest PotatoEngine)
 add_executable(MemoryTest Examples/MemoryTest.cpp)
 target_link_libraries(MemoryTest PotatoEngine)
 
+# 平台系統測試
+add_executable(PlatformTest Examples/PlatformTest.cpp)
+target_link_libraries(PlatformTest PotatoEngine)
+
+# AI Agent GUI 示例
+add_executable(AIAgentGUIExample Examples/AIAgentGUIExample.cpp)
+target_link_libraries(AIAgentGUIExample PotatoEngine)
+
 # 安裝
-install(TARGETS PotatoEngine SimpleExample
+install(TARGETS PotatoEngine SimpleExample PlatformTest AIAgentGUIExample
     RUNTIME DESTINATION bin
     LIBRARY DESTINATION lib
     ARCHIVE DESTINATION lib
 )
 
 # 安裝頭文件
-install(DIRECTORY Core/Rendering/Physics/Audio/Input/Resources/ECS/GameObject/Events/FileSystem/Logging/Math/Memory/Platform/Scene/Serialization/Time/
-    DESTINATION include/PotatoEngine
-    FILES_MATCHING PATTERN "*.h"
-)
+install(DIRECTORY Core/ DESTINATION include/PotatoEngine FILES_MATCHING PATTERN "*.h")
+install(DIRECTORY Rendering/ DESTINATION include/PotatoEngine FILES_MATCHING PATTERN "*.h")
+install(DIRECTORY Physics/ DESTINATION include/PotatoEngine FILES_MATCHING PATTERN "*.h")
+install(DIRECTORY Audio/ DESTINATION include/PotatoEngine FILES_MATCHING PATTERN "*.h")
+install(DIRECTORY Input/ DESTINATION include/PotatoEngine FILES_MATCHING PATTERN "*.h")
+install(DIRECTORY Resources/ DESTINATION include/PotatoEngine FILES_MATCHING PATTERN "*.h")
+install(DIRECTORY ECS/ DESTINATION include/PotatoEngine FILES_MATCHING PATTERN "*.h")
+install(DIRECTORY GameObject/ DESTINATION include/PotatoEngine FILES_MATCHING PATTERN "*.h")
+install(DIRECTORY Events/ DESTINATION include/PotatoEngine FILES_MATCHING PATTERN "*.h")
+install(DIRECTORY FileSystem/ DESTINATION include/PotatoEngine FILES_MATCHING PATTERN "*.h")
+install(DIRECTORY Logging/ DESTINATION include/PotatoEngine FILES_MATCHING PATTERN "*.h")
+install(DIRECTORY Math/ DESTINATION include/PotatoEngine FILES_MATCHING PATTERN "*.h")
+install(DIRECTORY Memory/ DESTINATION include/PotatoEngine FILES_MATCHING PATTERN "*.h")
+install(DIRECTORY Platform/ DESTINATION include/PotatoEngine FILES_MATCHING PATTERN "*.h")
+install(DIRECTORY Scene/ DESTINATION include/PotatoEngine FILES_MATCHING PATTERN "*.h")
+install(DIRECTORY Serialization/ DESTINATION include/PotatoEngine FILES_MATCHING PATTERN "*.h")
+install(DIRECTORY Time/ DESTINATION include/PotatoEngine FILES_MATCHING PATTERN "*.h")
+install(DIRECTORY AI/ DESTINATION include/PotatoEngine FILES_MATCHING PATTERN "*.h")
+install(DIRECTORY GUI/ DESTINATION include/PotatoEngine FILES_MATCHING PATTERN "*.h")
 
 # CPack 打包配置
 set(CPACK_PACKAGE_NAME "PotatoEngine")
