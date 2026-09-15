@@ -184,6 +184,25 @@ target_link_libraries(ReinforcementLearning NeuralNetwork)
 add_library(NaturalLanguageProcessing STATIC AI/NaturalLanguageProcessing.cpp)
 target_include_directories(NaturalLanguageProcessing PUBLIC ${CMAKE_SOURCE_DIR}/AI)
 
+# AI 增強模塊 - LLM 集成
+add_library(LLMIntegration STATIC AI/LLMIntegration.cpp)
+target_include_directories(LLMIntegration PUBLIC ${CMAKE_SOURCE_DIR}/AI)
+
+# AI 增強模塊 - RAG 系統
+add_library(RAGSystem STATIC AI/RAGSystem.cpp)
+target_include_directories(RAGSystem PUBLIC ${CMAKE_SOURCE_DIR}/AI)
+target_link_libraries(RAGSystem LLMIntegration)
+
+# AI 增強模塊 - Agent 鏈
+add_library(AgentChain STATIC AI/AgentChain.cpp)
+target_include_directories(AgentChain PUBLIC ${CMAKE_SOURCE_DIR}/AI)
+target_link_libraries(AgentChain LLMIntegration)
+
+# AI 增強模塊 - 工具框架
+add_library(ToolFramework STATIC AI/ToolFramework.cpp)
+target_include_directories(ToolFramework PUBLIC ${CMAKE_SOURCE_DIR}/AI)
+target_link_libraries(ToolFramework LLMIntegration)
+
 # MingGoRTS IDE 智能建議系統
 add_library(IntelligentSuggestion STATIC MingGoRTS_IDE/IntelligentSuggestion.cpp)
 target_include_directories(IntelligentSuggestion PUBLIC 
@@ -195,6 +214,11 @@ target_include_directories(IntelligentSuggestion PUBLIC
 add_executable(AIEnhancedDemo Examples/AIEnhancedDemo.cpp)
 target_include_directories(AIEnhancedDemo PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(AIEnhancedDemo NeuralNetwork ReinforcementLearning NaturalLanguageProcessing)
+
+# 終極 AI Agent 演示程序
+add_executable(UltimateAIAgentDemo Examples/UltimateAIAgentDemo.cpp)
+target_include_directories(UltimateAIAgentDemo PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(UltimateAIAgentDemo AIAgentSystem LLMIntegration RAGSystem AgentChain ToolFramework NeuralNetwork NaturalLanguageProcessing)
 
 # MingGoRTS IDE（AI Agent 整合 IDE - 命令行版本）
 add_executable(MingGoRTS_IDE_CLI MingGoRTS_IDE/MingGoRTS_IDE_Main.cpp MingGoRTS_IDE/IDECore.cpp MingGoRTS_IDE/AIIntegration.cpp)
