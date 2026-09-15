@@ -184,6 +184,10 @@ target_link_libraries(ReinforcementLearning NeuralNetwork)
 add_library(NaturalLanguageProcessing STATIC AI/NaturalLanguageProcessing.cpp)
 target_include_directories(NaturalLanguageProcessing PUBLIC ${CMAKE_SOURCE_DIR}/AI)
 
+# AI Agent 系統
+add_library(AIAgentSystem STATIC AI/AIAgentSystem.cpp)
+target_include_directories(AIAgentSystem PUBLIC ${CMAKE_SOURCE_DIR}/AI)
+
 # AI 增強模塊 - LLM 集成
 add_library(LLMIntegration STATIC AI/LLMIntegration.cpp)
 target_include_directories(LLMIntegration PUBLIC ${CMAKE_SOURCE_DIR}/AI)
@@ -203,6 +207,11 @@ add_library(ToolFramework STATIC AI/ToolFramework.cpp)
 target_include_directories(ToolFramework PUBLIC ${CMAKE_SOURCE_DIR}/AI)
 target_link_libraries(ToolFramework LLMIntegration)
 
+# AI 增強模塊 - 智能開發系統
+add_library(IntelligentDevelopmentSystem STATIC AI/IntelligentDevelopmentSystem.cpp)
+target_include_directories(IntelligentDevelopmentSystem PUBLIC ${CMAKE_SOURCE_DIR}/AI)
+target_link_libraries(IntelligentDevelopmentSystem LLMIntegration RAGSystem AgentChain ToolFramework AIAgentSystem NeuralNetwork NaturalLanguageProcessing)
+
 # MingGoRTS IDE 智能建議系統
 add_library(IntelligentSuggestion STATIC MingGoRTS_IDE/IntelligentSuggestion.cpp)
 target_include_directories(IntelligentSuggestion PUBLIC 
@@ -219,6 +228,11 @@ target_link_libraries(AIEnhancedDemo NeuralNetwork ReinforcementLearning Natural
 add_executable(UltimateAIAgentDemo Examples/UltimateAIAgentDemo.cpp)
 target_include_directories(UltimateAIAgentDemo PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(UltimateAIAgentDemo AIAgentSystem LLMIntegration RAGSystem AgentChain ToolFramework NeuralNetwork NaturalLanguageProcessing)
+
+# 智能開發系統演示程序
+add_executable(IntelligentDevelopmentDemo Examples/IntelligentDevelopmentDemo.cpp)
+target_include_directories(IntelligentDevelopmentDemo PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(IntelligentDevelopmentDemo IntelligentDevelopmentSystem LLMIntegration AIAgentSystem)
 
 # MingGoRTS IDE（AI Agent 整合 IDE - 命令行版本）
 add_executable(MingGoRTS_IDE_CLI MingGoRTS_IDE/MingGoRTS_IDE_Main.cpp MingGoRTS_IDE/IDECore.cpp MingGoRTS_IDE/AIIntegration.cpp)
