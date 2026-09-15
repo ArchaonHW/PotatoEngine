@@ -80,27 +80,27 @@ include_directories(
     ${OPENGL_INCLUDE_DIRS}
 )
 
-# 项目文件 - 逐步启用子系统
+# Project files - Gradually enable subsystems
 file(GLOB_RECURSE ENGINE_SOURCES 
     "Core/*.cpp"
     # "Events/*.cpp"
-    # "FileSystem/*.cpp"      # 暂时禁用 - 实现文件有结构问题
-    # "Logging/*.cpp"      # 暂时禁用 - 依赖 CoreTypes
-    # "Memory/*.cpp"      # 暂时禁用 - 实现文件有结构问题
-    # "Platform/*.cpp"      # 暂时禁用 - 依赖 GLFW
-    # "Scene/*.cpp"      # 暂时禁用 - 依赖 Matrix4/Quaternion
-    # "Serialization/*.cpp"      # 暂时禁用
-    # "Time/*.cpp"      # 暂时禁用 - 实现文件有结构问题
-    # "Rendering/*.cpp"      # 暂时禁用 - 依赖 Math
-    # "Physics/*.cpp"      # 暂时禁用 - 依赖 Math
-    # "Audio/*.cpp"      # 暂时禁用 - 依赖 Math
-    # "Input/*.cpp"      # 暂时禁用 - 依赖 Math
-    # "Resources/*.cpp"      # 暂时禁用 - 依赖 Math
-    # "ECS/*.cpp"      # 暂时禁用 - 依赖 Math
-    # "GameObject/*.cpp"      # 暂时禁用 - 依赖 Math
-    # "AI/*.cpp"      # 暂时禁用
-    # "GUI/*.cpp"      # 暂时禁用
-    # "MathUtils/*.cpp"      # 暂时禁用
+    # "FileSystem/*.cpp"      # Temporarily disabled - implementation file has structural issues
+    # "Logging/*.cpp"      # Temporarily disabled - depends on CoreTypes
+    # "Memory/*.cpp"      # Temporarily disabled - implementation file has structural issues
+    # "Platform/*.cpp"      # Temporarily disabled - depends on GLFW
+    # "Scene/*.cpp"      # Temporarily disabled - depends on Matrix4/Quaternion
+    # "Serialization/*.cpp"      # Temporarily disabled
+    # "Time/*.cpp"      # Temporarily disabled - implementation file has structural issues
+    # "Rendering/*.cpp"      # Temporarily disabled - depends on Math
+    # "Physics/*.cpp"      # Temporarily disabled - depends on Math
+    # "Audio/*.cpp"      # Temporarily disabled - depends on Math
+    # "Input/*.cpp"      # Temporarily disabled - depends on Math
+    # "Resources/*.cpp"      # Temporarily disabled - depends on Math
+    # "ECS/*.cpp"      # Temporarily disabled - depends on Math
+    # "GameObject/*.cpp"      # Temporarily disabled - depends on Math
+    # "AI/*.cpp"      # Temporarily disabled - encoding issues need fixing
+    # "GUI/*.cpp"      # Temporarily disabled
+    # "MathUtils/*.cpp"      # Temporarily disabled
 )
 
 file(GLOB_RECURSE ENGINE_HEADERS
@@ -159,7 +159,46 @@ add_executable(EngineExample Examples/EngineExample.cpp)
 target_include_directories(EngineExample PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(EngineExample PotatoEngine)
 
-# 数学测试程序
+# AI 演示程序（編碼兼容版本）
+add_executable(AIDemo Examples/AIDemo.cpp)
+target_link_libraries(AIDemo)
+
+# 優化 AI 演示程序（性能優化版本）
+add_executable(OptimizedAIDemo Examples/OptimizedAIDemo.cpp)
+target_link_libraries(OptimizedAIDemo)
+
+# AI 測試套件（完整測試驗證）
+add_executable(AITestSuite Examples/AITestSuite.cpp)
+target_link_libraries(AITestSuite)
+
+# MingGoRTS IDE（AI Agent 整合 IDE - 命令行版本）
+add_executable(MingGoRTS_IDE_CLI MingGoRTS_IDE/MingGoRTS_IDE_Main.cpp MingGoRTS_IDE/IDECore.cpp MingGoRTS_IDE/AIIntegration.cpp)
+target_include_directories(MingGoRTS_IDE_CLI PRIVATE ${CMAKE_SOURCE_DIR})
+
+# MingGoRTS IDE（GUI 版本）
+add_executable(MingGoRTS_IDE_GUI 
+    MingGoRTS_IDE/GUI/Main.cpp
+    MingGoRTS_IDE/GUI/IDEGUI.cpp
+    MingGoRTS_IDE/GUI/IDEGUI.h
+    MingGoRTS_IDE/GUI/I18N.cpp
+    MingGoRTS_IDE/GUI/I18N.h
+    MingGoRTS_IDE/IDECore.cpp
+    MingGoRTS_IDE/AIIntegration.cpp
+    external/imgui/imgui.cpp
+    external/imgui/imgui_draw.cpp
+    external/imgui/imgui_tables.cpp
+    external/imgui/imgui_widgets.cpp
+    external/imgui/backends/imgui_impl_glfw.cpp
+    external/imgui/backends/imgui_impl_opengl3.cpp
+)
+target_include_directories(MingGoRTS_IDE_GUI PRIVATE 
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/external/imgui
+    ${CMAKE_SOURCE_DIR}/external/imgui/backends
+)
+target_link_libraries(MingGoRTS_IDE_GUI glfw ${OPENGL_LIBRARIES})
+
+# 數學測試程序
 add_executable(MathTest Examples/MathTest.cpp)
 target_include_directories(MathTest PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(MathTest)
@@ -170,9 +209,6 @@ target_link_libraries(MathTest)
 
 # add_executable(LoggerTest Examples/LoggerTest.cpp)
 # target_link_libraries(LoggerTest PotatoEngine)
-
-# add_executable(MathTest Examples/MathTest.cpp)
-# target_link_libraries(MathTest PotatoEngine)
 
 # add_executable(MemoryTest Examples/MemoryTest.cpp)
 # target_link_libraries(MemoryTest PotatoEngine)
