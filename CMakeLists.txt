@@ -171,6 +171,31 @@ target_link_libraries(OptimizedAIDemo)
 add_executable(AITestSuite Examples/AITestSuite.cpp)
 target_link_libraries(AITestSuite)
 
+# AI 增強模塊 - 神經網絡
+add_library(NeuralNetwork STATIC AI/NeuralNetwork.cpp)
+target_include_directories(NeuralNetwork PUBLIC ${CMAKE_SOURCE_DIR}/AI)
+
+# AI 增強模塊 - 強化學習
+add_library(ReinforcementLearning STATIC AI/ReinforcementLearning.cpp)
+target_include_directories(ReinforcementLearning PUBLIC ${CMAKE_SOURCE_DIR}/AI)
+target_link_libraries(ReinforcementLearning NeuralNetwork)
+
+# AI 增強模塊 - 自然語言處理
+add_library(NaturalLanguageProcessing STATIC AI/NaturalLanguageProcessing.cpp)
+target_include_directories(NaturalLanguageProcessing PUBLIC ${CMAKE_SOURCE_DIR}/AI)
+
+# MingGoRTS IDE 智能建議系統
+add_library(IntelligentSuggestion STATIC MingGoRTS_IDE/IntelligentSuggestion.cpp)
+target_include_directories(IntelligentSuggestion PUBLIC 
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/MingGoRTS_IDE
+)
+
+# AI 增強演示程序
+add_executable(AIEnhancedDemo Examples/AIEnhancedDemo.cpp)
+target_include_directories(AIEnhancedDemo PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(AIEnhancedDemo NeuralNetwork ReinforcementLearning NaturalLanguageProcessing)
+
 # MingGoRTS IDE（AI Agent 整合 IDE - 命令行版本）
 add_executable(MingGoRTS_IDE_CLI MingGoRTS_IDE/MingGoRTS_IDE_Main.cpp MingGoRTS_IDE/IDECore.cpp MingGoRTS_IDE/AIIntegration.cpp)
 target_include_directories(MingGoRTS_IDE_CLI PRIVATE ${CMAKE_SOURCE_DIR})
