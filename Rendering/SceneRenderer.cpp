@@ -49,9 +49,9 @@ RenderStats SceneRenderer::SubmitRenderList(const std::vector<RenderItem>& items
 
     Shader* boundShader = nullptr;
     for (const RenderItem& item : items) {
-        Shader* shader = item.shader.get();
+        Shader* shader = item.shader ? item.shader.get() : defaultShader.get();
         if (!shader) {
-            continue; // 無 shader 且無預設管線:略過(預設 shader 由呼叫方掛到 renderable)
+            continue;
         }
         if (shader != boundShader) {
             shader->Bind();

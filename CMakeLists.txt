@@ -332,8 +332,16 @@ add_library(Gameplay STATIC
     Gameplay/Doctrine.cpp
     Gameplay/BattleController.cpp
     Gameplay/BattlePlanner.cpp
+    Gameplay/BattleSceneSync.cpp
+    Gameplay/BattleMap.cpp
+    Gameplay/EnemyGeneral.cpp
+    Gameplay/BattleResources.cpp
+    Gameplay/BattleRecorder.cpp
+    Gameplay/Roster.cpp
 )
 target_include_directories(Gameplay PUBLIC ${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/Gameplay)
+# BattleSceneSync 需要場景圖/渲染類型;PotatoEngine 不依賴 Gameplay,無循環
+target_link_libraries(Gameplay PUBLIC PotatoEngine)
 
 # Doctrine 戰鬥演示（無頭模式：規劃階段寫腳本，即時層自動執行）
 add_executable(DoctrineBattleDemo Examples/DoctrineBattleDemo.cpp)
@@ -344,6 +352,11 @@ target_link_libraries(DoctrineBattleDemo Gameplay)
 add_executable(AutoPlannerDemo Examples/AutoPlannerDemo.cpp)
 target_include_directories(AutoPlannerDemo PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(AutoPlannerDemo Gameplay)
+
+# 斷橋原型（T-4~T-8：地圖JSON/敵將腳本/資源/錄製回放/名冊）
+add_executable(DuanqiaoDemo Examples/DuanqiaoDemo.cpp)
+target_include_directories(DuanqiaoDemo PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(DuanqiaoDemo Gameplay)
 
 # MingGoRTS IDE（AI Agent 整合 IDE - 命令行版本）
 add_executable(MingGoRTS_IDE_CLI MingGoRTS_IDE/MingGoRTS_IDE_Main.cpp MingGoRTS_IDE/IDECore.cpp MingGoRTS_IDE/AIIntegration.cpp)
@@ -433,6 +446,15 @@ add_executable(RenderPipelineTest Examples/RenderPipelineTest.cpp)
 target_include_directories(RenderPipelineTest PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(RenderPipelineTest PotatoEngine)
 
+add_executable(BattleSceneTest Examples/BattleSceneTest.cpp)
+target_include_directories(BattleSceneTest PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(BattleSceneTest Gameplay)
+
+# 斷橋攻防戰即時渲染 → MP4
+add_executable(BattleRenderDemo Examples/BattleRenderDemo.cpp)
+target_include_directories(BattleRenderDemo PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(BattleRenderDemo Gameplay)
+
 add_executable(ModelLoaderTest Examples/ModelLoaderTest.cpp)
 target_include_directories(ModelLoaderTest PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(ModelLoaderTest PotatoEngine)
@@ -440,6 +462,10 @@ target_link_libraries(ModelLoaderTest PotatoEngine)
 add_executable(InputTest Examples/InputTest.cpp)
 target_include_directories(InputTest PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(InputTest PotatoEngine)
+
+add_executable(AudioTest Examples/AudioTest.cpp)
+target_include_directories(AudioTest PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(AudioTest PotatoEngine)
 
 # AI Agent GUI 示例 (暫時禁用)
 # add_executable(AIAgentGUIExample Examples/AIAgentGUIExample.cpp)
@@ -489,13 +515,16 @@ set(POTATO_TESTS
     SceneTest
     SerializationTest
     RenderPipelineTest
+    BattleSceneTest
     ModelLoaderTest
     InputTest
+    AudioTest
     SecurityRedTeamTest
     AITestSuite
     DevAssistantSmoke
     DoctrineBattleDemo
     AutoPlannerDemo
+    DuanqiaoDemo
 )
 foreach(test_name IN LISTS POTATO_TESTS)
     if(TARGET ${test_name})

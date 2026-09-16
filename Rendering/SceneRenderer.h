@@ -53,6 +53,12 @@ public:
 
     // 一步到位：收集 + 提交
     RenderStats Render(SceneGraph& scene, const Camera& camera);
+
+    // RenderItem 未自帶 shader 時的後備(不設則略過無 shader 項目)
+    void SetDefaultShader(SharedPtr<Shader> shader) { defaultShader = std::move(shader); }
+
+private:
+    SharedPtr<Shader> defaultShader;
 };
 
 } // namespace Potato

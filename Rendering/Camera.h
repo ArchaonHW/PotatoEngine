@@ -120,6 +120,7 @@ private:
     
     bool updateView;
     bool updateProjection;
+    bool useTarget = false; // SetTarget 後改為 look-at 驅動;SetRotation/Rotate 解除
 };
 
 /**

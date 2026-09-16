@@ -1347,10 +1347,26 @@ bool SecurityManager::CheckCriticalApiHooks() {
 bool SecurityManager::CheckKnownToolProcesses() {
 #ifdef _WIN32
     // 子字串比對，可抓到 cheatengine-x86_64.exe 這類帶後綴的檔名
+    // 病毒碼（已知工具特徵）分類維護，新增條目請歸類並保持小寫
     static const char* kToolNames[] = {
-        "cheatengine", "x64dbg", "x32dbg", "x96dbg", "ollydbg", "windbg",
-        "ida64", "idaq", "ida.exe", "processhacker", "reclass", "crysearch",
-        "apimonitor", "tsearch", "artmoney", "msvsmon"
+        // 記憶體編輯 / 修改器
+        "cheatengine", "artmoney", "tsearch", "crysearch", "squalr",
+        "cosmos", "gameconqueror",
+        // 修改器平台
+        "wemod", "plitch", "megadev", "cheathappens",
+        // 注入器 / 手動映射載入器
+        "xenos", "kdmapper", "extreme injector", "gh injector",
+        // 除錯器
+        "x64dbg", "x32dbg", "x96dbg", "ollydbg", "windbg", "cdb.exe",
+        "ntsd.exe", "immunitydebug", "dnspy", "msvsmon",
+        // 逆向工程
+        "ida64", "idaq", "ida.exe", "binaryninja", "ghidra", "cutter",
+        "iaito", "radare2", "rizin", "reclass", "scyllahide",
+        // 行程/系統監控與分析
+        "processhacker", "systeminformer", "procexp", "procmon", "vmmap",
+        "procdump", "winobj", "apimonitor", "spyxx", "pchunter",
+        // 變速齒輪
+        "speedgear", "speederxp"
     };
     HANDLE snap = ::CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
     if (snap == INVALID_HANDLE_VALUE) return false;

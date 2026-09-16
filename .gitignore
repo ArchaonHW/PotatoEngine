@@ -113,3 +113,9 @@ Backup_*
 !.github/**/*.json
 !.github/**/*.yml
 !.github/**/*.md
+# 演示程式執行輸出（replay/roster 等）
+duanqiao_replay.json
+duanqiao_roster.json
+*_replay.json
+*_roster.json
+audiotest_*.wav

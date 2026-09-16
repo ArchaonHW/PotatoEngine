@@ -2,6 +2,7 @@
 
 #include "Scene/SceneNode.h"
 #include "MathUtils/Frustum.h"
+#include "Rendering/Camera.h"
 #include <cstdio>
 #include <cmath>
 #include <vector>
@@ -75,6 +76,40 @@ int main() {
     visible->SetActive(false);
     vis = scene.CollectVisibleNodes(frustum);
     Check(!has("visible"), "inactive 節點不收集");
+
+    // 旋轉 parent：子節點世界位置須經父矩陣完整變換
+    // (舊 bug：worldPosition = parentPos + localPos 直接相加,忽略旋轉)
+    {
+        auto parent = MakeShared<SceneNode>("rotParent");
+        parent->SetLocalPosition(Vector3(10, 0, 0));
+        parent->SetLocalRotation(
+            Quaternion::FromAxisAngle(Vector3(0, 1, 0), 3.14159265f / 2.0f)); // 繞 Y 轉 90°
+
+        auto child = MakeShared<SceneNode>("rotChild");
+        child->SetLocalPosition(Vector3(1, 0, 0)); // 父節點局部 +X
+        parent->AddChild(child);
+
+        // R_y(90°)·(1,0,0) = (0,0,-1);加父平移 (10,0,0) → 世界 (10,0,-1)
+        Vector3 wp = child->GetWorldPosition();
+        Check(std::fabs(wp.x - 10.0f) < 1e-4f &&
+              std::fabs(wp.z + 1.0f) < 1e-4f,
+              "旋轉父節點下子節點世界位置正確(10,0,-1)");
+    }
+
+    // Camera::SetViewport 拒絕非法尺寸（width<=0 不得污染 aspect）
+    {
+        Camera cam;
+        cam.SetPerspective(60.0f * 3.14159265f / 180.0f, 16.0f / 9.0f, 0.1f, 100.0f);
+        float goodAspect = cam.GetAspectRatio();
+
+        cam.SetViewport(0, 0, 0, 720);  // width=0
+        Check(std::fabs(cam.GetAspectRatio() - goodAspect) < 1e-6f,
+              "SetViewport width=0 不改變 aspect");
+
+        cam.SetViewport(0, 0, 800, 600);
+        Check(std::fabs(cam.GetAspectRatio() - 800.0f / 600.0f) < 1e-4f,
+              "SetViewport 800x600 更新 aspect");
+    }
 
     printf("\n=== 結果: %d PASS, %d FAIL ===\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;

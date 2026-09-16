@@ -46,11 +46,13 @@ void Camera::SetPosition(const Vector3& pos) {
 
 void Camera::SetRotation(const Quaternion& rot) {
     rotation = rot;
+    useTarget = false;
     updateView = true;
 }
 
 void Camera::SetTarget(const Vector3& targ) {
     target = targ;
+    useTarget = true;
     updateView = true;
 }
 
@@ -65,6 +67,7 @@ void Camera::Rotate(float yaw, float pitch) {
     Quaternion pitchRot = Quaternion::FromAxisAngle(Vector3(1.0f, 0.0f, 0.0f), pitch);
     
     rotation = yawRot * pitchRot * rotation;
+    useTarget = false;
     updateView = true;
 }
 
@@ -141,7 +144,9 @@ void Camera::SetViewport(int x, int y, int width, int height) {
     viewportY = y;
     viewportWidth = width;
     viewportHeight = height;
-    if (height > 0) {
+    // width<=0 同樣要擋：否則 aspect 會是 0/負數,
+    // 讓 projection matrix 產生 inf/NaN
+    if (width > 0 && height > 0) {
         aspect = static_cast<float>(width) / static_cast<float>(height);
     }
     updateProjection = true;
@@ -159,6 +164,21 @@ void Camera::Update(float deltaTime) {
 }
 
 void Camera::UpdateVectors() {
+    if (useTarget) {
+        // look-at 模式:由 position→target 求方向基底
+        Vector3 dir = target - position;
+        if (dir.LengthSquared() > 1e-8f) {
+            forward = dir.Normalized();
+        }
+        Vector3 worldUp(0.0f, 1.0f, 0.0f);
+        // 接近正俯視時改用 -Z 為參考上向量避免退化
+        if (std::fabs(forward.y) > 0.999f) worldUp = Vector3(0.0f, 0.0f, -1.0f);
+        right = forward.Cross(worldUp).Normalized();
+        up = right.Cross(forward);
+        viewMatrix = Matrix4::LookAt(position, target, up);
+        return;
+    }
+
     // 根據旋轉計算方向向量
     Matrix4 rotationMatrix = rotation.ToMatrix4();
     

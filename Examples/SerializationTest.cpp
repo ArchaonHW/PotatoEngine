@@ -5,6 +5,8 @@
 #include <cstdio>
 #include <cmath>
 #include <cstring>
+#include <fstream>
+#include <filesystem>
 
 using namespace Potato;
 using namespace Potato::SerializableTypes;
@@ -112,6 +114,33 @@ int main() {
         Check(mgr.DeleteSaveSlot("slot_roundtrip"), "DeleteSaveSlot 刪除");
         Check(!mgr.SaveSlotExists("slot_roundtrip"), "刪除後不存在");
 
+        mgr.Shutdown();
+    }
+
+    // [7] 含標點的外部檔案不得被列為 slot（列出也對不回路徑）
+    {
+        SerializationManager mgr;
+        mgr.Initialize();
+
+        // 模擬外部/遺留檔案：stem 含 '.'，sanitize 後對不上
+        {
+            std::ofstream f("Saves/weird.name.json");
+            f << "{}";
+        }
+        Check(mgr.SaveGame("clean_slot", GameStateData()), "建立合規存檔");
+
+        auto slots = mgr.GetSaveSlots();
+        bool allResolvable = true;
+        bool weirdListed = false;
+        for (auto& s : slots) {
+            if (!mgr.SaveSlotExists(s)) allResolvable = false;
+            if (s == "weird.name" || s == "weirdname") weirdListed = true;
+        }
+        Check(!weirdListed, "標點檔名不被列為 slot");
+        Check(allResolvable, "列出的 slot 全部可解析（round-trip）");
+
+        mgr.DeleteSaveSlot("clean_slot");
+        std::filesystem::remove("Saves/weird.name.json");
         mgr.Shutdown();
     }
 

@@ -472,7 +472,9 @@ int main() {
         PhysicsBody* b = world->CreateBody();
         b->SetCollisionShape(CollisionShape::Box);
         b->SetCollisionShapeDimensions(Vector3(4.0f, 0.2f, 0.2f));
-        b->SetPosition(Vector3(0.0f, 0.3f, 0.0f)); // y 方向重疊
+        // 中心距 3.5：兩盒在 x 向重疊 [1.5,2.0]。
+        // 若 broadphase 誤用最小邊(0.1)當包圍半徑,sum=0.2 < 3.5 會漏碰
+        b->SetPosition(Vector3(3.5f, 0.0f, 0.0f));
         b->SetGravityEnabled(false);
 
         world->Step(1.0f / 60.0f);

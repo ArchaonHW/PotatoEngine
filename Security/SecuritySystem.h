@@ -123,7 +123,8 @@ public:
     // 這是外掛攔截 NtProtectVirtualMemory/NtWriteVirtualMemory 的慣用手法。
     bool CheckCriticalApiHooks();
     // 已知作弊/除錯工具行程掃描：cheatengine、x64dbg、ollydbg、windbg、
-    // processhacker、reclass 等（子字串比對映像檔名）
+    // processhacker、systeminformer、xenos、wemod、ida、ghidra 等
+    // （子字串比對映像檔名；完整特徵表見 SecuritySystem.cpp kToolNames）
     bool CheckKnownToolProcesses();
     // 執行緒 RIP 稽核：短暫暫停各執行緒檢查指令指標是否落在已載入模組內。
     // 補 CheckInjectedThreads 的盲點——後者只看起始位址，無法抓到

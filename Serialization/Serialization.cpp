@@ -172,17 +172,42 @@ ISerializer* SerializationManager::GetSerializer(SerializationFormat format) {
     return nullptr;
 }
 
+namespace {
+// 存檔名只允許英數字、底線、連字號——GetSaveSlotPath 與
+// GetSaveSlots 必須共用同一個規則,否則列出的 slot 會對不上路徑
+std::string SanitizeSlotName(const std::string& name) {
+    std::string sanitized;
+    sanitized.reserve(name.size());
+    for (char c : name) {
+        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+            (c >= '0' && c <= '9') || c == '_' || c == '-') {
+            sanitized += c;
+        }
+    }
+    return sanitized.empty() ? "invalid_slot" : sanitized;
+}
+} // namespace
+
 std::vector<std::string> SerializationManager::GetSaveSlots() const {
     std::vector<std::string> saveSlots;
 
-    // 掃描存檔目錄中的 .json 檔，去除副檔名作為 slot 名
+    // 掃描存檔目錄中的 .json 檔。只列出 stem 本身已合規的檔案
+    // （SanitizeSlotName(stem) == stem）：這保證每個列出的 slot
+    // 都能被 SaveSlotExists/DeleteSaveSlot 經 GetSaveSlotPath 操作。
+    // 例如 "a.b.json" 的 stem sanitize 後是 "ab" ≠ "a.b",
+    // 列出它也無法對回實際檔案,直接排除
     std::error_code ec;
     if (!std::filesystem::is_directory(saveDirectory, ec)) {
         return saveSlots;
     }
     for (const auto& entry : std::filesystem::directory_iterator(saveDirectory, ec)) {
-        if (entry.is_regular_file() && entry.path().extension() == ".json") {
-            saveSlots.push_back(entry.path().stem().string());
+        std::error_code entryEc;
+        if (entry.is_regular_file(entryEc) && !entryEc &&
+            entry.path().extension() == ".json") {
+            std::string stem = entry.path().stem().string();
+            if (SanitizeSlotName(stem) == stem) {
+                saveSlots.push_back(stem);
+            }
         }
     }
     std::sort(saveSlots.begin(), saveSlots.end());
@@ -233,18 +258,7 @@ void SerializationManager::Update(float deltaTime) {
 
 std::string SerializationManager::GetSaveSlotPath(const std::string& saveSlot) const {
     // 防止路徑遍歷：存檔名稱只允許英數字、底線、連字號
-    std::string sanitized;
-    sanitized.reserve(saveSlot.size());
-    for (char c : saveSlot) {
-        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
-            (c >= '0' && c <= '9') || c == '_' || c == '-') {
-            sanitized += c;
-        }
-    }
-    if (sanitized.empty()) {
-        sanitized = "invalid_slot";
-    }
-    return saveDirectory + "/" + sanitized + ".json";
+    return saveDirectory + "/" + SanitizeSlotName(saveSlot) + ".json";
 }
 
 void SerializationManager::ProcessAutoSave() {
