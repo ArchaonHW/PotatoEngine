@@ -196,6 +196,12 @@ target_include_directories(PotatoEngine PUBLIC
     ${CMAKE_SOURCE_DIR}/MathUtils
 )
 
+# tinygltf 實作單元（Rendering/TinyGltfImpl.cpp）只需私有 include 路徑；
+# PUBLIC 會把 header-only 庫的 include 污染給所有下游 target
+target_include_directories(PotatoEngine PRIVATE
+    ${CMAKE_SOURCE_DIR}/external/tinygltf
+)
+
 target_link_libraries(PotatoEngine
     ${OPENGL_LIBRARIES}
     glfw
@@ -345,6 +351,7 @@ add_library(Gameplay STATIC
     Gameplay/BattleResources.cpp
     Gameplay/BattleRecorder.cpp
     Gameplay/Roster.cpp
+    Gameplay/SageCommand.cpp
 )
 target_include_directories(Gameplay PUBLIC ${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/Gameplay)
 # BattleSceneSync 需要場景圖/渲染類型;PotatoEngine 不依賴 Gameplay,無循環
@@ -364,6 +371,29 @@ target_link_libraries(AutoPlannerDemo Gameplay)
 add_executable(DuanqiaoDemo Examples/DuanqiaoDemo.cpp)
 target_include_directories(DuanqiaoDemo PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(DuanqiaoDemo Gameplay)
+
+# 至聖者指揮學邏輯測試（headless：三權/正逆六策/墮落/五行/治平）
+add_executable(SageCommandTest Examples/SageCommandTest.cpp)
+target_include_directories(SageCommandTest PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(SageCommandTest Gameplay)
+
+# 至聖者指揮畫面（ImGui 五區佈局：道權/戰場/策權/兵權/治平儀表）
+# imgui 源碼比照 MingGoRTS_IDE_GUI 區塊
+add_executable(SageCommandDemo
+    Examples/SageCommandDemo.cpp
+    external/imgui/imgui.cpp
+    external/imgui/imgui_draw.cpp
+    external/imgui/imgui_tables.cpp
+    external/imgui/imgui_widgets.cpp
+    external/imgui/backends/imgui_impl_glfw.cpp
+    external/imgui/backends/imgui_impl_opengl3.cpp
+)
+target_include_directories(SageCommandDemo PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/external/imgui
+    ${CMAKE_SOURCE_DIR}/external/imgui/backends
+)
+target_link_libraries(SageCommandDemo glfw glad ${OPENGL_LIBRARIES} Gameplay)
 
 # MingGoRTS IDE（AI Agent 整合 IDE - 命令行版本）
 add_executable(MingGoRTS_IDE_CLI MingGoRTS_IDE/MingGoRTS_IDE_Main.cpp MingGoRTS_IDE/IDECore.cpp MingGoRTS_IDE/AIIntegration.cpp)
@@ -466,6 +496,11 @@ add_executable(ModelLoaderTest Examples/ModelLoaderTest.cpp)
 target_include_directories(ModelLoaderTest PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(ModelLoaderTest PotatoEngine)
 
+# glTF/VRM 載入管線測試（assets/avatars/ 缺檔時自動略過真檔案例）
+add_executable(VrmLoadTest Examples/VrmLoadTest.cpp)
+target_include_directories(VrmLoadTest PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(VrmLoadTest PotatoEngine)
+
 add_executable(InputTest Examples/InputTest.cpp)
 target_include_directories(InputTest PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(InputTest PotatoEngine)
@@ -473,6 +508,20 @@ target_link_libraries(InputTest PotatoEngine)
 add_executable(AudioTest Examples/AudioTest.cpp)
 target_include_directories(AudioTest PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(AudioTest PotatoEngine)
+
+add_executable(TimeTest Examples/TimeTest.cpp)
+target_include_directories(TimeTest PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(TimeTest PotatoEngine)
+
+# GL 煙霧測試：需要顯示環境,無顯示時自行 SKIP
+add_executable(GLSmokeTest Examples/GLSmokeTest.cpp)
+target_include_directories(GLSmokeTest PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(GLSmokeTest PotatoEngine glad glfw)
+
+# 人物立繪產生器：VRM/glTF → 離屏渲染 → PNG（需 GL 環境，屬工具非測試）
+add_executable(PortraitRenderer Examples/PortraitRenderer.cpp)
+target_include_directories(PortraitRenderer PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(PortraitRenderer PotatoEngine glad glfw)
 
 # AI Agent GUI 示例 (暫時禁用)
 # add_executable(AIAgentGUIExample Examples/AIAgentGUIExample.cpp)
@@ -524,14 +573,18 @@ set(POTATO_TESTS
     RenderPipelineTest
     BattleSceneTest
     ModelLoaderTest
+    VrmLoadTest
     InputTest
     AudioTest
+    TimeTest
+    GLSmokeTest
     SecurityRedTeamTest
     AITestSuite
     DevAssistantSmoke
     DoctrineBattleDemo
     AutoPlannerDemo
     DuanqiaoDemo
+    SageCommandTest
 )
 foreach(test_name IN LISTS POTATO_TESTS)
     if(TARGET ${test_name})

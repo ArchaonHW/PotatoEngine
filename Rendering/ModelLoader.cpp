@@ -4,7 +4,11 @@
 #include <sstream>
 #include <algorithm>
 #include <cstdlib>
+#include <cstring>
 #include <cmath>
+// 第三方標頭必須在 namespace Potato 之外 include——
+// 放在 Potato 內會把 std 巢狀成 Potato::std（GCC 直接編譯失敗）
+#include "tiny_gltf.h"
 
 namespace Potato {
 
@@ -216,27 +220,459 @@ void OBJLoader::OptimizeMeshes(ModelData& modelData) {
 }
 
 // ============================================================================
-// GLTFLoader 實現
+// GLTFLoader 實現（tinygltf；.vrm 本體即 GLB，走同一路徑）
 // ============================================================================
 
+namespace {
+
+// 讀取 accessor 的原始指標與元素資訊；失敗回傳 nullptr
+const unsigned char* GltfAccessorData(const tinygltf::Model& g, int accessorIdx,
+                                      size_t& count, int& numComp,
+                                      int& compType, size_t& stride) {
+    if (accessorIdx < 0 || accessorIdx >= (int)g.accessors.size()) return nullptr;
+    const tinygltf::Accessor& acc = g.accessors[accessorIdx];
+    if (acc.bufferView < 0 || acc.bufferView >= (int)g.bufferViews.size()) return nullptr;
+    const tinygltf::BufferView& bv = g.bufferViews[acc.bufferView];
+    if (bv.buffer < 0 || bv.buffer >= (int)g.buffers.size()) return nullptr;
+    const tinygltf::Buffer& buf = g.buffers[bv.buffer];
+
+    count = acc.count;
+    numComp = tinygltf::GetNumComponentsInType(static_cast<uint32_t>(acc.type));
+    compType = acc.componentType;
+    const size_t elemSize =
+        static_cast<size_t>(numComp) * tinygltf::GetComponentSizeInBytes(
+                                           static_cast<uint32_t>(compType));
+    stride = bv.byteStride ? bv.byteStride : elemSize;
+
+    const size_t offset = bv.byteOffset + acc.byteOffset;
+    if (count > 0 && offset + (count - 1) * stride + elemSize > buf.data.size()) {
+        return nullptr; // 越界
+    }
+    return buf.data.data() + offset;
+}
+
+// 把單一 component 轉成 float（支援 float / 正規化整數 / 非正規化整數）
+float GltfComponentToFloat(const unsigned char* p, int compType, bool normalized) {
+    switch (compType) {
+    case TINYGLTF_COMPONENT_TYPE_FLOAT:
+        float f; memcpy(&f, p, 4); return f;
+    case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE: {
+        uint8 v; memcpy(&v, p, 1);
+        return normalized ? v / 255.0f : (float)v;
+    }
+    case TINYGLTF_COMPONENT_TYPE_BYTE: {
+        int8 v; memcpy(&v, p, 1);
+        return normalized ? std::max(v / 127.0f, -1.0f) : (float)v;
+    }
+    case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT: {
+        uint16 v; memcpy(&v, p, 2);
+        return normalized ? v / 65535.0f : (float)v;
+    }
+    case TINYGLTF_COMPONENT_TYPE_SHORT: {
+        int16 v; memcpy(&v, p, 2);
+        return normalized ? std::max(v / 32767.0f, -1.0f) : (float)v;
+    }
+    case TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT: {
+        uint32 v; memcpy(&v, p, 4); return (float)v;
+    }
+    default: return 0.0f;
+    }
+}
+
+Vector3 GltfReadVec3(const tinygltf::Model& g, int accessorIdx, size_t i) {
+    size_t count; int nc, ct; size_t stride;
+    const unsigned char* base = GltfAccessorData(g, accessorIdx, count, nc, ct, stride);
+    Vector3 out = Vector3::Zero();
+    if (!base || i >= count || nc < 3) return out;
+    const tinygltf::Accessor& acc = g.accessors[accessorIdx];
+    const unsigned char* p = base + i * stride;
+    const int cs = tinygltf::GetComponentSizeInBytes(static_cast<uint32_t>(ct));
+    out.x = GltfComponentToFloat(p, ct, acc.normalized);
+    out.y = GltfComponentToFloat(p + cs, ct, acc.normalized);
+    out.z = GltfComponentToFloat(p + 2 * cs, ct, acc.normalized);
+    return out;
+}
+
+Vector4 GltfReadVec4(const tinygltf::Model& g, int accessorIdx, size_t i) {
+    size_t count; int nc, ct; size_t stride;
+    const unsigned char* base = GltfAccessorData(g, accessorIdx, count, nc, ct, stride);
+    Vector4 out(0, 0, 0, 0);
+    if (!base || i >= count || nc < 4) return out;
+    const tinygltf::Accessor& acc = g.accessors[accessorIdx];
+    const unsigned char* p = base + i * stride;
+    const int cs = tinygltf::GetComponentSizeInBytes(static_cast<uint32_t>(ct));
+    out.x = GltfComponentToFloat(p, ct, acc.normalized);
+    out.y = GltfComponentToFloat(p + cs, ct, acc.normalized);
+    out.z = GltfComponentToFloat(p + 2 * cs, ct, acc.normalized);
+    out.w = GltfComponentToFloat(p + 3 * cs, ct, acc.normalized);
+    return out;
+}
+
+// 節點 local transform：glTF 要嘛給 16 欄 matrix（column-major，與 Matrix4 同），
+// 要嘛給 TRS 分量
+Matrix4 GltfNodeLocalMatrix(const tinygltf::Node& node, ModelData::NodeData& out) {
+    if (node.matrix.size() == 16) {
+        float m[16];
+        for (int i = 0; i < 16; ++i) m[i] = (float)node.matrix[i];
+        out.hasMatrix = true;
+        out.matrix = Matrix4(m);
+        return out.matrix;
+    }
+    if (node.translation.size() == 3) {
+        out.translation = Vector3((float)node.translation[0],
+                                  (float)node.translation[1],
+                                  (float)node.translation[2]);
+    }
+    if (node.rotation.size() == 4) {
+        out.rotation = Quaternion((float)node.rotation[0], (float)node.rotation[1],
+                                  (float)node.rotation[2], (float)node.rotation[3]);
+    }
+    if (node.scale.size() == 3) {
+        out.scale = Vector3((float)node.scale[0], (float)node.scale[1],
+                            (float)node.scale[2]);
+    }
+    return Matrix4::Translation(out.translation) * out.rotation.ToMatrix() *
+           Matrix4::Scale(out.scale);
+}
+
+void GltfConvertPrimitive(const tinygltf::Model& g,
+                          const tinygltf::Primitive& prim,
+                          const Matrix4& world, bool skinned,
+                          int skinIndex, ModelData& modelData) {
+    auto posIt = prim.attributes.find("POSITION");
+    if (posIt == prim.attributes.end()) return; // 無位置資料的面片直接略過
+
+    MeshData mesh;
+    mesh.skinIndex = skinIndex;
+    const int posAccIdx = posIt->second;
+    const size_t vertCount = g.accessors[posAccIdx].count;
+    mesh.vertices.resize(vertCount);
+
+    const bool bake = !skinned; // glTF 規範：skinned mesh 忽略節點 transform
+    const Matrix4 normalM = world.Inverse().Transposed();
+
+    for (size_t i = 0; i < vertCount; ++i) {
+        ModelVertex& v = mesh.vertices[i];
+        v.position = bake ? world.TransformPoint(GltfReadVec3(g, posAccIdx, i))
+                          : GltfReadVec3(g, posAccIdx, i);
+    }
+
+    auto attr = prim.attributes.find("NORMAL");
+    if (attr != prim.attributes.end()) {
+        for (size_t i = 0; i < vertCount; ++i) {
+            Vector3 n = GltfReadVec3(g, attr->second, i);
+            mesh.vertices[i].normal = bake ? normalM.TransformVector(n) : n;
+        }
+    }
+    attr = prim.attributes.find("TEXCOORD_0");
+    if (attr != prim.attributes.end()) {
+        size_t count; int nc, ct; size_t stride;
+        if (GltfAccessorData(g, attr->second, count, nc, ct, stride)) {
+            const tinygltf::Accessor& acc = g.accessors[attr->second];
+            const unsigned char* base =
+                g.buffers[g.bufferViews[acc.bufferView].buffer].data.data() +
+                g.bufferViews[acc.bufferView].byteOffset + acc.byteOffset;
+            const int cs = tinygltf::GetComponentSizeInBytes(static_cast<uint32_t>(ct));
+            for (size_t i = 0; i < vertCount && i < count; ++i) {
+                const unsigned char* p = base + i * stride;
+                // glTF UV 原點在左上，OpenGL 在左下 → 翻轉 v
+                mesh.vertices[i].texCoord.x = GltfComponentToFloat(p, ct, acc.normalized);
+                mesh.vertices[i].texCoord.y =
+                    1.0f - GltfComponentToFloat(p + cs, ct, acc.normalized);
+            }
+        }
+    }
+    attr = prim.attributes.find("TANGENT");
+    if (attr != prim.attributes.end()) {
+        for (size_t i = 0; i < vertCount; ++i) {
+            Vector4 t = GltfReadVec4(g, attr->second, i);
+            Vector3 t3(t.x, t.y, t.z);
+            mesh.vertices[i].tangent = bake ? normalM.TransformVector(t3) : t3;
+        }
+    }
+
+    // 蒙皮屬性（Phase 2 使用；此處先完整解析進資料結構）
+    auto jit = prim.attributes.find("JOINTS_0");
+    auto wit = prim.attributes.find("WEIGHTS_0");
+    if (jit != prim.attributes.end() && wit != prim.attributes.end()) {
+        mesh.joints.resize(vertCount);
+        mesh.weights.resize(vertCount);
+        for (size_t i = 0; i < vertCount; ++i) {
+            Vector4 jf = GltfReadVec4(g, jit->second, i);
+            mesh.joints[i] = {(uint16)jf.x, (uint16)jf.y, (uint16)jf.z, (uint16)jf.w};
+            mesh.weights[i] = GltfReadVec4(g, wit->second, i);
+        }
+    }
+
+    // indices（無索引面片採順序索引）
+    if (prim.indices >= 0) {
+        size_t count; int nc, ct; size_t stride;
+        const unsigned char* base =
+            GltfAccessorData(g, prim.indices, count, nc, ct, stride);
+        if (base) {
+            mesh.indices.reserve(count);
+            for (size_t i = 0; i < count; ++i) {
+                mesh.indices.push_back(
+                    (uint32)GltfComponentToFloat(base + i * stride, ct, false));
+            }
+        }
+    } else {
+        mesh.indices.reserve(vertCount);
+        for (size_t i = 0; i < vertCount; ++i) mesh.indices.push_back((uint32)i);
+    }
+
+    // 材質
+    std::string matName;
+    if (prim.material >= 0 && prim.material < (int)g.materials.size()) {
+        const tinygltf::Material& gm = g.materials[prim.material];
+        matName = gm.name.empty()
+                      ? "gltf_mat_" + std::to_string(prim.material)
+                      : gm.name;
+        if (modelData.materials.find(matName) == modelData.materials.end()) {
+            MaterialData md;
+            md.name = matName;
+            const auto& pbr = gm.pbrMetallicRoughness;
+            if (pbr.baseColorFactor.size() == 4) {
+                md.diffuse = Vector3((float)pbr.baseColorFactor[0],
+                                     (float)pbr.baseColorFactor[1],
+                                     (float)pbr.baseColorFactor[2]);
+            }
+            // 內嵌 diffuse 貼圖：texture → image（tinygltf 已用 stb 解碼）
+            int texIdx = pbr.baseColorTexture.index;
+            if (texIdx >= 0 && texIdx < (int)g.textures.size()) {
+                int imgIdx = g.textures[texIdx].source;
+                if (imgIdx >= 0 && imgIdx < (int)g.images.size() &&
+                    !g.images[imgIdx].image.empty()) {
+                    const tinygltf::Image& img = g.images[imgIdx];
+                    md.embeddedDiffuse = img.image;
+                    md.embeddedWidth = img.width;
+                    md.embeddedHeight = img.height;
+                    md.embeddedChannels = img.component;
+                    md.diffuseTexture = "embedded:" + std::to_string(imgIdx);
+                }
+            }
+            md.alphaMode = gm.alphaMode;
+            md.alphaCutoff = (float)gm.alphaCutoff;
+            md.doubleSided = gm.doubleSided;
+            modelData.materials[matName] = std::move(md);
+        }
+    } else {
+        matName = "default";
+    }
+    mesh.materialName = matName;
+    modelData.meshes.push_back(std::move(mesh));
+}
+
+void GltfWalkNode(const tinygltf::Model& g, int nodeIdx, int parentIdx,
+                  const Matrix4& parentWorld, ModelData& modelData,
+                  std::vector<char>& visited, std::vector<int>& gltfToModel) {
+    // 節點環保護：glTF 規格無環，但畸形/惡意檔案可能有——visited 防無窮遞迴
+    if (visited[nodeIdx]) return;
+    visited[nodeIdx] = 1;
+    const tinygltf::Node& node = g.nodes[nodeIdx];
+    ModelData::NodeData nd;
+    nd.name = node.name;
+    nd.parent = parentIdx;
+    nd.skin = node.skin;
+    Matrix4 world = parentWorld * GltfNodeLocalMatrix(node, nd);
+
+    nd.mesh = (int)modelData.meshes.size();
+    if (node.mesh >= 0 && node.mesh < (int)g.meshes.size()) {
+        const tinygltf::Mesh& gm = g.meshes[node.mesh];
+        for (const auto& prim : gm.primitives) {
+            if (prim.mode != TINYGLTF_MODE_TRIANGLES) continue;
+            const bool skinned =
+                prim.attributes.find("JOINTS_0") != prim.attributes.end();
+            GltfConvertPrimitive(g, prim, world, skinned, node.skin, modelData);
+        }
+    }
+    nd.meshCount = (int)modelData.meshes.size() - nd.mesh;
+    if (nd.meshCount == 0) nd.mesh = -1;
+    modelData.nodes.push_back(nd);
+
+    const int selfIdx = (int)modelData.nodes.size() - 1;
+    gltfToModel[nodeIdx] = selfIdx;
+    for (int child : node.children) {
+        if (child >= 0 && child < (int)g.nodes.size()) {
+            GltfWalkNode(g, child, selfIdx, world, modelData, visited,
+                         gltfToModel);
+        }
+    }
+}
+
+bool GltfConvert(const tinygltf::Model& g, ModelData& modelData,
+                 const std::string& name) {
+    modelData.name = name;
+    modelData.hasVrmExtension = g.extensions.count("VRM") > 0 ||
+                                g.extensions.count("VRMC_vrm") > 0;
+
+    // skin/animation 的 node 參照是 glTF 原始索引，
+    // modelData.nodes 採走訪序 → 需要 gltfToModel 重映射
+    std::vector<char> visited(g.nodes.size(), 0);
+    std::vector<int> gltfToModel(g.nodes.size(), -1);
+    int sceneIdx = g.defaultScene >= 0 ? g.defaultScene
+                                       : (g.scenes.empty() ? -1 : 0);
+    if (sceneIdx >= 0) {
+        for (int root : g.scenes[sceneIdx].nodes) {
+            if (root >= 0 && root < (int)g.nodes.size()) {
+                GltfWalkNode(g, root, -1, Matrix4::Identity(), modelData,
+                             visited, gltfToModel);
+            }
+        }
+    } else {
+        // 無 scene：所有無父節點者視為 root
+        std::vector<bool> isChild(g.nodes.size(), false);
+        for (const auto& n : g.nodes)
+            for (int c : n.children)
+                if (c >= 0 && c < (int)g.nodes.size()) isChild[c] = true;
+        for (size_t i = 0; i < g.nodes.size(); ++i) {
+            if (!isChild[i])
+                GltfWalkNode(g, (int)i, -1, Matrix4::Identity(), modelData,
+                             visited, gltfToModel);
+        }
+    }
+
+    // skins：joint node 索引（重映射為 modelData.nodes 索引）+ inverseBindMatrices
+    for (const auto& gs : g.skins) {
+        ModelData::SkinData sd;
+        sd.name = gs.name;
+        sd.joints.reserve(gs.joints.size());
+        for (int j : gs.joints) {
+            sd.joints.push_back(j >= 0 && j < (int)gltfToModel.size()
+                                    ? gltfToModel[j] : -1);
+        }
+        sd.skeletonRoot = (gs.skeleton >= 0 && gs.skeleton < (int)gltfToModel.size())
+                              ? gltfToModel[gs.skeleton] : -1;
+        if (gs.inverseBindMatrices >= 0) {
+            size_t count; int nc, ct; size_t stride;
+            const unsigned char* base = GltfAccessorData(
+                g, gs.inverseBindMatrices, count, nc, ct, stride);
+            if (base && ct == TINYGLTF_COMPONENT_TYPE_FLOAT) {
+                sd.inverseBindMatrices.reserve(count);
+                for (size_t i = 0; i < count; ++i) {
+                    Matrix4 m(reinterpret_cast<const float*>(base + i * stride));
+                    sd.inverseBindMatrices.push_back(m);
+                }
+            }
+        }
+        modelData.skins.push_back(std::move(sd));
+    }
+
+    // 動畫：sampler input=時間(float scalar)、output=vec3/vec4
+    for (const auto& anim : g.animations) {
+        ModelData::AnimationClip clip;
+        clip.name = anim.name;
+        for (const auto& s : anim.samplers) {
+            ModelData::AnimationClip::Sampler smp;
+            if (s.interpolation == "STEP") {
+                smp.interpolation = ModelData::AnimationClip::Interpolation::Step;
+            } else if (s.interpolation == "CUBICSPLINE") {
+                smp.interpolation = ModelData::AnimationClip::Interpolation::CubicSpline;
+            }
+            size_t count; int nc, ct; size_t stride;
+            const unsigned char* base =
+                GltfAccessorData(g, s.input, count, nc, ct, stride);
+            if (base && ct == TINYGLTF_COMPONENT_TYPE_FLOAT) {
+                smp.times.reserve(count);
+                for (size_t i = 0; i < count; ++i) {
+                    float t; memcpy(&t, base + i * stride, 4);
+                    smp.times.push_back(t);
+                }
+                if (count > 0) {
+                    clip.duration = std::max(clip.duration, smp.times.back());
+                }
+            }
+            if (s.output >= 0 && s.output < (int)g.accessors.size()) {
+                const auto& outAcc = g.accessors[s.output];
+                size_t n = outAcc.count;
+                smp.values.reserve(n);
+                for (size_t i = 0; i < n; ++i) {
+                    int outNc = tinygltf::GetNumComponentsInType(
+                        static_cast<uint32_t>(outAcc.type));
+                    smp.values.push_back(outNc >= 4
+                        ? GltfReadVec4(g, s.output, i)
+                        : Vector4(GltfReadVec3(g, s.output, i), 0.0f));
+                }
+            }
+            clip.samplers.push_back(std::move(smp));
+        }
+        for (const auto& ch : anim.channels) {
+            ModelData::AnimationClip::Channel c;
+            c.node = (ch.target_node >= 0 &&
+                      ch.target_node < (int)gltfToModel.size())
+                         ? gltfToModel[ch.target_node] : -1;
+            c.sampler = ch.sampler;
+            if (ch.target_path == "rotation") {
+                c.path = ModelData::AnimationClip::Path::Rotation;
+            } else if (ch.target_path == "scale") {
+                c.path = ModelData::AnimationClip::Path::Scale;
+            } else if (ch.target_path == "weights") {
+                c.path = ModelData::AnimationClip::Path::Weights;
+            }
+            clip.channels.push_back(c);
+        }
+        modelData.animations.push_back(std::move(clip));
+    }
+
+    if (modelData.meshes.empty()) {
+        LOG_ERROR("glTF/VRM contains no triangle primitives: " + name);
+        return false;
+    }
+    return true;
+}
+
+} // namespace
+
 bool GLTFLoader::LoadFromFile(const std::string& path, ModelData& modelData) {
-    LOG_WARNING("GLTF loading not fully implemented yet");
-    return false;
+    tinygltf::TinyGLTF loader;
+    tinygltf::Model gltf;
+    std::string err, warn;
+    const bool ascii = path.size() >= 5 &&
+        path.compare(path.size() - 5, 5, ".gltf") == 0;
+    const bool ok = ascii
+        ? loader.LoadASCIIFromFile(&gltf, &err, &warn, path)
+        : loader.LoadBinaryFromFile(&gltf, &err, &warn, path);
+    if (!warn.empty()) LOG_WARNING("glTF: " + warn);
+    if (!ok) {
+        LOG_ERROR("glTF load failed: " + path + " — " + err);
+        return false;
+    }
+    size_t slash = path.find_last_of("/\\");
+    return GltfConvert(gltf, modelData,
+                       slash == std::string::npos ? path : path.substr(slash + 1));
 }
 
 bool GLTFLoader::LoadFromMemory(const std::string& content, ModelData& modelData) {
-    LOG_WARNING("GLTF loading not fully implemented yet");
-    return false;
+    tinygltf::TinyGLTF loader;
+    tinygltf::Model gltf;
+    std::string err, warn;
+    // GLB magic "glTF" 開頭 → binary；否則視為 ASCII .gltf JSON
+    const bool binary = content.size() >= 4 &&
+        std::memcmp(content.data(), "glTF", 4) == 0;
+    const bool ok = binary
+        ? loader.LoadBinaryFromMemory(
+              &gltf, &err, &warn,
+              reinterpret_cast<const unsigned char*>(content.data()),
+              static_cast<unsigned int>(content.size()))
+        : loader.LoadASCIIFromString(&gltf, &err, &warn, content.c_str(),
+                                     static_cast<unsigned int>(content.size()),
+                                     "");
+    if (!warn.empty()) LOG_WARNING("glTF: " + warn);
+    if (!ok) {
+        LOG_ERROR("glTF parse failed: " + err);
+        return false;
+    }
+    return GltfConvert(gltf, modelData, "memory-model");
 }
 
-bool GLTFLoader::ParseGLTF(const std::string& content, ModelData& modelData) {
-    // 需要 tinygltf 庫
-    return false;
+bool GLTFLoader::ParseGLTF(const std::string& content, ModelData& modelData,
+                           const std::string& baseDir) {
+    (void)baseDir; // LoadFromMemory 已內嵌 baseDir 處理
+    return LoadFromMemory(content, modelData);
 }
 
 bool GLTFLoader::ParseGLB(const std::string& content, ModelData& modelData) {
-    // 需要 tinygltf 庫
-    return false;
+    return LoadFromMemory(content, modelData);
 }
 
 // ============================================================================
@@ -261,7 +697,8 @@ bool Model::LoadFromFile(const std::string& path) {
         if (!OBJLoader::LoadFromFile(path, modelData)) {
             return false;
         }
-    } else if (path.find(".gltf") != std::string::npos || path.find(".glb") != std::string::npos) {
+    } else if (path.find(".gltf") != std::string::npos || path.find(".glb") != std::string::npos ||
+               path.find(".vrm") != std::string::npos) {
         if (!GLTFLoader::LoadFromFile(path, modelData)) {
             return false;
         }
@@ -276,10 +713,40 @@ bool Model::LoadFromFile(const std::string& path) {
 bool Model::LoadFromData(const ModelData& modelData) {
     name = modelData.name;
     
-    // 創建網格
+    // 創建網格：有 JOINTS_0/WEIGHTS_0 的走 SkinnedMesh，其餘走一般 Mesh
     for (const auto& meshData : modelData.meshes) {
+        if (!meshData.joints.empty()) {
+            auto mesh = MakeUnique<SkinnedMesh>();
+            std::vector<SkinnedVertex> vertices;
+            vertices.reserve(meshData.vertices.size());
+            for (size_t i = 0; i < meshData.vertices.size(); ++i) {
+                const ModelVertex& mv = meshData.vertices[i];
+                SkinnedVertex v;
+                v.position = mv.position;
+                v.normal = mv.normal;
+                v.texCoord = mv.texCoord;
+                v.tangent = mv.tangent;
+                v.bitangent = mv.bitangent;
+                if (i < meshData.joints.size()) {
+                    const auto& j = meshData.joints[i];
+                    v.joints = Vector4((float)j[0], (float)j[1],
+                                       (float)j[2], (float)j[3]);
+                }
+                if (i < meshData.weights.size()) {
+                    v.weights = meshData.weights[i];
+                }
+                vertices.push_back(v);
+            }
+            mesh->SetVertices(vertices);
+            mesh->SetIndices(meshData.indices);
+            mesh->SetSkinIndex(meshData.skinIndex);
+            skinnedMeshMaterialNames.push_back(meshData.materialName);
+            skinnedMeshes.push_back(std::move(mesh));
+            continue;
+        }
+
         auto mesh = MakeUnique<Mesh>();
-        
+
         // 轉換頂點數據
         std::vector<Vertex> vertices;
         for (const auto& modelVertex : meshData.vertices) {
@@ -291,23 +758,88 @@ bool Model::LoadFromData(const ModelData& modelData) {
             vertex.bitangent = modelVertex.bitangent;
             vertices.push_back(vertex);
         }
-        
+
         mesh->SetVertices(vertices);
         mesh->SetIndices(meshData.indices);
-        
+
+        meshMaterialNames.push_back(meshData.materialName);
         meshes.push_back(std::move(mesh));
     }
-    
+
+    // 蒙皮/動畫資料
+    animNodes = modelData.nodes;
+    skinsData = modelData.skins;
+    animations = modelData.animations;
+    if (!animNodes.empty()) {
+        nodeWorld.assign(animNodes.size(), Matrix4::Identity());
+        jointPalettes.resize(skinsData.size());
+        for (size_t s = 0; s < skinsData.size(); ++s) {
+            jointPalettes[s].assign(skinsData[s].joints.size(),
+                                    Matrix4::Identity());
+        }
+        EvaluatePose(); // bind pose 預設
+    }
+
+    // 內嵌貼圖（glTF/VRM）→ GPU texture；檔案路徑貼圖維持原行為
+    for (const auto& pair : modelData.materials) {
+        const MaterialData& md = pair.second;
+        if (!md.embeddedDiffuse.empty() && md.embeddedWidth > 0 &&
+            md.embeddedHeight > 0) {
+            auto tex = MakeUnique<Texture>();
+            if (tex->LoadFromMemory(md.embeddedDiffuse.data(), md.embeddedWidth,
+                                    md.embeddedHeight, md.embeddedChannels)) {
+                textures[md.name] = std::move(tex);
+            }
+        }
+    }
+
     LOG_INFO("Loaded model: " + name + " with " + std::to_string(meshes.size()) + " meshes");
     return true;
+}
+
+void Model::BindMeshMaterial(size_t meshIndex, const std::string& matName,
+                             AdvancedShader& shader) const {
+    (void)meshIndex;
+    auto it = textures.find(matName);
+    if (it != textures.end() && it->second) {
+        it->second->Bind(0);
+        // 兩種慣例都設：builtin "texture" 用 texture1，"skinned" 亦用 texture1
+        shader.SetInt("texture1", 0);
+        shader.SetInt("baseColorTexture", 0);
+        shader.SetBool("useTexture", true);
+    } else {
+        shader.SetBool("useTexture", false);
+    }
 }
 
 void Model::Draw(AdvancedShader& shader) const {
     Matrix4 modelMatrix = GetModelMatrix();
     shader.SetMat4("model", modelMatrix);
-    
-    for (const auto& mesh : meshes) {
-        mesh->Draw();
+
+    for (size_t i = 0; i < meshes.size(); ++i) {
+        const std::string& matName =
+            i < meshMaterialNames.size() ? meshMaterialNames[i] : name;
+        BindMeshMaterial(i, matName, shader);
+        meshes[i]->Draw();
+    }
+    for (size_t i = 0; i < skinnedMeshes.size(); ++i) {
+        const std::string& matName = i < skinnedMeshMaterialNames.size()
+                                         ? skinnedMeshMaterialNames[i] : name;
+        BindMeshMaterial(i, matName, shader);
+
+        // 上傳此 mesh 所屬 skin 的 joint palette；shader 無此 uniform 時 no-op
+        int skinIdx = skinnedMeshes[i]->GetSkinIndex();
+        shader.SetBool("uHasSkin", skinIdx >= 0);
+        if (skinIdx >= 0 && skinIdx < (int)jointPalettes.size() &&
+            !jointPalettes[skinIdx].empty()) {
+            const auto& palette = jointPalettes[skinIdx];
+            shader.SetInt("uJointCount", (int)palette.size());
+            shader.SetMat4Array("uJointMatrices", palette.data(),
+                                (int)palette.size());
+        } else {
+            shader.SetInt("uJointCount", 0);
+        }
+        skinnedMeshes[i]->Draw();
     }
 }
 
@@ -342,6 +874,181 @@ Matrix4 Model::GetModelMatrix() const {
 
 void Model::ProcessNode() {
     // 處理節點層次結構（簡化版本）
+}
+
+// ============================================================================
+// 蒙皮 / 動畫求值
+// ============================================================================
+
+const std::string& Model::GetAnimationName(int index) const {
+    static const std::string empty;
+    if (index < 0 || index >= (int)animations.size()) return empty;
+    return animations[index].name;
+}
+
+bool Model::PlayAnimation(int index) {
+    if (index < 0 || index >= (int)animations.size()) return false;
+    activeAnimation = index;
+    animationTime = 0.0f;
+    EvaluatePose();
+    return true;
+}
+
+bool Model::PlayAnimationByName(const std::string& animName) {
+    for (size_t i = 0; i < animations.size(); ++i) {
+        if (animations[i].name == animName) return PlayAnimation((int)i);
+    }
+    return false;
+}
+
+void Model::StopAnimation() {
+    activeAnimation = -1;
+    animationTime = 0.0f;
+    EvaluatePose(); // 回到 bind pose
+}
+
+void Model::UpdateAnimation(float dt) {
+    if (activeAnimation >= 0 && activeAnimation < (int)animations.size()) {
+        float dur = animations[activeAnimation].duration;
+        animationTime += dt;
+        if (dur > 0.0f) {
+            // loop；倒帶（dt<0）時 clamp 回 0
+            animationTime = std::fmod(animationTime, dur);
+            if (animationTime < 0.0f) animationTime += dur;
+        }
+    }
+    EvaluatePose();
+}
+
+// 在 sampler 的 keyframe 時間軸上取樣；回傳值語意依 channel path 而定
+Vector4 Model::SampleChannel(
+    const ModelData::AnimationClip& clip,
+    const ModelData::AnimationClip::Channel& channel, float time) const {
+    using Sampler = ModelData::AnimationClip::Sampler;
+    if (channel.sampler < 0 || channel.sampler >= (int)clip.samplers.size()) {
+        return Vector4(0, 0, 0, 0);
+    }
+    const Sampler& smp = clip.samplers[channel.sampler];
+    const bool cubic =
+        smp.interpolation == ModelData::AnimationClip::Interpolation::CubicSpline;
+    const size_t keys = smp.times.size();
+    if (keys == 0) return Vector4(0, 0, 0, 0);
+
+    // cubic spline 每個 key 三筆（in/value/out），取值索引時除以 3
+    auto valueAt = [&](size_t key) -> const Vector4& {
+        return smp.values[cubic ? key * 3 + 1 : key];
+    };
+
+    if (time <= smp.times.front() || keys == 1) return valueAt(0);
+    if (time >= smp.times.back()) return valueAt(keys - 1);
+
+    // 找區間 [k, k+1]
+    size_t k = 0;
+    while (k + 1 < keys && smp.times[k + 1] < time) ++k;
+    const float t0 = smp.times[k], t1 = smp.times[k + 1];
+    const float span = std::max(t1 - t0, 1e-8f);
+    const float f = (time - t0) / span;
+
+    const Vector4& a = valueAt(k);
+    const Vector4& b = valueAt(k + 1);
+
+    if (smp.interpolation == ModelData::AnimationClip::Interpolation::Step) {
+        return a;
+    }
+    if (channel.path == ModelData::AnimationClip::Path::Rotation) {
+        Quaternion qa(a.x, a.y, a.z, a.w), qb(b.x, b.y, b.z, b.w);
+        Quaternion q = Quaternion::Slerp(qa, qb, f);
+        return Vector4(q.x, q.y, q.z, q.w);
+    }
+    // CUBICSPLINE 簡化為 Hermite：tangent 已是時間域斜率，需乘區間長
+    if (cubic) {
+        const Vector4& m0 = smp.values[k * 3 + 2];       // out-tangent(k)
+        const Vector4& m1 = smp.values[(k + 1) * 3];     // in-tangent(k+1)
+        const float f2 = f * f, f3 = f2 * f;
+        const float h00 = 2 * f3 - 3 * f2 + 1;
+        const float h10 = f3 - 2 * f2 + f;
+        const float h01 = -2 * f3 + 3 * f2;
+        const float h11 = f3 - f2;
+        return Vector4(
+            h00 * a.x + h10 * span * m0.x + h01 * b.x + h11 * span * m1.x,
+            h00 * a.y + h10 * span * m0.y + h01 * b.y + h11 * span * m1.y,
+            h00 * a.z + h10 * span * m0.z + h01 * b.z + h11 * span * m1.z,
+            h00 * a.w + h10 * span * m0.w + h01 * b.w + h11 * span * m1.w);
+    }
+    // Linear
+    return Vector4(
+        a.x + (b.x - a.x) * f, a.y + (b.y - a.y) * f,
+        a.z + (b.z - a.z) * f, a.w + (b.w - a.w) * f);
+}
+
+void Model::EvaluatePose() {
+    if (animNodes.empty()) return;
+
+    const ModelData::AnimationClip* clip =
+        (activeAnimation >= 0 && activeAnimation < (int)animations.size())
+            ? &animations[activeAnimation] : nullptr;
+
+    // 每個 node 的 local transform：被動畫 channel 命中的分量用取樣值覆蓋
+    nodeWorld.resize(animNodes.size());
+    for (size_t i = 0; i < animNodes.size(); ++i) {
+        const ModelData::NodeData& nd = animNodes[i];
+        Vector3 t = nd.translation;
+        Quaternion r = nd.rotation;
+        Vector3 s = nd.scale;
+        bool useMatrix = nd.hasMatrix;
+
+        if (clip) {
+            for (const auto& ch : clip->channels) {
+                if (ch.node != (int)i) continue;
+                Vector4 v = SampleChannel(*clip, ch, animationTime);
+                switch (ch.path) {
+                case ModelData::AnimationClip::Path::Translation:
+                    t = Vector3(v.x, v.y, v.z); useMatrix = false; break;
+                case ModelData::AnimationClip::Path::Rotation:
+                    r = Quaternion(v.x, v.y, v.z, v.w); useMatrix = false; break;
+                case ModelData::AnimationClip::Path::Scale:
+                    s = Vector3(v.x, v.y, v.z); useMatrix = false; break;
+                case ModelData::AnimationClip::Path::Weights:
+                    break; // morph target 權重——Phase 3
+                }
+            }
+        }
+
+        Matrix4 local = useMatrix
+            ? nd.matrix
+            : Matrix4::Translation(t) * r.ToMatrix() * Matrix4::Scale(s);
+        nodeWorld[i] = (nd.parent >= 0 && nd.parent < (int)i)
+            ? nodeWorld[nd.parent] * local   // nodes 為 parent-before-child 序
+            : local;
+    }
+
+    // joint palette = world(jointNode) * inverseBindMatrix
+    for (size_t si = 0; si < skinsData.size(); ++si) {
+        const auto& skin = skinsData[si];
+        auto& palette = jointPalettes[si];
+        palette.resize(skin.joints.size());
+        for (size_t j = 0; j < skin.joints.size(); ++j) {
+            int ni = skin.joints[j];
+            const Matrix4& world =
+                (ni >= 0 && ni < (int)nodeWorld.size())
+                    ? nodeWorld[ni] : Matrix4::Identity();
+            const Matrix4& ibm =
+                j < skin.inverseBindMatrices.size()
+                    ? skin.inverseBindMatrices[j] : Matrix4::Identity();
+            palette[j] = world * ibm;
+        }
+    }
+}
+
+const std::vector<Matrix4>& Model::GetJointPalette(int skinIndex) const {
+    static const std::vector<Matrix4> empty;
+    if (skinIndex < 0 || skinIndex >= (int)jointPalettes.size()) return empty;
+    return jointPalettes[skinIndex];
+}
+
+int Model::GetJointCount(int skinIndex) const {
+    if (skinIndex < 0 || skinIndex >= (int)skinsData.size()) return 0;
+    return (int)skinsData[skinIndex].joints.size();
 }
 
 // ============================================================================
