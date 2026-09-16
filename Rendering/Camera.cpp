@@ -120,6 +120,10 @@ Matrix4 Camera::GetViewProjectionMatrix() const {
     return GetProjectionMatrix() * GetViewMatrix();
 }
 
+Frustum Camera::GetFrustum() const {
+    return Frustum::FromMatrix(GetViewProjectionMatrix());
+}
+
 Vector3 Camera::GetForward() const {
     return forward;
 }

@@ -1,5 +1,6 @@
 #include "OpenGLRenderer.h"
 #include "Logging/Logger.h"
+#include "Platform/GLFWSharedContext.h"
 #include <iostream>
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
@@ -272,7 +273,8 @@ void OpenGLRenderer::SetupOpenGL() {
 
 void OpenGLRenderer::ShutdownGLFW() {
     if (windowHandle) {
-        glfwDestroyWindow(static_cast<GLFWwindow*>(windowHandle));
+        // 走 DestroyGLFWWindow 釋放共享 context,避免 context map 殘留 stale entry
+        DestroyGLFWWindow(static_cast<GLFWwindow*>(windowHandle));
         windowHandle = nullptr;
     }
     
@@ -499,21 +501,22 @@ void Mesh::Unbind() const {
 }
 
 void Mesh::Draw() const {
+    if (indices.empty() && vertices.empty()) return;
     vertexArray.Bind();
     if (!indices.empty()) {
         glDrawElements(GL_TRIANGLES, static_cast<int>(indices.size()), GL_UNSIGNED_INT, 0);
-    } else if (!vertices.empty()) {
+    } else {
         glDrawArrays(GL_TRIANGLES, 0, static_cast<int>(vertices.size()));
     }
     vertexArray.Unbind();
 }
 
 void Mesh::DrawInstanced(int instanceCount) const {
-    if (instanceCount <= 0) return;
+    if (instanceCount <= 0 || (indices.empty() && vertices.empty())) return;
     vertexArray.Bind();
     if (!indices.empty()) {
         glDrawElementsInstanced(GL_TRIANGLES, static_cast<int>(indices.size()), GL_UNSIGNED_INT, 0, instanceCount);
-    } else if (!vertices.empty()) {
+    } else {
         glDrawArraysInstanced(GL_TRIANGLES, 0, static_cast<int>(vertices.size()), instanceCount);
     }
     vertexArray.Unbind();

@@ -16,6 +16,14 @@ namespace {
 GLFWSharedContext& GetOrCreateGLFWContext(GLFWwindow* window) {
     std::lock_guard<std::mutex> lock(g_contextMutex);
     auto it = g_contexts.find(window);
+    if (it != g_contexts.end() && it->second->installed &&
+        glfwGetWindowUserPointer(window) != it->second.get()) {
+        // 此位址的舊窗口曾被安裝回調,但 user pointer 已不再指向該 context——
+        // 表示窗口被 raw glfwDestroyWindow 銷毀後記憶體位址被新窗口回收。
+        // 殘留的 owner 指標已懸空,必須丟棄重建,否則回調會觸發 UAF。
+        g_contexts.erase(it);
+        it = g_contexts.end();
+    }
     if (it == g_contexts.end()) {
         it = g_contexts.emplace(window, std::make_unique<GLFWSharedContext>()).first;
     }
@@ -39,6 +47,7 @@ void InstallGLFWDispatchCallbacks(GLFWwindow* window) {
     // user pointer 指向共享 context（map 中的物件位址在 unordered_map 內穩定）
     GLFWSharedContext& ctx = GetOrCreateGLFWContext(window);
     glfwSetWindowUserPointer(window, &ctx);
+    ctx.installed = true;
     
     // 窗口關閉
     glfwSetWindowCloseCallback(window, [](GLFWwindow* win) {
@@ -91,6 +100,20 @@ void InstallGLFWDispatchCallbacks(GLFWwindow* window) {
             c->inputOwner->OnScrollEvent(xoffset, yoffset);
         }
     });
+}
+
+void DestroyGLFWWindow(GLFWwindow* window) {
+    if (!window) return;
+    // 先通知 input manager 窗口即將銷毀(清其 windowHandle),
+    // 再清 user pointer 與共享 context,最後銷毀窗口
+    if (GLFWSharedContext* ctx = FindGLFWContext(window)) {
+        if (ctx->inputOwner) {
+            ctx->inputOwner->OnWindowDestroyed();
+        }
+    }
+    glfwSetWindowUserPointer(window, nullptr);
+    ReleaseGLFWContext(window);
+    glfwDestroyWindow(window);
 }
 
 } // namespace Potato

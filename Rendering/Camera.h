@@ -5,6 +5,7 @@
 #include "MathUtils/Vector2.h"
 #include "MathUtils/Matrix4.h"
 #include "MathUtils/Quaternion.h"
+#include "MathUtils/Frustum.h"
 #include <string>
 #include <unordered_map>
 
@@ -59,6 +60,9 @@ public:
     Matrix4 GetViewMatrix() const;
     Matrix4 GetProjectionMatrix() const;
     Matrix4 GetViewProjectionMatrix() const;
+    
+    // 視錐體(用於 Frustum Culling)
+    Frustum GetFrustum() const;
     
     // 相機方向
     Vector3 GetForward() const;

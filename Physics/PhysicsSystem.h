@@ -229,6 +229,11 @@ public:
     void SetFixedTimeStep(float timeStep);
     float GetFixedTimeStep() const { return fixedTimeStep; }
     
+    // Broadphase 網格大小(spatial hash cell size)
+    // 較大 → 每格物體多(假陽性多);較小 → 物體跨格多(插入成本高)
+    void SetBroadphaseCellSize(float size) { broadphaseCellSize = (size > 0.0f) ? size : 4.0f; }
+    float GetBroadphaseCellSize() const { return broadphaseCellSize; }
+    
     // 碰撞回調
     void SetGlobalCollisionCallback(CollisionCallback callback);
     
@@ -262,6 +267,7 @@ private:
     bool initialized;
     
     float accumulatedTime;
+    float broadphaseCellSize;
 };
 
 /**

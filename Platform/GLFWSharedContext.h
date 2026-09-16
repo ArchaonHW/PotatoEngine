@@ -15,6 +15,9 @@ class GLFWInputManager;
 struct GLFWSharedContext {
     GLFWWindow* windowOwner = nullptr;
     GLFWInputManager* inputOwner = nullptr;
+    // 內部狀態：InstallGLFWDispatchCallbacks 完成後為 true,
+    // 用於偵測「窗口被 raw glfwDestroyWindow 銷毀後位址被回收重用」的 stale entry
+    bool installed = false;
 };
 
 // 取得（必要時建立）窗口的共享 context
@@ -28,5 +31,11 @@ void ReleaseGLFWContext(GLFWwindow* window);
 
 // 為窗口安裝統一的 GLFW 回調（冪等，兩個子系統各呼叫一次也安全）
 void InstallGLFWDispatchCallbacks(GLFWwindow* window);
+
+// 銷毀 GLFW 窗口的唯一安全入口：通知 input owner、清 user pointer、
+// 釋放共享 context 後才呼叫 glfwDestroyWindow。
+// 直接呼叫 glfwDestroyWindow 會在 context map 留下 stale entry——
+// GLFW 之後重用同一塊記憶體位址時，新窗口會繼承已懸空的 owner 指標（UAF）。
+void DestroyGLFWWindow(GLFWwindow* window);
 
 } // namespace Potato

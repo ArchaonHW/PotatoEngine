@@ -60,6 +60,7 @@ int main() {
             b->SetPosition(Vector3(0.0f, 0.0f, 0.0f));
             b->SetLinearVelocity(Vector3(1.0f, 0.0f, 0.0f));
             b->SetGravityEnabled(false);
+            b->SetCollisionMask(0); // 排除碰撞:本測試只驗證積分次數
             if (!first) first = b;
         }
 
@@ -126,6 +127,187 @@ int main() {
         world->Step(1.0f / 60.0f);
         float vx = b->GetLinearVelocity().x;
         Check(std::fabs(vx - 1.0f) < 1e-4f, "ApplyForce 乘 dt 積分", vx, 1.0f);
+    }
+
+    // [6] OBB SAT:旋轉 45° 的盒子角對角可與另一盒碰撞(包圍球會誤判)
+    {
+        PhysicsManager& mgr = PhysicsManager::GetInstance();
+        PhysicsWorld* world = mgr.CreateWorld("obb_test");
+        world->Initialize();
+        world->SetGravity(Vector3::Zero());
+
+        PhysicsBody* a = world->CreateBody();
+        a->SetCollisionShape(CollisionShape::Box);
+        a->SetCollisionShapeDimensions(Vector3(2.0f, 2.0f, 2.0f));
+        a->SetPosition(Vector3::Zero());
+        a->SetGravityEnabled(false);
+
+        PhysicsBody* b = world->CreateBody();
+        b->SetCollisionShape(CollisionShape::Box);
+        b->SetCollisionShapeDimensions(Vector3(2.0f, 2.0f, 2.0f));
+        // 繞 Z 轉 45°,頂點朝 -X 伸向 a
+        b->SetRotation(Quaternion::FromAxisAngle(Vector3(0, 0, 1), 3.14159265f / 4.0f));
+        // 45° 旋轉後半徑(頂點)= sqrt(2)≈1.414;放在 x=2.3 → 頂點伸到 x≈0.886,穿入 a(半徑1)
+        b->SetPosition(Vector3(2.3f, 0.0f, 0.0f));
+        b->SetGravityEnabled(false);
+
+        world->Step(1.0f / 60.0f);
+        Check(world->GetCollisionCount() > 0, "旋轉 OBB 角碰撞被 SAT 偵測");
+    }
+
+    // [7] OBB SAT:旋轉盒平行移開後不碰撞(排除假陽性)
+    {
+        PhysicsManager& mgr = PhysicsManager::GetInstance();
+        PhysicsWorld* world = mgr.CreateWorld("obb_miss");
+        world->Initialize();
+        world->SetGravity(Vector3::Zero());
+
+        PhysicsBody* a = world->CreateBody();
+        a->SetCollisionShape(CollisionShape::Box);
+        a->SetCollisionShapeDimensions(Vector3(1.0f, 1.0f, 1.0f));
+        a->SetPosition(Vector3::Zero());
+        a->SetGravityEnabled(false);
+
+        PhysicsBody* b = world->CreateBody();
+        b->SetCollisionShape(CollisionShape::Box);
+        b->SetCollisionShapeDimensions(Vector3(1.0f, 1.0f, 1.0f));
+        b->SetRotation(Quaternion::FromAxisAngle(Vector3(0, 0, 1), 0.6f));
+        b->SetPosition(Vector3(3.0f, 0.0f, 0.0f));
+        b->SetGravityEnabled(false);
+
+        world->Step(1.0f / 60.0f);
+        Check(world->GetCollisionCount() == 0, "分離的旋轉 OBB 不誤報");
+    }
+
+    // [8] Broadphase:大量稀疏物體只產生鄰近碰撞
+    {
+        PhysicsManager& mgr = PhysicsManager::GetInstance();
+        PhysicsWorld* world = mgr.CreateWorld("broadphase_test");
+        world->Initialize();
+        world->SetGravity(Vector3::Zero());
+
+        // 10x10 稀疏網格(間距 10,半徑 0.5 → 無碰撞)
+        for (int x = 0; x < 10; x++) {
+            for (int z = 0; z < 10; z++) {
+                PhysicsBody* b = world->CreateBody();
+                b->SetCollisionShape(CollisionShape::Sphere);
+                b->SetCollisionShapeDimensions(Vector3(0.5f, 0.5f, 0.5f));
+                b->SetPosition(Vector3(x * 10.0f, 0.0f, z * 10.0f));
+                b->SetGravityEnabled(false);
+            }
+        }
+        // 再放一對重疊球體
+        PhysicsBody* c1 = world->CreateBody();
+        c1->SetCollisionShape(CollisionShape::Sphere);
+        c1->SetCollisionShapeDimensions(Vector3(1.0f, 1.0f, 1.0f));
+        c1->SetPosition(Vector3(500.0f, 0.0f, 0.0f));
+        c1->SetGravityEnabled(false);
+        PhysicsBody* c2 = world->CreateBody();
+        c2->SetCollisionShape(CollisionShape::Sphere);
+        c2->SetCollisionShapeDimensions(Vector3(1.0f, 1.0f, 1.0f));
+        c2->SetPosition(Vector3(500.8f, 0.0f, 0.0f));
+        c2->SetGravityEnabled(false);
+
+        world->Step(1.0f / 60.0f);
+        Check(world->GetCollisionCount() == 1, "102 物體 spatial hash 只偵測到 1 對真碰撞");
+    }
+
+    // [9] Raycast 球體:命中表面點(修正:Sphere dims.x 就是半徑,舊版誤乘 0.5)
+    {
+        PhysicsManager& mgr = PhysicsManager::GetInstance();
+        PhysicsWorld* world = mgr.CreateWorld("ray_sphere");
+        world->Initialize();
+
+        PhysicsBody* b = world->CreateBody();
+        b->SetCollisionShape(CollisionShape::Sphere);
+        b->SetCollisionShapeDimensions(Vector3(1.0f, 1.0f, 1.0f)); // 半徑 1
+        b->SetPosition(Vector3(5.0f, 0.0f, 0.0f));
+
+        CollisionData hit;
+        Check(world->Raycast(Vector3::Zero(), Vector3(10.0f, 0.0f, 0.0f), hit),
+              "射線命中球體");
+        Check(std::fabs(hit.position.x - 4.0f) < 0.05f,
+              "命中點在球表面 x≈4", hit.position.x, 4.0f);
+        Check(hit.normal.x < -0.9f, "命中法線朝 -X(頂著射線)", hit.normal.x, -1.0f);
+        Check(hit.otherBodyID == b->GetBodyID(), "命中回傳正確 bodyID");
+    }
+
+    // [10] Raycast 未命中:射線從球上方掠過
+    {
+        PhysicsManager& mgr = PhysicsManager::GetInstance();
+        PhysicsWorld* world = mgr.CreateWorld("ray_miss");
+        world->Initialize();
+
+        PhysicsBody* b = world->CreateBody();
+        b->SetCollisionShape(CollisionShape::Sphere);
+        b->SetCollisionShapeDimensions(Vector3(1.0f, 1.0f, 1.0f));
+        b->SetPosition(Vector3(5.0f, 0.0f, 0.0f));
+
+        CollisionData hit;
+        Check(!world->Raycast(Vector3(0.0f, 3.0f, 0.0f), Vector3(10.0f, 3.0f, 0.0f), hit),
+              "掠過射線未命中");
+    }
+
+    // [11] Raycast 最近命中:遠近兩球,應命中近者
+    {
+        PhysicsManager& mgr = PhysicsManager::GetInstance();
+        PhysicsWorld* world = mgr.CreateWorld("ray_nearest");
+        world->Initialize();
+
+        PhysicsBody* near_ = world->CreateBody();
+        near_->SetCollisionShape(CollisionShape::Sphere);
+        near_->SetCollisionShapeDimensions(Vector3(0.5f, 0.5f, 0.5f));
+        near_->SetPosition(Vector3(3.0f, 0.0f, 0.0f));
+
+        PhysicsBody* far = world->CreateBody();
+        far->SetCollisionShape(CollisionShape::Sphere);
+        far->SetCollisionShapeDimensions(Vector3(0.5f, 0.5f, 0.5f));
+        far->SetPosition(Vector3(8.0f, 0.0f, 0.0f));
+
+        CollisionData hit;
+        Check(world->Raycast(Vector3::Zero(), Vector3(10.0f, 0.0f, 0.0f), hit)
+              && hit.otherBodyID == near_->GetBodyID(),
+              "命中最近的球體");
+    }
+
+    // [12] Raycast 旋轉 OBB:45° 盒子的斜邊被精確命中(包圍球會誤判提早命中)
+    {
+        PhysicsManager& mgr = PhysicsManager::GetInstance();
+        PhysicsWorld* world = mgr.CreateWorld("ray_obb");
+        world->Initialize();
+
+        PhysicsBody* box = world->CreateBody();
+        box->SetCollisionShape(CollisionShape::Box);
+        box->SetCollisionShapeDimensions(Vector3(2.0f, 2.0f, 2.0f));
+        box->SetPosition(Vector3::Zero());
+        box->SetRotation(Quaternion::FromAxisAngle(Vector3(0, 0, 1), 3.14159265f / 4.0f));
+
+        // 射線高 y=0.8 水平 +X:45° 旋轉盒在 y=0.8 的橫切面是 x∈[-0.614,0.614]
+        // (|0.707x+0.566|≤1 ∩ |0.566-0.707x|≤1 → 進入點 x≈-0.614)
+        // 若誤用包圍球(半徑√2)會在 x≈-1.166 提早命中
+        CollisionData hit;
+        Check(world->Raycast(Vector3(-5.0f, 0.8f, 0.0f), Vector3(5.0f, 0.8f, 0.0f), hit),
+              "射線命中旋轉 OBB");
+        Check(std::fabs(hit.position.x + 0.6142f) < 0.02f,
+              "OBB 命中點在斜邊上 x≈-0.614", hit.position.x, -0.6142f);
+        Check(hit.normal.Dot(Vector3(1.0f, 0.0f, 0.0f)) < 0.0f,
+              "OBB 命中法線頂著射線方向");
+    }
+
+    // [13] Raycast 線段端點:線段太短碰不到球 → 未命中
+    {
+        PhysicsManager& mgr = PhysicsManager::GetInstance();
+        PhysicsWorld* world = mgr.CreateWorld("ray_segment");
+        world->Initialize();
+
+        PhysicsBody* b = world->CreateBody();
+        b->SetCollisionShape(CollisionShape::Sphere);
+        b->SetCollisionShapeDimensions(Vector3(1.0f, 1.0f, 1.0f));
+        b->SetPosition(Vector3(5.0f, 0.0f, 0.0f));
+
+        CollisionData hit;
+        Check(!world->Raycast(Vector3::Zero(), Vector3(2.0f, 0.0f, 0.0f), hit),
+              "短線段未命中(端點在球前)");
     }
 
     printf("\n=== 結果: %d PASS, %d FAIL ===\n", g_pass, g_fail);

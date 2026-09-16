@@ -4,7 +4,9 @@
 #include "MathUtils/Vector4.h"
 #include "MathUtils/Matrix4.h"
 #include "MathUtils/Quaternion.h"
+#include "MathUtils/Frustum.h"
 #include <iostream>
+#include <cstdlib>
 
 using namespace Potato;
 
@@ -93,6 +95,41 @@ int main() {
     
     Matrix4 qMatrix = qRotation.ToMatrix4();
     std::cout << "Quaternion to Matrix4 conversion" << std::endl;
+    std::cout << std::endl;
+
+    // Test Frustum (視錐剔除)
+    std::cout << "--- Frustum ---" << std::endl;
+    {
+        // 相機在原點朝 -Z 看,fov 60,near 0.1,far 100
+        Matrix4 proj = Matrix4::Perspective(60.0f * PI / 180.0f, 16.0f / 9.0f, 0.1f, 100.0f);
+        Matrix4 view = Matrix4::LookAt(Vector3(0, 0, 0), Vector3(0, 0, -1), Vector3(0, 1, 0));
+        Frustum frustum = Frustum::FromMatrix(proj * view);
+
+        auto check = [](bool ok, const char* name) {
+            std::cout << (ok ? "  [PASS] " : "  [FAIL] ") << name << std::endl;
+            if (!ok) { std::cout << "FRUSTUM TEST FAILED" << std::endl; exit(1); }
+        };
+
+        // 視錐內的點(正前方)
+        check(frustum.ContainsPoint(Vector3(0, 0, -10)), "前方點在視錐內");
+        // 相機後方的點
+        check(!frustum.ContainsPoint(Vector3(0, 0, 10)), "後方點被剔除");
+        // 超出 far plane
+        check(!frustum.ContainsPoint(Vector3(0, 0, -200)), "超過 far 被剔除");
+        // near plane 之前
+        check(!frustum.ContainsPoint(Vector3(0, 0, -0.01f)), "near 之前被剔除");
+        // 側面超出 fov
+        check(!frustum.ContainsPoint(Vector3(50, 0, -10)), "側面超出 fov 被剔除");
+
+        // 球體:部分相交算可見
+        check(frustum.ContainsSphere(Vector3(0, 0, -10), 2.0f), "球體在視錐內");
+        check(!frustum.ContainsSphere(Vector3(0, 0, 20), 2.0f), "後方球體被剔除");
+        check(frustum.ContainsSphere(Vector3(0, 0, -101), 3.0f), "球體跨越 far 仍算可見(相交)");
+
+        // AABB
+        check(frustum.ContainsAABB(AABB(Vector3(-1, -1, -6), Vector3(1, 1, -4))), "AABB 在視錐內");
+        check(!frustum.ContainsAABB(AABB(Vector3(90, -1, -11), Vector3(91, 1, -9))), "側面 AABB 被剔除");
+    }
     std::cout << std::endl;
 
     std::cout << "=== All Math Tests Passed ===" << std::endl;

@@ -1,4 +1,5 @@
 #include "Serialization.h"
+#include "JsonParser.h"
 #include <iostream>
 #include <algorithm>
 #include <cstdio>
@@ -330,10 +331,38 @@ std::string SceneNodeData::Serialize() const {
     return ss.str();
 }
 
+// 從 JsonValue array 讀 Vector3([x,y,z])
+static bool ReadVector3(const JsonValue& v, Vector3& out) {
+    if (!v.IsArray() || v.Size() < 3) return false;
+    out.x = v[0].AsFloat();
+    out.y = v[1].AsFloat();
+    out.z = v[2].AsFloat();
+    return true;
+}
+
+// 從 JsonValue array 讀 Quaternion([x,y,z,w])
+static bool ReadQuaternion(const JsonValue& v, Quaternion& out) {
+    if (!v.IsArray() || v.Size() < 4) return false;
+    out.x = v[0].AsFloat();
+    out.y = v[1].AsFloat();
+    out.z = v[2].AsFloat();
+    out.w = v[3].AsFloat();
+    return true;
+}
+
 bool SceneNodeData::Deserialize(const std::string& data) {
-    // 簡化實現：解析JSON字符串
-    // 實際應該使用JSON解析庫
-    std::cout << "Deserializing SceneNodeData: " << data << std::endl;
+    JsonValue root;
+    if (!JsonValue::ParseOk(data, root) || !root.IsObject()) {
+        return false;
+    }
+    name = root["name"].AsString();
+    ReadVector3(root["position"], position);
+    ReadQuaternion(root["rotation"], rotation);
+    ReadVector3(root["scale"], scale);
+    children.clear();
+    for (const auto& c : root["children"].AsArray()) {
+        children.push_back(c.AsString());
+    }
     return true;
 }
 
@@ -350,8 +379,15 @@ std::string GameObjectData::Serialize() const {
 }
 
 bool GameObjectData::Deserialize(const std::string& data) {
-    // 簡化實現：解析JSON字符串
-    std::cout << "Deserializing GameObjectData: " << data << std::endl;
+    JsonValue root;
+    if (!JsonValue::ParseOk(data, root) || !root.IsObject()) {
+        return false;
+    }
+    name = root["name"].AsString();
+    tag = root["tag"].AsString();
+    layer = root["layer"].AsInt();
+    active = root["active"].AsBool(true);
+    sceneNodeData = root["sceneNodeData"].AsString();
     return true;
 }
 
@@ -371,8 +407,17 @@ std::string GameStateData::Serialize() const {
 }
 
 bool GameStateData::Deserialize(const std::string& data) {
-    // 簡化實現：解析JSON字符串
-    std::cout << "Deserializing GameStateData: " << data << std::endl;
+    JsonValue root;
+    if (!JsonValue::ParseOk(data, root) || !root.IsObject()) {
+        return false;
+    }
+    levelName = root["levelName"].AsString();
+    playTime = root["playTime"].AsFloat();
+    score = root["score"].AsInt();
+    activeObjects.clear();
+    for (const auto& o : root["activeObjects"].AsArray()) {
+        activeObjects.push_back(o.AsString());
+    }
     return true;
 }
 

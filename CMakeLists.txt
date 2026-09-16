@@ -396,6 +396,7 @@ target_link_libraries(SecurityRedTeamTest PotatoEngine)
 # 紅隊測試用的無害 DLL（模擬被注入的作弊模組）
 add_library(FakeCheatModule SHARED Examples/FakeCheatModule.cpp)
 set_target_properties(FakeCheatModule PROPERTIES OUTPUT_NAME "FakeCheat" PREFIX "")
+add_dependencies(SecurityRedTeamTest FakeCheatModule)
 
 # 子系統測試程序
 add_executable(FileSystemTest Examples/FileSystemTest.cpp)
@@ -414,8 +415,21 @@ add_executable(PlatformTest Examples/PlatformTest.cpp)
 target_include_directories(PlatformTest PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(PlatformTest PotatoEngine)
 
-# add_executable(PlatformTest Examples/PlatformTest.cpp)
-# target_link_libraries(PlatformTest PotatoEngine)
+add_executable(SceneTest Examples/SceneTest.cpp)
+target_include_directories(SceneTest PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(SceneTest PotatoEngine)
+
+add_executable(SerializationTest Examples/SerializationTest.cpp)
+target_include_directories(SerializationTest PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(SerializationTest PotatoEngine)
+
+add_executable(RenderPipelineTest Examples/RenderPipelineTest.cpp)
+target_include_directories(RenderPipelineTest PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(RenderPipelineTest PotatoEngine)
+
+add_executable(ModelLoaderTest Examples/ModelLoaderTest.cpp)
+target_include_directories(ModelLoaderTest PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(ModelLoaderTest PotatoEngine)
 
 # AI Agent GUI 示例 (暫時禁用)
 # add_executable(AIAgentGUIExample Examples/AIAgentGUIExample.cpp)
@@ -448,6 +462,37 @@ install(DIRECTORY Serialization/ DESTINATION include/PotatoEngine FILES_MATCHING
 install(DIRECTORY Time/ DESTINATION include/PotatoEngine FILES_MATCHING PATTERN "*.h")
 install(DIRECTORY AI/ DESTINATION include/PotatoEngine FILES_MATCHING PATTERN "*.h")
 install(DIRECTORY GUI/ DESTINATION include/PotatoEngine FILES_MATCHING PATTERN "*.h")
+
+# ============================================================================
+# CTest - 非互動測試可用 ctest 一鍵執行
+# ============================================================================
+enable_testing()
+
+set(POTATO_TESTS
+    MinimalTest
+    MathTest
+    PhysicsTest
+    FileSystemTest
+    LoggerTest
+    MemoryTest
+    PlatformTest
+    SceneTest
+    SerializationTest
+    RenderPipelineTest
+    ModelLoaderTest
+    SecurityRedTeamTest
+    AITestSuite
+    DevAssistantSmoke
+    DoctrineBattleDemo
+)
+foreach(test_name IN LISTS POTATO_TESTS)
+    if(TARGET ${test_name})
+        add_test(NAME ${test_name} COMMAND ${test_name})
+        # 測試需要同目錄的 DLL(如 FakeCheat.dll),工作目錄設為 bin
+        set_tests_properties(${test_name} PROPERTIES
+            WORKING_DIRECTORY ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
+    endif()
+endforeach()
 
 # CPack 打包配置
 set(CPACK_PACKAGE_NAME "PotatoEngine")

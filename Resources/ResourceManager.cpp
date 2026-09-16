@@ -15,7 +15,7 @@ namespace Potato {
 ResourceManager* gResourceManager = nullptr;
 
 // ============================================================================
-// ResourceHandle 實現
+// ResourceCacheHandle 實現
 // ============================================================================
 
 ResourceCacheHandle::ResourceCacheHandle()

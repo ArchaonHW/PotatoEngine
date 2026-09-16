@@ -1,9 +1,17 @@
 #include "PhysicsSystem.h"
+#include "CollisionDetection.h"
 #include "Logging/Logger.h"
 #include <cmath>
 #include <algorithm>
+#include <unordered_map>
+#include <unordered_set>
 
 namespace Potato {
+
+namespace {
+float BoundingRadius(const PhysicsBody* body);
+OBB BodyOBB(const PhysicsBody* body);
+}
 
 // ============================================================================
 // PhysicsBody 實現
@@ -154,6 +162,7 @@ PhysicsWorld::PhysicsWorld()
     , collisionCount(0)
     , initialized(false)
     , accumulatedTime(0.0f)
+    , broadphaseCellSize(4.0f)
 {
 }
 
@@ -273,39 +282,42 @@ void PhysicsWorld::SetGlobalCollisionCallback(CollisionCallback callback) {
 }
 
 bool PhysicsWorld::Raycast(const Vector3& from, const Vector3& to, CollisionData& result) {
-    // 線段-球體測試：檢查線段上最近點到物體中心的距離
+    // 精確射線檢測：依形狀分派 RayVsSphere / RayVsOBB(slab 法)
     Vector3 direction = to - from;
     float distance = direction.Length();
     if (distance <= 1e-6f) {
         return false;
     }
-    direction = direction / distance; // Normalize() 回傳副本，需重新賦值
+    direction = direction / distance;
     
     PhysicsBody* closestBody = nullptr;
-    float closestProj = distance;
-    Vector3 closestPoint;
-    float closestDist = 0.0f;
+    float closestT = distance;
+    Vector3 closestNormal(0.0f, 1.0f, 0.0f);
     
     for (auto body : bodies) {
-        Vector3 bodyPos = body->GetPosition();
-        float radius = body->GetCollisionShapeDimensions().x * 0.5f;
-        if (radius <= 0.0f) {
-            radius = 0.5f;
+        float t = 0.0f;
+        Vector3 n;
+        bool hit = false;
+        
+        switch (body->GetCollisionShape()) {
+            case CollisionShape::Sphere:
+                hit = RayVsSphere(from, direction, body->GetPosition(),
+                                  BoundingRadius(body), closestT, t, n);
+                break;
+            case CollisionShape::Box:
+                hit = RayVsOBB(from, direction, BodyOBB(body), closestT, t, n);
+                break;
+            default:
+                // 其他形狀退回包圍球
+                hit = RayVsSphere(from, direction, body->GetPosition(),
+                                  BoundingRadius(body), closestT, t, n);
+                break;
         }
         
-        Vector3 toBody = bodyPos - from;
-        float proj = toBody.Dot(direction);
-        if (proj < 0.0f || proj > closestProj) {
-            continue; // 在射線反方向，或比已找到的命中更遠
-        }
-        
-        Vector3 pointOnRay = from + direction * proj;
-        float distToCenter = (bodyPos - pointOnRay).Length();
-        if (distToCenter <= radius) {
+        if (hit && t <= closestT) {
             closestBody = body;
-            closestProj = proj;
-            closestPoint = pointOnRay;
-            closestDist = distToCenter;
+            closestT = t;
+            closestNormal = n;
         }
     }
     
@@ -313,11 +325,9 @@ bool PhysicsWorld::Raycast(const Vector3& from, const Vector3& to, CollisionData
         return false;
     }
     
-    result.position = closestPoint;
-    // 法線方向：從物體中心指向命中點（頂著射線方向）
-    Vector3 n = closestPoint - closestBody->GetPosition();
-    result.normal = (n.Length() > 1e-6f) ? n.Normalized() : Vector3(0.0f, 1.0f, 0.0f);
-    result.penetrationDepth = closestDist;
+    result.position = from + direction * closestT;
+    result.normal = closestNormal;
+    result.penetrationDepth = closestT; // 命中距離
     result.otherBodyID = closestBody->GetBodyID();
     result.bodyBID = closestBody->GetBodyID();
     
@@ -352,15 +362,60 @@ void PhysicsWorld::UpdateBodies(float deltaTime) {
 }
 
 namespace {
-// 簡化碰撞檢測用包圍球半徑:Sphere 直接取 dimensions.x,其他形狀取最大邊一半
+
+// 世界縮放的最大軸
+float MaxScale(const PhysicsBody* body) {
+    const Vector3& s = body->GetScale();
+    return std::max({std::fabs(s.x), std::fabs(s.y), std::fabs(s.z)});
+}
+
+// 包圍球半徑(含世界縮放):Sphere 取 dimensions.x,其他形狀取最大邊一半
 float BoundingRadius(const PhysicsBody* body) {
     const Vector3& d = body->GetCollisionShapeDimensions();
+    float base;
     if (body->GetCollisionShape() == CollisionShape::Sphere) {
-        return (d.x > 0.0f) ? d.x : 0.5f;
+        base = (d.x > 0.0f) ? d.x : 0.5f;
+    } else {
+        float maxDim = std::max({d.x, d.y, d.z});
+        base = (maxDim > 0.0f) ? maxDim * 0.5f : 0.5f;
     }
-    float maxDim = std::max({d.x, d.y, d.z});
-    return (maxDim > 0.0f) ? maxDim * 0.5f : 0.5f;
+    return base * MaxScale(body);
 }
+
+// 由 PhysicsBody 建構 OBB(shapeDimensions 為全尺寸,乘 scale 後取半)
+OBB BodyOBB(const PhysicsBody* body) {
+    return OBB::FromTransform(
+        body->GetPosition(),
+        body->GetCollisionShapeDimensions() * body->GetScale() * 0.5f,
+        body->GetRotation());
+}
+
+// Narrowphase 分派:依兩物體形狀選擇精確測試,其餘形狀退回包圍球
+// 回傳的 normal 一律為 B → A 方向(配合 ResolveCollisions 的分離方向)
+SATResult Narrowphase(const PhysicsBody* a, const PhysicsBody* b) {
+    CollisionShape sa = a->GetCollisionShape();
+    CollisionShape sb = b->GetCollisionShape();
+
+    if (sa == CollisionShape::Sphere && sb == CollisionShape::Sphere) {
+        return TestSphereVsSphere(a->GetPosition(), BoundingRadius(a),
+                                  b->GetPosition(), BoundingRadius(b));
+    }
+    if (sa == CollisionShape::Box && sb == CollisionShape::Box) {
+        return TestOBBvsOBB(BodyOBB(a), BodyOBB(b));
+    }
+    if (sa == CollisionShape::Sphere && sb == CollisionShape::Box) {
+        return TestSphereVsOBB(a->GetPosition(), BoundingRadius(a), BodyOBB(b));
+    }
+    if (sa == CollisionShape::Box && sb == CollisionShape::Sphere) {
+        SATResult r = TestSphereVsOBB(b->GetPosition(), BoundingRadius(b), BodyOBB(a));
+        r.normal = -r.normal; // box→sphere 翻成 B→A
+        return r;
+    }
+    // Capsule/Cylinder/Cone/Mesh/HeightField 等:退回包圍球近似
+    return TestSphereVsSphere(a->GetPosition(), BoundingRadius(a),
+                              b->GetPosition(), BoundingRadius(b));
+}
+
 } // namespace
 
 void PhysicsWorld::DetectCollisions() {
@@ -370,49 +425,97 @@ void PhysicsWorld::DetectCollisions() {
     // 快照：碰撞回調可能呼叫 DestroyBody/CreateBody 導致迭代器失效
     std::vector<PhysicsBody*> snapshot = bodies;
     
-    // 簡化實現：O(N^2) 碰撞檢測
-    for (size_t i = 0; i < snapshot.size(); i++) {
-        for (size_t j = i + 1; j < snapshot.size(); j++) {
-            PhysicsBody* bodyA = snapshot[i];
-            PhysicsBody* bodyB = snapshot[j];
-            
-            // 回調可能已銷毀物體，確認仍屬於世界
-            if (std::find(bodies.begin(), bodies.end(), bodyA) == bodies.end() ||
-                std::find(bodies.begin(), bodies.end(), bodyB) == bodies.end()) {
-                continue;
-            }
-            
-            // 檢查碰撞過濾
-            if ((bodyA->GetCollisionGroup() & bodyB->GetCollisionMask()) == 0) {
-                continue;
-            }
-            
-            // 簡化碰撞檢測：以包圍球判定
-            Vector3 diff = bodyA->GetPosition() - bodyB->GetPosition();
-            float distance = diff.Length();
-            float minDistance = BoundingRadius(bodyA) + BoundingRadius(bodyB);
-            
-            if (distance < minDistance) {
-                CollisionData collision;
-                collision.position = (bodyA->GetPosition() + bodyB->GetPosition()) * 0.5f;
-                // 兩物體完全重疊時 diff 為零向量，Normalized 會產生 NaN
-                collision.normal = (distance > 1e-6f) ? diff.Normalized() : Vector3(0.0f, 1.0f, 0.0f);
-                collision.penetrationDepth = minDistance - distance;
-                collision.bodyAID = bodyA->GetBodyID();
-                collision.bodyBID = bodyB->GetBodyID();
-                collision.otherBodyID = bodyB->GetBodyID();
+    // ========================================================================
+    // Broadphase: Uniform Spatial Hash
+    // 每個物體的包圍球 AABB 映射到網格 cell,只對共享 cell 的物體對做
+    // narrowphase — 由 O(N^2) 降至近似 O(N)
+    // ========================================================================
+    const float invCell = 1.0f / broadphaseCellSize;
+    std::unordered_map<int64_t, std::vector<int>> grid;
+    grid.reserve(snapshot.size() * 2);
+    
+    // 3 個 21-bit cell 座標打包(允許負座標,以 2^20 偏移)
+    auto packCell = [](int x, int y, int z) -> int64_t {
+        return (static_cast<int64_t>(x) + (1 << 20))
+             | ((static_cast<int64_t>(y) + (1 << 20)) << 21)
+             | ((static_cast<int64_t>(z) + (1 << 20)) << 42);
+    };
+    
+    for (int i = 0; i < static_cast<int>(snapshot.size()); ++i) {
+        PhysicsBody* b = snapshot[i];
+        float r = BoundingRadius(b);
+        const Vector3& p = b->GetPosition();
+        
+        int x0 = static_cast<int>(std::floor((p.x - r) * invCell));
+        int y0 = static_cast<int>(std::floor((p.y - r) * invCell));
+        int z0 = static_cast<int>(std::floor((p.z - r) * invCell));
+        int x1 = static_cast<int>(std::floor((p.x + r) * invCell));
+        int y1 = static_cast<int>(std::floor((p.y + r) * invCell));
+        int z1 = static_cast<int>(std::floor((p.z + r) * invCell));
+        
+        for (int x = x0; x <= x1; ++x)
+            for (int y = y0; y <= y1; ++y)
+                for (int z = z0; z <= z1; ++z)
+                    grid[packCell(x, y, z)].push_back(i);
+    }
+    
+    // 已測試物體對去重(跨 cell 會重複出現)
+    std::unordered_set<int64_t> tested;
+    
+    auto testPair = [&](PhysicsBody* bodyA, PhysicsBody* bodyB) {
+        // 雙向碰撞過濾:A 的 group 要在 B 的 mask 內,反之亦然
+        if ((bodyA->GetCollisionGroup() & bodyB->GetCollisionMask()) == 0 ||
+            (bodyB->GetCollisionGroup() & bodyA->GetCollisionMask()) == 0) {
+            return;
+        }
+        
+        SATResult hit = Narrowphase(bodyA, bodyB);
+        if (!hit.intersects) return;
+        
+        CollisionData collision;
+        collision.position = (bodyA->GetPosition() + bodyB->GetPosition()) * 0.5f;
+        collision.normal = hit.normal;           // B → A
+        collision.penetrationDepth = hit.depth;
+        collision.bodyAID = bodyA->GetBodyID();
+        collision.bodyBID = bodyB->GetBodyID();
+        collision.otherBodyID = bodyB->GetBodyID();
+        
+        activeCollisions.push_back(collision);
+        collisionCount++;
+        
+        if (bodyA->collisionCallback) {
+            bodyA->collisionCallback(collision);
+        }
+        if (bodyB->collisionCallback) {
+            // 給 B 的回調:把 other 換成 A,保持「otherBodyID = 對方」的語意
+            CollisionData forB = collision;
+            forB.otherBodyID = bodyA->GetBodyID();
+            bodyB->collisionCallback(forB);
+        }
+        if (globalCollisionCallback) {
+            globalCollisionCallback(collision);
+        }
+    };
+    
+    for (auto& [key, cell] : grid) {
+        (void)key;
+        for (size_t a = 0; a < cell.size(); ++a) {
+            for (size_t b = a + 1; b < cell.size(); ++b) {
+                int lo = std::min(cell[a], cell[b]);
+                int hi = std::max(cell[a], cell[b]);
+                int64_t pairKey = (static_cast<int64_t>(lo) << 32) | hi;
+                if (!tested.insert(pairKey).second) continue;
                 
-                activeCollisions.push_back(collision);
-                collisionCount++;
+                PhysicsBody* bodyA = snapshot[lo];
+                PhysicsBody* bodyB = snapshot[hi];
                 
-                // 觸發回調
-                if (bodyA->collisionCallback) {
-                    bodyA->collisionCallback(collision);
+                // 回調可能已銷毀物體,確認仍屬於世界
+                if (std::find(bodies.begin(), bodies.end(), bodyA) == bodies.end() ||
+                    std::find(bodies.begin(), bodies.end(), bodyB) == bodies.end()) {
+                    continue;
                 }
                 
-                if (globalCollisionCallback) {
-                    globalCollisionCallback(collision);
-                }
+                testPair(bodyA, bodyB);
             }
         }
     }

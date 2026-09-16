@@ -92,17 +92,9 @@ void GLFWWindow::Shutdown() {
     }
     
     if (windowHandle) {
-        GLFWwindow* window = static_cast<GLFWwindow*>(windowHandle);
-        // 先通知 input manager 窗口即將銷毀(清其 windowHandle),
-        // 再清 user pointer 與共享 context,最後銷毀窗口
-        if (GLFWSharedContext* ctx = FindGLFWContext(window)) {
-            if (ctx->inputOwner) {
-                ctx->inputOwner->OnWindowDestroyed();
-            }
-        }
-        glfwSetWindowUserPointer(window, nullptr);
-        ReleaseGLFWContext(window);
-        glfwDestroyWindow(window);
+        // 統一走 DestroyGLFWWindow：通知 input owner、清 user pointer、
+        // 釋放共享 context,避免 raw glfwDestroyWindow 留下 stale entry
+        DestroyGLFWWindow(static_cast<GLFWwindow*>(windowHandle));
         windowHandle = nullptr;
     }
     
@@ -321,6 +313,9 @@ void StandardConditionVariable::Wait(IMutex& mutex) {
     // 用預設建構的 unique_lock 會對已鎖定的 mutex 再次 lock() 造成自我死結
     std::unique_lock<std::mutex> lock(stdMutex->mutex, std::adopt_lock);
     cv.wait(lock);
+    // wait 返回後 mutex 已重新持有；release 讓 unique_lock 解構時不 unlock,
+    // 所有權交還呼叫者(否則呼叫者稍後 Unlock() 會變成 double-unlock UB)
+    lock.release();
 }
 
 void StandardConditionVariable::NotifyOne() {
@@ -334,7 +329,9 @@ void StandardConditionVariable::NotifyAll() {
 bool StandardConditionVariable::WaitFor(IMutex& mutex, uint32 milliseconds) {
     StandardMutex* stdMutex = static_cast<StandardMutex*>(&mutex);
     std::unique_lock<std::mutex> lock(stdMutex->mutex, std::adopt_lock);
-    return cv.wait_for(lock, std::chrono::milliseconds(milliseconds)) == std::cv_status::no_timeout;
+    bool noTimeout = cv.wait_for(lock, std::chrono::milliseconds(milliseconds)) == std::cv_status::no_timeout;
+    lock.release(); // 同上：mutex 所有權交還呼叫者
+    return noTimeout;
 }
 
 // ============================================================================

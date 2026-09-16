@@ -1,5 +1,7 @@
 #include "SceneNode.h"
+#include "Rendering/RenderableComponent.h"
 #include <algorithm>
+#include <cmath>
 
 namespace Potato {
 
@@ -23,6 +25,14 @@ SceneNode::SceneNode()
     , worldMatrix(Matrix4::Identity())
     , parent(nullptr)
 {
+}
+
+void SceneNode::SetRenderable(SharedPtr<RenderableComponent> r) {
+    renderable = std::move(r);
+    // 組件攜帶包圍半徑時同步到節點,讓 Frustum Culling 生效
+    if (renderable && renderable->boundingRadius >= 0.0f) {
+        boundingRadius = renderable->boundingRadius;
+    }
 }
 
 SceneNode::SceneNode(const std::string& name)
@@ -240,6 +250,37 @@ void SceneNode::MarkDirty() {
     }
 }
 
+void SceneNode::GetWorldBoundingSphere(Vector3& center, float& radius) const {
+    center = GetWorldPosition();
+    // 非均勻縮放下取最大軸,保證包圍球仍包住物件
+    const Vector3& ws = GetWorldScale();
+    float maxScale = std::max({std::fabs(ws.x), std::fabs(ws.y), std::fabs(ws.z)});
+    radius = boundingRadius * maxScale;
+}
+
+bool SceneNode::IsVisibleInFrustum(const Frustum& frustum) const {
+    if (boundingRadius < 0.0f) return true; // 不參與剔除
+    Vector3 center;
+    float radius;
+    GetWorldBoundingSphere(center, radius);
+    return frustum.ContainsSphere(center, radius);
+}
+
+void SceneNode::CollectVisibleNodes(const Frustum& frustum, std::vector<SceneNode*>& out) {
+    if (!active) return;
+    
+    // 參與剔除的節點:整顆包圍球在視錐外 → 連同子樹一起剔除
+    if (boundingRadius >= 0.0f && !IsVisibleInFrustum(frustum)) {
+        return;
+    }
+    if (boundingRadius >= 0.0f) {
+        out.push_back(this);
+    }
+    for (auto& child : children) {
+        child->CollectVisibleNodes(frustum, out);
+    }
+}
+
 // ============================================================================
 // SceneGraph 實現
 // ============================================================================
@@ -310,6 +351,14 @@ void SceneGraph::CountNodes(SceneNode* node, size_t& count) const {
     for (auto& child : node->GetChildren()) {
         CountNodes(child.get(), count);
     }
+}
+
+std::vector<SceneNode*> SceneGraph::CollectVisibleNodes(const Frustum& frustum) {
+    std::vector<SceneNode*> visible;
+    if (rootNode) {
+        rootNode->CollectVisibleNodes(frustum, visible);
+    }
+    return visible;
 }
 
 // ============================================================================
