@@ -171,6 +171,7 @@ public:
 private:
     std::vector<std::unique_ptr<NeuralLayer>> layers;
     std::vector<size_t> layerSizes;
+    std::vector<std::string> layerActivations;
     bool built;
     std::string lossFunction;
     

@@ -99,19 +99,19 @@ NeuralLayer::NeuralLayer(size_t inputSize, size_t outputSize, const std::string&
     
     // Set activation function
     if (activation == "sigmoid") {
-        activation = Activation::Sigmoid;
+        this->activation = Activation::Sigmoid;
         activationDerivative = Activation::SigmoidDerivative;
     } else if (activation == "relu") {
-        activation = Activation::ReLU;
+        this->activation = Activation::ReLU;
         activationDerivative = Activation::ReLUDerivative;
     } else if (activation == "tanh") {
-        activation = Activation::Tanh;
+        this->activation = Activation::Tanh;
         activationDerivative = Activation::TanhDerivative;
     } else if (activation == "leaky_relu") {
-        activation = [](float x) { return Activation::LeakyReLU(x); };
+        this->activation = [](float x) { return Activation::LeakyReLU(x); };
         activationDerivative = [](float x) { return Activation::LeakyReLUDerivative(x); };
     } else {
-        activation = Activation::ReLU;
+        this->activation = Activation::ReLU;
         activationDerivative = Activation::ReLUDerivative;
     }
     

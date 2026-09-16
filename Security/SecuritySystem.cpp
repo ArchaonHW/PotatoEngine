@@ -14,8 +14,13 @@
     #include <psapi.h>
     #include <wintrust.h>
     #include <softpub.h>
+    #include <bcrypt.h>
+    #include <winternl.h>
+    #include <tlhelp32.h>
     #pragma comment(lib, "psapi.lib")
     #pragma comment(lib, "wintrust.lib")
+    #pragma comment(lib, "bcrypt.lib")
+    #pragma comment(lib, "ntdll.lib")
 #elif defined(__linux__)
     #include <fstream>
 #elif defined(__APPLE__)
@@ -208,6 +213,37 @@ std::string ComputeFileSHA256W(const std::wstring& filePath) {
 }
 #endif
 
+// HMAC-SHA256（RFC 2104）：用隨機金鑰做記憶體完整性校驗，
+// 攻擊者竄改資料後無法重算正確的校驗值（CRC32 則可被任意偽造）
+void HmacSha256(const uint8_t* key, size_t keyLen,
+                const void* data, size_t dataLen, uint8_t out[32]) {
+    uint8_t k[64] = {};
+    if (keyLen > 64) {
+        // 長金鑰先壓縮
+        Sha256Ctx c;
+        Sha256Init(c);
+        Sha256Update(c, key, keyLen);
+        Sha256Final(c, k);
+    } else {
+        memcpy(k, key, keyLen);
+    }
+    uint8_t ipad[64], opad[64];
+    for (int i = 0; i < 64; i++) {
+        ipad[i] = k[i] ^ 0x36;
+        opad[i] = k[i] ^ 0x5c;
+    }
+    uint8_t inner[32];
+    Sha256Ctx c;
+    Sha256Init(c);
+    Sha256Update(c, ipad, 64);
+    Sha256Update(c, static_cast<const uint8_t*>(data), dataLen);
+    Sha256Final(c, inner);
+    Sha256Init(c);
+    Sha256Update(c, opad, 64);
+    Sha256Update(c, inner, 32);
+    Sha256Final(c, out);
+}
+
 } // anonymous namespace
 
 std::string ComputeFileSHA256(const std::string& filePath) {
@@ -278,6 +314,21 @@ bool SecurityManager::Initialize() {
     if (initialized.exchange(true)) {
         return true; // 已初始化
     }
+
+    // 產生記憶體完整性校驗用的隨機金鑰（每行程不同，攻擊者無法預測/重算 MAC）
+#ifdef _WIN32
+    if (FAILED(::BCryptGenRandom(nullptr, macKey, sizeof(macKey),
+                                 BCRYPT_USE_SYSTEM_PREFERRED_RNG))) {
+        // 備援：混合多種難以預測的來源
+        uint64_t seed = static_cast<uint64_t>(::GetTickCount64()) ^
+                        (static_cast<uint64_t>(::GetCurrentProcessId()) << 32) ^
+                        reinterpret_cast<uint64_t>(this);
+        for (size_t i = 0; i < sizeof(macKey); i++) {
+            seed ^= seed << 13; seed ^= seed >> 7; seed ^= seed << 17; // xorshift64
+            macKey[i] = static_cast<uint8_t>(seed);
+        }
+    }
+#endif
 
 #ifdef _WIN32
     // Windows 系統 DLL 白名單：除了檔名相符，還必須位於系統目錄
@@ -353,6 +404,9 @@ bool SecurityManager::Initialize() {
 
 void SecurityManager::Shutdown() {
     StopMonitoring();
+#ifdef _WIN32
+    DisableImageLoadNotify();
+#endif
     initialized = false;
 }
 
@@ -739,17 +793,22 @@ bool SecurityManager::VerifyFileIntegrity(const std::string& filePath,
 
 uint32_t SecurityManager::GuardRegion(const void* data, size_t size) {
     std::lock_guard<std::mutex> lock(guardMutex);
-    uint32_t id = nextGuardId++;
-    guardedRegions.emplace_back(id, ComputeCRC32(data, size));
-    return id;
+    GuardRecord rec;
+    rec.id = nextGuardId++;
+    rec.ptr = data;
+    rec.size = size;
+    HmacSha256(macKey, sizeof(macKey), data, size, rec.mac);
+    guardedRegions.push_back(rec);
+    return rec.id;
 }
 
 bool SecurityManager::VerifyRegion(uint32_t guardId, const void* data, size_t size) {
     std::lock_guard<std::mutex> lock(guardMutex);
-    for (const auto& [id, checksum] : guardedRegions) {
-        if (id == guardId) {
-            uint32_t current = ComputeCRC32(data, size);
-            if (current != checksum) {
+    for (const auto& rec : guardedRegions) {
+        if (rec.id == guardId) {
+            uint8_t current[32];
+            HmacSha256(macKey, sizeof(macKey), data, size, current);
+            if (memcmp(current, rec.mac, 32) != 0) {
                 ReportViolation(ViolationType::MemoryTampered,
                     "Guarded region " + std::to_string(guardId) + " modified");
                 return false;
@@ -760,13 +819,363 @@ bool SecurityManager::VerifyRegion(uint32_t guardId, const void* data, size_t si
     return false; // guardId 不存在
 }
 
+bool SecurityManager::VerifyAllGuards() {
+    // 複製清單避免在持鎖狀態下做 MAC 運算（可能較慢）與觸發回呼（會取 callbackMutex）
+    std::vector<GuardRecord> snapshot;
+    {
+        std::lock_guard<std::mutex> lock(guardMutex);
+        snapshot = guardedRegions;
+    }
+    bool ok = true;
+    for (const auto& rec : snapshot) {
+        uint8_t current[32];
+        HmacSha256(macKey, sizeof(macKey), rec.ptr, rec.size, current);
+        if (memcmp(current, rec.mac, 32) != 0) {
+            ReportViolation(ViolationType::MemoryTampered,
+                "Guarded region " + std::to_string(rec.id) + " modified (auto-verify)");
+            ok = false;
+        }
+    }
+    return ok;
+}
+
 void SecurityManager::UnguardRegion(uint32_t guardId) {
     std::lock_guard<std::mutex> lock(guardMutex);
     guardedRegions.erase(
         std::remove_if(guardedRegions.begin(), guardedRegions.end(),
-            [guardId](const auto& p) { return p.first == guardId; }),
+            [guardId](const auto& p) { return p.id == guardId; }),
         guardedRegions.end());
 }
+
+// ---- 自身程式碼完整性（.text 區段 HMAC 快照）----
+
+bool SecurityManager::GuardOwnCode() {
+#ifdef _WIN32
+    HMODULE self = nullptr;
+    if (!::GetModuleHandleExW(
+            GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+            GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+            reinterpret_cast<LPCWSTR>(&SecurityManager::GuardOwnCode),
+            &self) || !self) {
+        return false;
+    }
+    auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(self);
+    if (dos->e_magic != IMAGE_DOS_SIGNATURE) return false;
+    auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS*>(
+        reinterpret_cast<const uint8_t*>(self) + dos->e_lfanew);
+    if (nt->Signature != IMAGE_NT_SIGNATURE) return false;
+
+    // 找第一個可執行區段（通常是 .text）
+    IMAGE_SECTION_HEADER* sec = IMAGE_FIRST_SECTION(nt);
+    for (unsigned i = 0; i < nt->FileHeader.NumberOfSections; i++, sec++) {
+        if ((sec->Characteristics & IMAGE_SCN_MEM_EXECUTE) &&
+            !(sec->Characteristics & IMAGE_SCN_MEM_DISCARDABLE)) {
+            ownCodeBase = reinterpret_cast<const uint8_t*>(self) + sec->VirtualAddress;
+            ownCodeSize = sec->Misc.VirtualSize;
+            HmacSha256(macKey, sizeof(macKey), ownCodeBase, ownCodeSize, ownCodeMac);
+            ownCodeArmed = true;
+            return true;
+        }
+    }
+#endif
+    return false;
+}
+
+bool SecurityManager::VerifyOwnCode() {
+#ifdef _WIN32
+    if (!ownCodeArmed) {
+        return GuardOwnCode(); // 第一次呼叫先建立快照
+    }
+    uint8_t current[32];
+    HmacSha256(macKey, sizeof(macKey), ownCodeBase, ownCodeSize, current);
+    if (memcmp(current, ownCodeMac, 32) != 0) {
+        ReportViolation(ViolationType::CodeTampered,
+            ".text section modified (inline patch/hook detected)");
+        return false;
+    }
+#endif
+    return true;
+}
+
+// ---- 強化偵測 ----
+
+bool SecurityManager::CheckDebuggerExtended() {
+#ifdef _WIN32
+    using PFN_NtQIP = NTSTATUS(NTAPI*)(HANDLE, ULONG, PVOID, ULONG, PULONG);
+    auto NtQIP = reinterpret_cast<PFN_NtQIP>(
+        ::GetProcAddress(::GetModuleHandleW(L"ntdll.dll"), "NtQueryInformationProcess"));
+    if (!NtQIP) return false;
+
+    HANDLE proc = ::GetCurrentProcess();
+
+    // ProcessDebugPort (7)：非 0 表示有除錯埠
+    ULONG_PTR debugPort = 0;
+    if (NtQIP(proc, 7, &debugPort, sizeof(debugPort), nullptr) >= 0 && debugPort) {
+        ReportViolation(ViolationType::RemoteDebuggerDetected,
+            "ProcessDebugPort = " + std::to_string(debugPort));
+        return true;
+    }
+
+    // ProcessDebugObjectHandle (30)：有 handle 表示被除錯
+    HANDLE debugObj = nullptr;
+    if (NtQIP(proc, 30, &debugObj, sizeof(debugObj), nullptr) >= 0 && debugObj) {
+        ReportViolation(ViolationType::RemoteDebuggerDetected,
+            "ProcessDebugObjectHandle present");
+        return true;
+    }
+
+    // ProcessDebugFlags (31)：0 表示被除錯（NoDebugInherit 被清除）
+    ULONG dbgFlags = 1;
+    if (NtQIP(proc, 31, &dbgFlags, sizeof(dbgFlags), nullptr) >= 0 && dbgFlags == 0) {
+        ReportViolation(ViolationType::DebuggerDetected,
+            "ProcessDebugFlags == 0");
+        return true;
+    }
+
+    // PEB: BeingDebugged（offset +2）與 NtGlobalFlag（x64: +0xBC, x86: +0x68）
+    PROCESS_BASIC_INFORMATION pbi{};
+    if (NtQIP(proc, 0, &pbi, sizeof(pbi), nullptr) >= 0 && pbi.PebBaseAddress) {
+        const uint8_t* peb = reinterpret_cast<const uint8_t*>(pbi.PebBaseAddress);
+        if (peb[2]) { // BeingDebugged
+            ReportViolation(ViolationType::DebuggerDetected,
+                "PEB.BeingDebugged set");
+            return true;
+        }
+#ifdef _WIN64
+        ULONG ntGlobal = *reinterpret_cast<const ULONG*>(peb + 0xBC);
+#else
+        ULONG ntGlobal = *reinterpret_cast<const ULONG*>(peb + 0x68);
+#endif
+        // FLG_HEAP_ENABLE_TAIL_CHECK|FREE_CHECK|VALIDATE_PARAMETERS
+        if (ntGlobal & 0x70) {
+            ReportViolation(ViolationType::DebuggerDetected,
+                "PEB.NtGlobalFlag heap-debug bits set");
+            return true;
+        }
+    }
+#endif
+    return false;
+}
+
+bool SecurityManager::CheckHardwareBreakpoints() {
+#ifdef _WIN32
+    DWORD pid = ::GetCurrentProcessId();
+    DWORD selfTid = ::GetCurrentThreadId();
+    bool found = false;
+
+    HANDLE snap = ::CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+    if (snap != INVALID_HANDLE_VALUE) {
+        THREADENTRY32 te{};
+        te.dwSize = sizeof(te);
+        for (BOOL ok = ::Thread32First(snap, &te); ok; ok = ::Thread32Next(snap, &te)) {
+            if (te.th32OwnerProcessID != pid || te.th32ThreadID == selfTid) continue;
+            HANDLE h = ::OpenThread(
+                THREAD_GET_CONTEXT | THREAD_SUSPEND_RESUME | THREAD_QUERY_INFORMATION,
+                FALSE, te.th32ThreadID);
+            if (!h) continue;
+            ::SuspendThread(h);
+            CONTEXT ctx{};
+            ctx.ContextFlags = CONTEXT_DEBUG_REGISTERS;
+            if (::GetThreadContext(h, &ctx)) {
+                if ((ctx.Dr7 & 0xFF) && (ctx.Dr0 || ctx.Dr1 || ctx.Dr2 || ctx.Dr3)) {
+                    ReportViolation(ViolationType::HardwareBreakpoint,
+                        "tid " + std::to_string(te.th32ThreadID) + " has DR breakpoint set");
+                    found = true;
+                }
+            }
+            ::ResumeThread(h);
+            ::CloseHandle(h);
+        }
+        ::CloseHandle(snap);
+    }
+
+    // 自身執行緒：GetThreadContext 對執行中的執行緒無效，用 RtlCaptureContext
+    CONTEXT selfCtx{};
+    selfCtx.ContextFlags = CONTEXT_DEBUG_REGISTERS;
+    ::RtlCaptureContext(&selfCtx);
+    if ((selfCtx.Dr7 & 0xFF) && (selfCtx.Dr0 || selfCtx.Dr1 || selfCtx.Dr2 || selfCtx.Dr3)) {
+        ReportViolation(ViolationType::HardwareBreakpoint,
+            "current thread has DR breakpoint set");
+        found = true;
+    }
+    return found;
+#else
+    return false;
+#endif
+}
+
+bool SecurityManager::CheckInjectedThreads() {
+#ifdef _WIN32
+    using PFN_NtQIT = NTSTATUS(NTAPI*)(HANDLE, ULONG, PVOID, ULONG, PULONG);
+    auto NtQIT = reinterpret_cast<PFN_NtQIT>(
+        ::GetProcAddress(::GetModuleHandleW(L"ntdll.dll"), "NtQueryInformationThread"));
+    if (!NtQIT) return false;
+
+    // 收集所有模組的位址範圍
+    struct Range { uintptr_t base, end; };
+    std::vector<Range> ranges;
+    HMODULE modules[1024];
+    DWORD needed = 0;
+    if (::EnumProcessModules(::GetCurrentProcess(), modules, sizeof(modules), &needed)) {
+        DWORD count = needed / sizeof(HMODULE);
+        for (DWORD i = 0; i < count; i++) {
+            MODULEINFO mi{};
+            if (::GetModuleInformation(::GetCurrentProcess(), modules[i], &mi, sizeof(mi))) {
+                ranges.push_back({ reinterpret_cast<uintptr_t>(mi.lpBaseOfDll),
+                                   reinterpret_cast<uintptr_t>(mi.lpBaseOfDll) + mi.SizeOfImage });
+            }
+        }
+    }
+
+    DWORD pid = ::GetCurrentProcessId();
+    DWORD selfTid = ::GetCurrentThreadId();
+    bool found = false;
+
+    HANDLE snap = ::CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+    if (snap == INVALID_HANDLE_VALUE) return false;
+    THREADENTRY32 te{};
+    te.dwSize = sizeof(te);
+    for (BOOL ok = ::Thread32First(snap, &te); ok; ok = ::Thread32Next(snap, &te)) {
+        if (te.th32OwnerProcessID != pid || te.th32ThreadID == selfTid) continue;
+        HANDLE h = ::OpenThread(THREAD_QUERY_INFORMATION, FALSE, te.th32ThreadID);
+        if (!h) continue;
+        uintptr_t startAddr = 0;
+        // ThreadQuerySetWin32StartAddress = 9
+        if (NtQIT(h, 9, &startAddr, sizeof(startAddr), nullptr) >= 0 && startAddr) {
+            bool inModule = false;
+            for (const auto& r : ranges) {
+                if (startAddr >= r.base && startAddr < r.end) { inModule = true; break; }
+            }
+            if (!inModule) {
+                ReportViolation(ViolationType::InjectedThread,
+                    "tid " + std::to_string(te.th32ThreadID) +
+                    " start address outside all modules (shellcode?)");
+                found = true;
+            }
+        }
+        ::CloseHandle(h);
+    }
+    ::CloseHandle(snap);
+    return found;
+#else
+    return false;
+#endif
+}
+
+// ---- 即時載入通知（LdrRegisterDllNotification）----
+#ifdef _WIN32
+namespace {
+// ntdll 半文件化 API：DLL 載入/卸載時即時回呼（Vista+）
+struct LdrDllNotificationData {
+    unsigned long flags;
+    const UNICODE_STRING* fullDllName;
+    const UNICODE_STRING* baseDllName;
+    void* dllBase;
+    unsigned long sizeOfImage;
+};
+constexpr unsigned long kLdrLoaded = 1;
+using LdrNotifyFn = void(CALLBACK*)(unsigned long, const LdrDllNotificationData*, void*);
+using PFN_LdrRegister = NTSTATUS(NTAPI*)(unsigned long, LdrNotifyFn, void*, void**);
+using PFN_LdrUnregister = NTSTATUS(NTAPI*)(void*);
+} // namespace
+
+void CALLBACK SecurityManager::LdrNotifyThunk(unsigned long reason,
+                                              const void* data, void* ctx) {
+    if (reason != kLdrLoaded || !data || !ctx) return;
+    auto* nd = static_cast<const LdrDllNotificationData*>(data);
+    auto* self = static_cast<SecurityManager*>(ctx);
+    if (!nd->fullDllName || !nd->fullDllName->Buffer) return;
+
+    // 注意：此回呼在 loader lock 下執行 —— 只能做無鎖複製 + SetEvent，
+    // 絕不能取得 mutex 或呼叫會載入 DLL 的 API（會死鎖）
+    long i = self->notifyWrite.fetch_add(1, std::memory_order_relaxed)
+             % kNotifyRingSize;
+    NotifySlot& slot = self->notifyRing[i];
+    if (slot.ready.load(std::memory_order_acquire)) {
+        self->notifyDropped.fetch_add(1, std::memory_order_relaxed);
+    }
+    size_t n = nd->fullDllName->Length / sizeof(wchar_t);
+    if (n > 259) n = 259;
+    memcpy(slot.path, nd->fullDllName->Buffer, n * sizeof(wchar_t));
+    slot.path[n] = 0;
+    slot.ready.store(1, std::memory_order_release);
+    if (self->notifyWakeEvent) {
+        ::SetEvent(self->notifyWakeEvent);
+    }
+}
+
+void SecurityManager::NotifyWorkerLoop() {
+    while (notifyRun.load(std::memory_order_acquire)) {
+        ::WaitForSingleObject(notifyWakeEvent, 500); // timeout 作為保險
+        for (;;) {
+            long w = notifyWrite.load(std::memory_order_acquire);
+            if (notifyRead >= w) break;
+            NotifySlot& slot = notifyRing[notifyRead % kNotifyRingSize];
+            if (!slot.ready.exchange(0, std::memory_order_acq_rel)) break;
+            OnImageLoad(slot.path);
+            notifyRead++;
+        }
+    }
+}
+
+void SecurityManager::OnImageLoad(const wchar_t* path) {
+    std::string reason;
+    if (!IsTrustedModuleWin(path, reason)) {
+        std::wstring wname = NormalizeDirW(path);
+        size_t sep = wname.find_last_of(L'\\');
+        std::string name = WideToUtf8(
+            sep != std::wstring::npos ? wname.substr(sep + 1) : wname);
+        ReportViolation(ViolationType::UntrustedModule,
+            "Real-time: " + name + " (" + reason + ")");
+    }
+}
+
+bool SecurityManager::EnableImageLoadNotify() {
+    if (ldrCookie) return true;
+    HMODULE ntdll = ::GetModuleHandleW(L"ntdll.dll");
+    if (!ntdll) return false;
+    auto reg = reinterpret_cast<PFN_LdrRegister>(
+        ::GetProcAddress(ntdll, "LdrRegisterDllNotification"));
+    if (!reg) return false;
+
+    notifyWakeEvent = ::CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    if (!notifyWakeEvent) return false;
+    notifyRun.store(true, std::memory_order_release);
+    notifyWorker = std::thread(&SecurityManager::NotifyWorkerLoop, this);
+
+    NTSTATUS st = reg(0, &SecurityManager::LdrNotifyThunk, this, &ldrCookie);
+    if (st < 0) {
+        notifyRun.store(false);
+        if (notifyWorker.joinable()) notifyWorker.join();
+        ::CloseHandle(notifyWakeEvent);
+        notifyWakeEvent = nullptr;
+        ldrCookie = nullptr;
+        return false;
+    }
+    return true;
+}
+
+void SecurityManager::DisableImageLoadNotify() {
+    if (ldrCookie) {
+        auto unreg = reinterpret_cast<PFN_LdrUnregister>(
+            ::GetProcAddress(::GetModuleHandleW(L"ntdll.dll"),
+                             "LdrUnregisterDllNotification"));
+        if (unreg) unreg(ldrCookie);
+        ldrCookie = nullptr;
+    }
+    notifyRun.store(false, std::memory_order_release);
+    if (notifyWakeEvent) ::SetEvent(notifyWakeEvent);
+    if (notifyWorker.joinable()) notifyWorker.join();
+    if (notifyWakeEvent) {
+        ::CloseHandle(notifyWakeEvent);
+        notifyWakeEvent = nullptr;
+    }
+}
+#else
+bool SecurityManager::EnableImageLoadNotify() { return false; }
+void SecurityManager::DisableImageLoadNotify() {}
+#endif
+
 
 // ---- 定期監控 ----
 
@@ -786,8 +1195,13 @@ void SecurityManager::StopMonitoring() {
 void SecurityManager::MonitorLoop(uint32_t intervalMs) {
     while (monitoring.load()) {
         CheckDebugger();
+        CheckDebuggerExtended();
         CheckTimingAnomaly();
         CheckLoadedModules();
+        CheckInjectedThreads();
+        CheckHardwareBreakpoints();
+        VerifyAllGuards();
+        if (ownCodeArmed) VerifyOwnCode();
 
         // 分段睡眠，讓 StopMonitoring 能快速生效
         uint32_t slept = 0;
@@ -801,8 +1215,13 @@ void SecurityManager::MonitorLoop(uint32_t intervalMs) {
 bool SecurityManager::RunAllChecks() {
     bool violated = false;
     violated |= CheckDebugger();
+    violated |= CheckDebuggerExtended();
     violated |= CheckTimingAnomaly();
     violated |= CheckLoadedModules();
+    violated |= CheckInjectedThreads();
+    violated |= CheckHardwareBreakpoints();
+    violated |= !VerifyAllGuards();
+    if (ownCodeArmed) violated |= !VerifyOwnCode();
     return violated;
 }
 
@@ -816,6 +1235,9 @@ const char* ViolationTypeToString(ViolationType type) {
         case ViolationType::UntrustedModule:       return "UntrustedModule";
         case ViolationType::IntegrityMismatch:     return "IntegrityMismatch";
         case ViolationType::MemoryTampered:        return "MemoryTampered";
+        case ViolationType::HardwareBreakpoint:    return "HardwareBreakpoint";
+        case ViolationType::InjectedThread:        return "InjectedThread";
+        case ViolationType::CodeTampered:          return "CodeTampered";
     }
     return "Unknown";
 }

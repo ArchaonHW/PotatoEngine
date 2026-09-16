@@ -25,7 +25,7 @@ for f in $FILES; do
     n=$(echo "$out" | wc -l)
     total=$((total + n))
     echo "=== $f ($n errors) ==="
-    echo "$out" | head "${MAXERR:-6}"
+    echo "$out" | head -n "${MAXERR:-6}"
   fi
 done
 echo "=== TOTAL: $total errors ==="
