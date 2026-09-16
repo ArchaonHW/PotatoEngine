@@ -666,9 +666,14 @@ int main(int argc, char* argv[]) {
                         patched ? "missed" : "VirtualProtect failed");
 
         if (patched) {
-            ::VirtualProtect(fn, 8, PAGE_EXECUTE_READWRITE, &oldProt);
-            fn[0] = orig;
-            ::VirtualProtect(fn, 8, oldProt, &oldProt);
+            // VirtualProtect 失敗時 fn 仍是 RX 頁,直接寫會 AV——先檢查結果
+            if (::VirtualProtect(fn, 8, PAGE_EXECUTE_READWRITE, &oldProt)) {
+                fn[0] = orig;
+                ::VirtualProtect(fn, 8, oldProt, &oldProt);
+            } else {
+                Fail("還原 patched byte", "VirtualProtect restore failed");
+                patched = false; // 標記未能還原,下面「還原後放行」會正確失敗
+            }
         }
         ClearReports();
         bool restored = !sec.CheckCriticalApiHooks();
@@ -734,6 +739,9 @@ int main(int argc, char* argv[]) {
                 stillFlagged ? Fail("白名單持有者放行", "whitelisted holder reported")
                              : Pass("白名單持有者放行");
                 killTool(pi2);
+            } else {
+                // spawn 失敗不能靜默跳過——白名單驗證根本沒跑到
+                Fail("白名單持有者放行", "spawn tool process failed");
             }
         }
         std::filesystem::remove_all(toolDir, ec);
@@ -752,13 +760,18 @@ int main(int argc, char* argv[]) {
             g_shellcodeTarget = sc;
             HANDLE t = ::CreateThread(nullptr, 0, LegitTrampoline,
                                       nullptr, 0, nullptr);
-            ::Sleep(100); // 等執行緒跳進 shellcode
 
-            ClearReports();
-            bool det = sec.CheckThreadContexts() &&
-                       SawViolation(ViolationType::InjectedThread);
+            // 等執行緒跳進 shellcode：輪詢 CheckThreadContexts 取代固定
+            // Sleep(100)——低負載機器上 100ms 內執行緒可能還沒跳到目標
+            bool det = false;
+            for (int i = 0; i < 100 && !det; ++i) {
+                ::Sleep(20);
+                ClearReports();
+                det = sec.CheckThreadContexts() &&
+                      SawViolation(ViolationType::InjectedThread);
+            }
             det ? Pass("偵測到執行緒 RIP 在模組外")
-                : Fail("偵測到執行緒 RIP 在模組外", "missed");
+                : Fail("偵測到執行緒 RIP 在模組外", "missed after 2s polling");
 
             // 對照：起始位址在模組內，CheckInjectedThreads 抓不到這隻
             ClearReports();

@@ -67,9 +67,16 @@ if(NOT glfw3_FOUND)
     find_path(GLFW3_INCLUDE_DIR GLFW/glfw3.h
         HINTS ${GLFW_ROOT} $ENV{GLFW_ROOT}
         PATH_SUFFIXES include)
+    # 依工具鏈選擇搜尋順序——MSVC 連 MinGW 的 libglfw3.a 會
+    # 出現 __mingw_* 未解析符號；MinGW 連 VC 的 .lib 亦然
+    if(MSVC)
+        set(_glfw_lib_suffixes lib lib-vc2026 lib-vc2022 lib-vc2019 lib-vc2017)
+    else()
+        set(_glfw_lib_suffixes lib lib-mingw-w64 lib-static-ucrt)
+    endif()
     find_library(GLFW3_LIBRARY NAMES glfw3 glfw
         HINTS ${GLFW_ROOT} $ENV{GLFW_ROOT}
-        PATH_SUFFIXES lib lib-mingw-w64 lib-vc2022 lib-vc2026)
+        PATH_SUFFIXES ${_glfw_lib_suffixes})
     if(GLFW3_INCLUDE_DIR AND GLFW3_LIBRARY)
         add_library(glfw STATIC IMPORTED)
         set_target_properties(glfw PROPERTIES
