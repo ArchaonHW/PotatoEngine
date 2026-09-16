@@ -331,6 +331,7 @@ add_library(Gameplay STATIC
     Gameplay/Squad.cpp
     Gameplay/Doctrine.cpp
     Gameplay/BattleController.cpp
+    Gameplay/BattlePlanner.cpp
 )
 target_include_directories(Gameplay PUBLIC ${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/Gameplay)
 
@@ -338,6 +339,11 @@ target_include_directories(Gameplay PUBLIC ${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DI
 add_executable(DoctrineBattleDemo Examples/DoctrineBattleDemo.cpp)
 target_include_directories(DoctrineBattleDemo PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(DoctrineBattleDemo Gameplay)
+
+# 智能規劃演示（AI 參謀自動生成 doctrine 後執行戰鬥）
+add_executable(AutoPlannerDemo Examples/AutoPlannerDemo.cpp)
+target_include_directories(AutoPlannerDemo PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(AutoPlannerDemo Gameplay)
 
 # MingGoRTS IDE（AI Agent 整合 IDE - 命令行版本）
 add_executable(MingGoRTS_IDE_CLI MingGoRTS_IDE/MingGoRTS_IDE_Main.cpp MingGoRTS_IDE/IDECore.cpp MingGoRTS_IDE/AIIntegration.cpp)
@@ -484,6 +490,7 @@ set(POTATO_TESTS
     AITestSuite
     DevAssistantSmoke
     DoctrineBattleDemo
+    AutoPlannerDemo
 )
 foreach(test_name IN LISTS POTATO_TESTS)
     if(TARGET ${test_name})
