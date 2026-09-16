@@ -130,14 +130,17 @@ public:
     
     void SetVertexAttribute(uint32 index, int size, int stride, size_t offset);
     
-    uint32 GetVAO() const { return vao; }
-    uint32 GetVBO() const { return vbo; }
-    uint32 GetEBO() const { return ebo; }
+    uint32 GetVAO() const { EnsureCreated(); return vao; }
+    uint32 GetVBO() const { EnsureCreated(); return vbo; }
+    uint32 GetEBO() const { EnsureCreated(); return ebo; }
     
 private:
-    uint32 vao;
-    uint32 vbo;
-    uint32 ebo;
+    // 惰性建立 GL 物件：GL context 可能尚未初始化就建構 Mesh/Model
+    void EnsureCreated() const;
+    
+    mutable uint32 vao;
+    mutable uint32 vbo;
+    mutable uint32 ebo;
     uint32 vertexCount;
     uint32 indexCount;
 };

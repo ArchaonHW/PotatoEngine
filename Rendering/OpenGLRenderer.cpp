@@ -1,6 +1,7 @@
 #include "OpenGLRenderer.h"
 #include "Logging/Logger.h"
 #include <iostream>
+#define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
 #include <glad/glad.h>
 
@@ -213,6 +214,9 @@ void OpenGLRenderer::SetConfig(const RendererConfig& cfg) {
 }
 
 bool OpenGLRenderer::ShouldClose() const {
+    if (!windowHandle) {
+        return true; // 無窗口視為應關閉,避免 glfwWindowShouldClose(nullptr) UB
+    }
     return glfwWindowShouldClose(static_cast<GLFWwindow*>(windowHandle));
 }
 
@@ -402,9 +406,8 @@ VertexArray::VertexArray()
     , vertexCount(0)
     , indexCount(0)
 {
-    glGenVertexArrays(1, &vao);
-    glGenBuffers(1, &vbo);
-    glGenBuffers(1, &ebo);
+    // GL 物件延遲到首次使用時才建立（EnsureCreated），
+    // 允許在 GL context 建立前先建構 Mesh/Model
 }
 
 VertexArray::~VertexArray() {
@@ -413,7 +416,20 @@ VertexArray::~VertexArray() {
     if (vao) glDeleteVertexArrays(1, &vao);
 }
 
+void VertexArray::EnsureCreated() const {
+    if (vao == 0) {
+        glGenVertexArrays(1, &vao);
+    }
+    if (vbo == 0) {
+        glGenBuffers(1, &vbo);
+    }
+    if (ebo == 0) {
+        glGenBuffers(1, &ebo);
+    }
+}
+
 void VertexArray::Bind() const {
+    EnsureCreated();
     glBindVertexArray(vao);
 }
 
@@ -422,6 +438,7 @@ void VertexArray::Unbind() const {
 }
 
 void VertexArray::AddVertexBuffer(const void* data, size_t size, uint32 usage) {
+    EnsureCreated();
     glBindVertexArray(vao);
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
     glBufferData(GL_ARRAY_BUFFER, size, data, usage);
@@ -429,6 +446,7 @@ void VertexArray::AddVertexBuffer(const void* data, size_t size, uint32 usage) {
 }
 
 void VertexArray::AddIndexBuffer(const uint32* indices, size_t count, uint32 usage) {
+    EnsureCreated();
     glBindVertexArray(vao);
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
     glBufferData(GL_ELEMENT_ARRAY_BUFFER, count * sizeof(uint32), indices, usage);
@@ -437,6 +455,7 @@ void VertexArray::AddIndexBuffer(const uint32* indices, size_t count, uint32 usa
 }
 
 void VertexArray::SetVertexAttribute(uint32 index, int size, int stride, size_t offset) {
+    EnsureCreated();
     glBindVertexArray(vao);
     glVertexAttribPointer(index, size, GL_FLOAT, GL_FALSE, stride, reinterpret_cast<void*>(offset));
     glEnableVertexAttribArray(index);
@@ -481,13 +500,22 @@ void Mesh::Unbind() const {
 
 void Mesh::Draw() const {
     vertexArray.Bind();
-    glDrawElements(GL_TRIANGLES, static_cast<int>(indices.size()), GL_UNSIGNED_INT, 0);
+    if (!indices.empty()) {
+        glDrawElements(GL_TRIANGLES, static_cast<int>(indices.size()), GL_UNSIGNED_INT, 0);
+    } else if (!vertices.empty()) {
+        glDrawArrays(GL_TRIANGLES, 0, static_cast<int>(vertices.size()));
+    }
     vertexArray.Unbind();
 }
 
 void Mesh::DrawInstanced(int instanceCount) const {
+    if (instanceCount <= 0) return;
     vertexArray.Bind();
-    glDrawElementsInstanced(GL_TRIANGLES, static_cast<int>(indices.size()), GL_UNSIGNED_INT, 0, instanceCount);
+    if (!indices.empty()) {
+        glDrawElementsInstanced(GL_TRIANGLES, static_cast<int>(indices.size()), GL_UNSIGNED_INT, 0, instanceCount);
+    } else if (!vertices.empty()) {
+        glDrawArraysInstanced(GL_TRIANGLES, 0, static_cast<int>(vertices.size()), instanceCount);
+    }
     vertexArray.Unbind();
 }
 

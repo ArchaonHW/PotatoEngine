@@ -3,6 +3,7 @@
 #include <fstream>
 #include <sstream>
 #include <algorithm>
+#include <cstdlib>
 
 namespace Potato {
 
@@ -59,25 +60,52 @@ bool OBJLoader::ParseOBJ(const std::string& content, ModelData& modelData) {
             lineStream >> tex.x >> tex.y;
             texCoords.push_back(tex);
         } else if (type == "f") {
-            // 解析面 (簡化版本)
+            // 解析面 — 支援 v、v/vt、v//vn、v/vt/vn 四種格式
             std::string vertexStr;
             while (lineStream >> vertexStr) {
-                // 格式: v/vt/vn
-                std::replace(vertexStr.begin(), vertexStr.end(), '/', ' ');
-                std::istringstream vertexStream(vertexStr);
+                // 依 '/' 位置切分,空欄位保留(避免 v//vn 的 vn 被誤讀成 vt)
+                int indices[3] = {0, 0, 0};
+                int field = 0;
+                std::string token;
+                for (char ch : vertexStr) {
+                    if (ch == '/') {
+                        if (field < 3 && !token.empty()) {
+                            indices[field] = std::atoi(token.c_str());
+                        }
+                        token.clear();
+                        ++field;
+                        if (field > 2) break;
+                    } else {
+                        token += ch;
+                    }
+                }
+                if (field < 3 && !token.empty()) {
+                    indices[field] = std::atoi(token.c_str());
+                }
                 
-                uint32 vIndex = 0, vtIndex = 0, vnIndex = 0;
-                vertexStream >> vIndex >> vtIndex >> vnIndex;
+                // OBJ 支援負索引(相對於檔尾);轉為絕對索引
+                auto resolve = [](int idx, size_t count) -> size_t {
+                    if (idx > 0) return static_cast<size_t>(idx) - 1;
+                    if (idx < 0) {
+                        size_t absIdx = static_cast<size_t>(-idx);
+                        return (absIdx <= count) ? count - absIdx : static_cast<size_t>(-1);
+                    }
+                    return static_cast<size_t>(-1);
+                };
+                
+                size_t vIdx = resolve(indices[0], positions.size());
+                size_t vtIdx = resolve(indices[1], texCoords.size());
+                size_t vnIdx = resolve(indices[2], normals.size());
+                
+                if (vIdx == static_cast<size_t>(-1)) continue; // 頂點索引無效,跳過
                 
                 ModelVertex vertex;
-                if (vIndex > 0 && vIndex <= positions.size()) {
-                    vertex.position = positions[vIndex - 1];
+                vertex.position = positions[vIdx];
+                if (vtIdx != static_cast<size_t>(-1)) {
+                    vertex.texCoord = texCoords[vtIdx];
                 }
-                if (vnIndex > 0 && vnIndex <= normals.size()) {
-                    vertex.normal = normals[vnIndex - 1];
-                }
-                if (vtIndex > 0 && vtIndex <= texCoords.size()) {
-                    vertex.texCoord = texCoords[vtIndex - 1];
+                if (vnIdx != static_cast<size_t>(-1)) {
+                    vertex.normal = normals[vnIdx];
                 }
                 
                 currentMesh.vertices.push_back(vertex);

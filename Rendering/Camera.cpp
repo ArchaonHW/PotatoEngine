@@ -137,7 +137,9 @@ void Camera::SetViewport(int x, int y, int width, int height) {
     viewportY = y;
     viewportWidth = width;
     viewportHeight = height;
-    aspect = static_cast<float>(width) / static_cast<float>(height);
+    if (height > 0) {
+        aspect = static_cast<float>(width) / static_cast<float>(height);
+    }
     updateProjection = true;
 }
 

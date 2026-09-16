@@ -308,8 +308,15 @@ AdvancedShader::~AdvancedShader() {
 }
 
 bool AdvancedShader::LoadFromSource(const std::string& vertexSource, const std::string& fragmentSource) {
+    // 釋放舊的 GL 物件並重置 ID,避免重載時洩漏或留下懸垂 shader ID
+    if (programID) { glDeleteProgram(programID); programID = 0; }
+    if (vertexID) { glDeleteShader(vertexID); vertexID = 0; }
+    if (fragmentID) { glDeleteShader(fragmentID); fragmentID = 0; }
+    if (geometryID) { glDeleteShader(geometryID); geometryID = 0; }
+    
     this->vertexSource = vertexSource;
     this->fragmentSource = fragmentSource;
+    this->geometrySource.clear();
     
     uint32 vID, fID;
     if (!CompileShader(GL_VERTEX_SHADER, vertexSource, vID)) {
@@ -334,6 +341,11 @@ bool AdvancedShader::LoadFromSource(const std::string& vertexSource, const std::
 }
 
 bool AdvancedShader::LoadFromSource(const std::string& vertexSource, const std::string& fragmentSource, const std::string& geometrySource) {
+    if (programID) { glDeleteProgram(programID); programID = 0; }
+    if (vertexID) { glDeleteShader(vertexID); vertexID = 0; }
+    if (fragmentID) { glDeleteShader(fragmentID); fragmentID = 0; }
+    if (geometryID) { glDeleteShader(geometryID); geometryID = 0; }
+    
     this->vertexSource = vertexSource;
     this->fragmentSource = fragmentSource;
     this->geometrySource = geometrySource;
@@ -462,20 +474,7 @@ bool AdvancedShader::Recompile() {
         return false;
     }
     
-    // 清理舊的程序
-    if (programID) {
-        glDeleteProgram(programID);
-    }
-    if (vertexID) {
-        glDeleteShader(vertexID);
-    }
-    if (fragmentID) {
-        glDeleteShader(fragmentID);
-    }
-    if (geometryID) {
-        glDeleteShader(geometryID);
-    }
-    
+    // LoadFromSource 內部會清理並重置舊的 GL 物件
     // 重新編譯
     if (geometrySource.empty()) {
         return LoadFromSource(vertexSource, fragmentSource);
