@@ -68,8 +68,8 @@ jobs:
           ci
           docs
         requireScope: false
-        subjectMinLength: 5
-        subjectMaxLength: 100
+        subjectPattern: '^.{5,100}$'
+        subjectPatternError: 'Subject must be between 5 and 100 characters.'
         validateSingleCommit: true
         validateSingleCommitMatchesPrTitle: false
         
