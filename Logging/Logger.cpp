@@ -1,15 +1,18 @@
 #include "Logger.h"
+#include "Core/CoreTypes.h"
 #include <iostream>
 #include <chrono>
 #include <iomanip>
 #include <sstream>
 #include <thread>
 #include <ctime>
+#include <algorithm>
 
 #ifdef _WIN32
     #include <windows.h>
     #include <io.h>
     #include <fcntl.h>
+    #undef FormatMessage // Win32 宏會改寫 Logger::FormatMessage
 #else
     #include <unistd.h>
 #endif
@@ -214,7 +217,7 @@ bool Logger::Initialize(const std::string& logLevel) {
     currentLogLevel = StringToLogLevel(logLevel);
     
     // 創建控制台輸出器
-    consoleOutput = MakeUnique<ConsoleOutput>(true);
+    consoleOutput = MakeShared<ConsoleOutput>(true);
     outputs.push_back(consoleOutput);
     
     // 啟動異步日誌線程
@@ -241,18 +244,33 @@ void Logger::Shutdown() {
         logThread.join();
     }
     
-    // 處理剩餘的日誌消息
+    // 處理剩餘的日誌消息（非異步模式下佇列可能還有積壓）
     if (!asyncLogging) {
-        while (!logQueue.empty()) {
-            LogMessage message = logQueue.front();
-            logQueue.pop();
+        for (;;) {
+            LogMessage message;
+            {
+                std::lock_guard<std::mutex> lock(queueMutex);
+                if (logQueue.empty()) break;
+                message = logQueue.front();
+                logQueue.pop();
+            }
             WriteMessage(message);
         }
     }
     
     // 刷新所有輸出器
-    for (auto& output : outputs) {
+    std::vector<std::shared_ptr<ILogOutput>> outputsSnapshot;
+    {
+        std::lock_guard<std::mutex> lock(queueMutex);
+        outputsSnapshot = outputs;
+    }
+    for (auto& output : outputsSnapshot) {
         output->Flush();
+    }
+    
+    {
+        std::lock_guard<std::mutex> lock(queueMutex);
+        outputs.clear();
     }
     
     outputs.clear();
@@ -346,7 +364,7 @@ void Logger::SetLogFile(const std::string& filePath) {
     }
     
     // 創建新的文件輸出器
-    fileOutput = MakeUnique<FileOutput>(filePath);
+    fileOutput = MakeShared<FileOutput>(filePath);
     if (fileOutput->IsOpen()) {
         outputs.push_back(fileOutput);
         fileOutputEnabled = true;
@@ -422,13 +440,17 @@ void Logger::SetBufferSize(size_t size) {
 }
 
 void Logger::Flush() {
-    if (asyncLogging) {
-        // 等待隊列處理完成
+    std::vector<std::shared_ptr<ILogOutput>> snapshot;
+    {
         std::unique_lock<std::mutex> lock(queueMutex);
-        queueCondition.wait(lock, [this] { return logQueue.empty(); });
+        if (asyncLogging) {
+            // 等待隊列處理完成
+            queueCondition.wait(lock, [this] { return logQueue.empty(); });
+        }
+        snapshot = outputs;
     }
     
-    for (auto& output : outputs) {
+    for (auto& output : snapshot) {
         output->Flush();
     }
 }
@@ -450,7 +472,7 @@ size_t Logger::GetTotalMessageCount() const {
 }
 
 void Logger::ProcessLogQueue() {
-    while (!shutdownRequested) {
+    for (;;) {
         LogMessage message;
         
         {
@@ -459,24 +481,35 @@ void Logger::ProcessLogQueue() {
                 return !logQueue.empty() || shutdownRequested; 
             });
             
-            if (shutdownRequested && logQueue.empty()) {
-                break;
+            // shutdown 後仍把佇列排空，避免關閉時丟失日誌
+            if (logQueue.empty()) {
+                if (shutdownRequested) {
+                    break;
+                }
+                continue;
             }
             
-            if (!logQueue.empty()) {
-                message = logQueue.front();
-                logQueue.pop();
+            message = logQueue.front();
+            logQueue.pop();
+            
+            // 通知 Flush() 等待者：佇列可能已排空
+            if (logQueue.empty()) {
+                queueCondition.notify_all();
             }
         }
         
-        if (!shutdownRequested) {
-            WriteMessage(message);
-        }
+        WriteMessage(message);
     }
 }
 
 void Logger::WriteMessage(const LogMessage& message) {
-    for (auto& output : outputs) {
+    // 複製輸出器快照再寫入：避免持鎖做 I/O，也避免與 AddOutput/RemoveOutput 競態
+    std::vector<std::shared_ptr<ILogOutput>> snapshot;
+    {
+        std::lock_guard<std::mutex> lock(queueMutex);
+        snapshot = outputs;
+    }
+    for (auto& output : snapshot) {
         output->Write(message);
     }
 }
@@ -505,8 +538,15 @@ std::string Logger::GetCurrentTimestamp() const {
     auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
         now.time_since_epoch()) % 1000;
     
+    std::tm tmBuf{};
+#ifdef _WIN32
+    localtime_s(&tmBuf, &time);
+#else
+    localtime_r(&time, &tmBuf);
+#endif
+    
     std::stringstream ss;
-    ss << std::put_time(std::localtime(&time), "%Y-%m-%d %H:%M:%S");
+    ss << std::put_time(&tmBuf, "%Y-%m-%d %H:%M:%S");
     ss << "." << std::setfill('0') << std::setw(3) << ms.count();
     
     return ss.str();
@@ -520,7 +560,8 @@ std::string Logger::GetThreadId() const {
 
 LogLevel Logger::StringToLogLevel(const std::string& levelStr) const {
     std::string upperLevel = levelStr;
-    std::transform(upperLevel.begin(), upperLevel.end(), upperLevel.begin(), ::toupper);
+    std::transform(upperLevel.begin(), upperLevel.end(), upperLevel.begin(),
+        [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
     
     if (upperLevel == "TRACE") return LogLevel::Trace;
     if (upperLevel == "DEBUG") return LogLevel::Debug;

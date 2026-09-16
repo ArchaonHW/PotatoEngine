@@ -20,6 +20,7 @@
 #include <thread>
 #include <mutex>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace Potato {
 namespace Security {
@@ -36,7 +37,12 @@ enum class ViolationType {
     MemoryTampered,         // 受保護記憶體區域被竄改
     HardwareBreakpoint,     // 偵測到 DR0-DR7 硬體中斷點
     InjectedThread,         // 偵測到起始位址不在任何模組內的執行緒
-    CodeTampered            // 自身 .text 程式碼區段被修改（inline patch/hook）
+    CodeTampered,           // 自身 .text 程式碼區段被修改（inline patch/hook）
+    HiddenModule,           // 記憶體中有 MEM_IMAGE 區域不在模組清單（手動映射/PEB unlinked）
+    SuspiciousMemory,       // 存在可執行的 MEM_PRIVATE 區域（shellcode staging）
+    HookDetected,           // IAT entry 指向模組外（import hook）
+    ExternalHandle,         // 外部行程持有本行程 handle（Cheat Engine 類工具特徵）
+    HeapCorruption          // Heap 完整性檢查失敗
 };
 
 // 違規報告
@@ -98,6 +104,18 @@ public:
     bool CheckHardwareBreakpoints();
     // 注入執行緒偵測：執行緒起始位址不在任何已載入模組內（CreateRemoteThread/shellcode）
     bool CheckInjectedThreads();
+    // 隱藏模組偵測：掃描 MEM_IMAGE 區域，找出不在模組清單中的映像
+    // （手動映射 / 從 PEB 載入器鏈表摘除的 DLL 會被 EnumProcessModules 遺漏，這裡能補抓）
+    bool CheckHiddenModules();
+    // 可疑記憶體：可執行的 MEM_PRIVATE 區域（PAGE_EXECUTE_* 且非模組）= shellcode staging
+    bool CheckExecutablePrivateMemory();
+    // IAT hook 偵測：import 表 entry 的解析位址不在任何已載入模組內
+    bool CheckIATHooks();
+    // 外部 handle 偵測：枚舉系統 handle，回報持有本行程 handle 的其他行程
+    // diag 為非 null 時輸出診斷訊息（失敗原因 / 掃描統計）
+    bool CheckExternalHandles(std::string* diag = nullptr);
+    // Heap 完整性：HeapValidate 檢查主堆
+    bool CheckHeapIntegrity();
 
     // ---- DLL 注入偵測 ----
     // 將模組名稱加入信任清單（例如 "myplugin.dll"）。
@@ -145,6 +163,9 @@ public:
     void StartMonitoring(uint32_t intervalMs = 5000);
     void StopMonitoring();
     bool IsMonitoring() const { return monitoring.load(); }
+    // 監控心跳：監控執行緒在 maxAgeMs 內有更新即視為存活。
+    // 若監控執行緒被凍結/殺死，此函數回傳 false —— 供遊戲主執行緒定期檢查。
+    bool IsMonitorAlive(uint32_t maxAgeMs = 15000) const;
 
     // 立即執行全部檢查，回傳是否有違規
     bool RunAllChecks();
@@ -172,6 +193,8 @@ private:
     std::atomic<bool> initialized{false};
     std::atomic<bool> monitoring{false};
     std::thread monitorThread;
+    // 監控心跳（steady_clock 毫秒時間戳，MonitorLoop 每週期更新）
+    std::atomic<int64_t> monitorHeartbeatMs{0};
     ViolationCallback violationCallback;
     std::mutex callbackMutex;
 
@@ -181,6 +204,8 @@ private:
     std::vector<std::string> trustedModules;
     // 模組 SHA-256 釘選：小寫檔名 -> 預期雜湊
     std::unordered_map<std::string, std::string> moduleHashes;
+    // 已回報過的外部 handle 持有者（去重）
+    std::unordered_set<uintptr_t> extHandleSeen;
     mutable std::mutex trustedMutex;
 
     // 受信任模組目錄（正規化：小寫、反斜線、無尾分隔符）
@@ -227,7 +252,7 @@ private:
     std::atomic<bool> notifyRun{false};
     std::atomic<uint64_t> notifyDropped{0};
 
-    static void CALLBACK LdrNotifyThunk(unsigned long reason, const void* data, void* ctx);
+    static void __stdcall LdrNotifyThunk(unsigned long reason, const void* data, void* ctx);
     void NotifyWorkerLoop();
     void OnImageLoad(const wchar_t* path);
 #endif

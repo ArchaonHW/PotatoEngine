@@ -62,6 +62,27 @@ struct AudioData {
 };
 
 /**
+ * 音頻緩衝區
+ * 已載入的音頻資源,供資源系統與音頻源引用
+ */
+class AudioBuffer {
+public:
+    AudioBuffer() = default;
+    explicit AudioBuffer(const AudioData& data) : data(data) {}
+    
+    const AudioData& GetData() const { return data; }
+    AudioData& GetData() { return data; }
+    
+    bool IsValid() const { return !data.data.empty(); }
+    int GetDuration() const { return data.duration; }
+    int GetChannels() const { return data.channels; }
+    int GetSampleRate() const { return data.sampleRate; }
+    
+private:
+    AudioData data;
+};
+
+/**
  * 音頻源配置
  */
 struct AudioSourceConfig {

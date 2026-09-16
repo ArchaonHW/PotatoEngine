@@ -75,23 +75,31 @@ public:
     // 事件發布
     template<typename T>
     void Publish(const T& event) {
-        std::lock_guard<std::mutex> lock(mutex);
         std::type_index typeIndex = std::type_index(typeid(T));
         
-        // 調用處理器
-        auto it = handlers.find(typeIndex);
-        if (it != handlers.end()) {
-            for (auto& handler : it->second) {
-                handler(event);
+        // 在鎖內複製快照、鎖外派發：
+        // handler 內可安全呼叫 Subscribe/Unsubscribe/Publish 而不會死結
+        std::vector<std::function<void(const IEvent&)>> handlerSnapshot;
+        std::vector<IEventListener*> listenerSnapshot;
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            
+            auto it = handlers.find(typeIndex);
+            if (it != handlers.end()) {
+                handlerSnapshot = it->second;
+            }
+            
+            auto listenerIt = listeners.find(typeIndex);
+            if (listenerIt != listeners.end()) {
+                listenerSnapshot = listenerIt->second;
             }
         }
         
-        // 調用監聽器
-        auto listenerIt = listeners.find(typeIndex);
-        if (listenerIt != listeners.end()) {
-            for (auto* listener : listenerIt->second) {
-                listener->OnEvent(event);
-            }
+        for (auto& handler : handlerSnapshot) {
+            handler(event);
+        }
+        for (auto* listener : listenerSnapshot) {
+            listener->OnEvent(event);
         }
     }
     

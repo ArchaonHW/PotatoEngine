@@ -1,6 +1,7 @@
 #include "PhysicsSystem.h"
 #include "Logging/Logger.h"
 #include <cmath>
+#include <algorithm>
 
 namespace Potato {
 
@@ -212,8 +213,7 @@ void PhysicsWorld::SetGravity(const Vector3& grav) {
 }
 
 PhysicsBody* PhysicsWorld::CreateBody() {
-    auto body = MakeUnique<PhysicsBody>();
-    PhysicsBody* bodyPtr = body.get();
+    PhysicsBody* bodyPtr = new PhysicsBody();
     bodies.push_back(bodyPtr);
     
     LOG_INFO("Created physics body with ID: " + std::to_string(bodyPtr->GetBodyID()));
@@ -256,24 +256,12 @@ void PhysicsWorld::SetCollisionIterations(int iterations) {
     collisionIterations = iterations;
 }
 
-int PhysicsWorld::GetCollisionIterations() const {
-    return collisionIterations;
-}
-
 void PhysicsWorld::SetSubSteps(int steps) {
     subSteps = steps;
 }
 
-int PhysicsWorld::GetSubSteps() const {
-    return subSteps;
-}
-
 void PhysicsWorld::SetFixedTimeStep(float timeStep) {
     fixedTimeStep = timeStep;
-}
-
-float PhysicsWorld::GetFixedTimeStep() const {
-    return fixedTimeStep;
 }
 
 void PhysicsWorld::SetGlobalCollisionCallback(CollisionCallback callback) {

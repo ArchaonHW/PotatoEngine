@@ -2,8 +2,8 @@
 
 #include "Core/CoreTypes.h"
 #include "MathUtils/Vector3.h"
-// #include "MathUtils/Matrix4.h"  // 暫時禁用
-// #include "MathUtils/Quaternion.h"  // 暫時禁用
+#include "MathUtils/Matrix4.h"
+#include "MathUtils/Quaternion.h"
 #include <vector>
 #include <memory>
 #include <string>

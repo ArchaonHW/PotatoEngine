@@ -5,6 +5,7 @@
 #include <cstring>
 #include <mutex>
 #include <unordered_map>
+#include <unordered_set>
 #include <stack>
 #include <vector>
 #include <memory>
@@ -52,6 +53,7 @@ private:
     
     void* memoryBlock;
     std::stack<void*> freeBlocks;
+    std::unordered_set<void*> allocatedBlocks; // 驗證歸還指標合法性（防雙重釋放/非對齊指標）
     std::mutex mutex;
 };
 
@@ -98,6 +100,7 @@ private:
     void TrackAllocation(void* pointer, size_t size, size_t alignment, const char* file = nullptr, int line = 0);
     void TrackDeallocation(void* pointer);
     void UpdatePeakUsage();
+    void DumpMemoryLeaksUnlocked(); // 呼叫者須已持有 mutex
     
     bool IsValidPointer(void* pointer) const;
     size_t GetAllocationSize(void* pointer) const;
@@ -109,7 +112,7 @@ private:
     
     std::unordered_map<std::string, std::unique_ptr<MemoryPool>> memoryPools;
     std::unordered_map<void*, AllocationInfo> allocationTracker;
-    std::mutex mutex;
+    mutable std::mutex mutex;
     
     static constexpr size_t DEFAULT_ALIGNMENT = 16;
 };

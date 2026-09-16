@@ -2,6 +2,7 @@
 #include "Logging/Logger.h"
 #include <fstream>
 #include <cstring>
+#include <algorithm>
 
 namespace Potato {
 
@@ -178,8 +179,7 @@ void OpenALAudioManager::UnloadAllAudio() {
 }
 
 AudioSource* OpenALAudioManager::CreateSource() {
-    auto source = MakeUnique<AudioSource>();
-    AudioSource* sourcePtr = source.get();
+    AudioSource* sourcePtr = new AudioSource();
     sources.push_back(sourcePtr);
     
     LOG_INFO("Created audio source with ID: " + std::to_string(sourcePtr->GetSourceID()));

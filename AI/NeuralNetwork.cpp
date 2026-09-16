@@ -385,6 +385,17 @@ bool NeuralNetwork::Deserialize(const std::string& data) {
     return true;
 }
 
+void NeuralNetwork::CopyWeightsFrom(const NeuralNetwork& other) {
+    if (layers.size() != other.layers.size()) {
+        throw std::runtime_error("Cannot copy weights: layer count mismatch");
+    }
+    
+    for (size_t i = 0; i < layers.size(); i++) {
+        layers[i]->SetWeights(other.layers[i]->GetWeights());
+        layers[i]->SetBiases(other.layers[i]->GetBiases());
+    }
+}
+
 void NeuralNetwork::SetLossFunction(const std::string& lossType) {
     lossFunction = lossType;
     InitializeLossFunction();

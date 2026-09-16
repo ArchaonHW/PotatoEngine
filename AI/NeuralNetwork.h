@@ -161,6 +161,9 @@ public:
     std::string Serialize() const;
     bool Deserialize(const std::string& data);
     
+    // Deep copy of layer weights/biases (layers must already be built with same shape)
+    void CopyWeightsFrom(const NeuralNetwork& other);
+    
     // Getters
     size_t GetLayerCount() const { return layers.size(); }
     const std::vector<std::unique_ptr<NeuralLayer>>& GetLayers() const { return layers; }

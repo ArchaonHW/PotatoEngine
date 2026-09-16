@@ -48,6 +48,7 @@ void* MemoryPool::Allocate() {
     
     void* pointer = freeBlocks.top();
     freeBlocks.pop();
+    allocatedBlocks.insert(pointer);
     
     usedCount++;
     freeCount--;
@@ -60,15 +61,15 @@ void MemoryPool::Free(void* pointer) {
     
     std::lock_guard<std::mutex> lock(mutex);
     
-    // 檢查指針是否在池範圍內
-    char* blockPtr = static_cast<char*>(memoryBlock);
-    char* ptr = static_cast<char*>(pointer);
-    
-    if (ptr >= blockPtr && ptr < blockPtr + (blockSize * capacity)) {
-        freeBlocks.push(pointer);
-        usedCount--;
-        freeCount++;
+    // 只接受 Allocate() 發出的塊起始位址：
+    // 自動拒絕池外指標、塊中間指標（未對齊）與雙重釋放
+    if (allocatedBlocks.erase(pointer) == 0) {
+        return;
     }
+    
+    freeBlocks.push(pointer);
+    usedCount--;
+    freeCount++;
 }
 
 // ============================================================================
@@ -99,10 +100,10 @@ void MemoryManager::Shutdown() {
     // 清理所有內存池
     memoryPools.clear();
     
-    // 檢查內存泄漏
+    // 檢查內存泄漏（已持有 mutex，呼叫無鎖版本避免自我死結）
     if (trackingEnabled && !allocationTracker.empty()) {
         std::cout << "WARNING: Memory leaks detected!" << std::endl;
-        DumpMemoryLeaks();
+        DumpMemoryLeaksUnlocked();
     }
     
     allocationTracker.clear();
@@ -115,19 +116,29 @@ void* MemoryManager::Allocate(size_t size, size_t alignment) {
 }
 
 void MemoryManager::Free(void* pointer) {
-    if (!pointer) return;
-    
-    std::lock_guard<std::mutex> lock(mutex);
-    
-    TrackDeallocation(pointer);
-    std::free(pointer);
+    // Allocate() 一律走對齊分配，必須用配對的釋放函數
+    // （_aligned_malloc 的記憶體用 std::free 會造成堆損毀）
+    FreeAligned(pointer);
 }
 
 void* MemoryManager::AllocateAligned(size_t size, size_t alignment) {
+    if (size == 0) {
+        return nullptr;
+    }
+    if (alignment == 0) {
+        alignment = DEFAULT_ALIGNMENT;
+    }
+#ifdef _WIN32
+    // _aligned_malloc 要求 alignment 為 2 的冪且 >= sizeof(void*)
+    if (alignment < sizeof(void*) || (alignment & (alignment - 1)) != 0) {
+        alignment = DEFAULT_ALIGNMENT;
+    }
+#endif
+    
     std::lock_guard<std::mutex> lock(mutex);
     
-    // 檢查內存限制
-    if (stats.currentUsage + size > maxMemory) {
+    // 檢查內存限制（maxMemory == 0 表示未初始化/無限制）
+    if (maxMemory > 0 && stats.currentUsage + size > maxMemory) {
         std::cerr << "Memory allocation failed: exceeded maximum memory limit" << std::endl;
         return nullptr;
     }
@@ -159,10 +170,13 @@ void MemoryManager::FreeAligned(void* pointer) {
     std::lock_guard<std::mutex> lock(mutex);
     
     size_t size = GetAllocationSize(pointer);
-    if (size > 0) {
-        stats.totalFreed += size;
-        stats.currentUsage -= size;
+    if (size == 0) {
+        // 未知指標（非本管理器分配或已釋放）— 拒絕釋放避免堆損毀
+        std::cerr << "WARNING: MemoryManager::Free on untracked pointer" << std::endl;
+        return;
     }
+    stats.totalFreed += size;
+    stats.currentUsage -= size;
     
     TrackDeallocation(pointer);
     
@@ -174,7 +188,7 @@ void MemoryManager::FreeAligned(void* pointer) {
 }
 
 MemoryStats MemoryManager::GetStats() const {
-    std::lock_guard<std::mutex> lock(const_cast<std::mutex&>(mutex));
+    std::lock_guard<std::mutex> lock(mutex);
     return stats;
 }
 
@@ -188,6 +202,11 @@ bool MemoryManager::CreateMemoryPool(const std::string& name, size_t size, size_
     
     if (memoryPools.find(name) != memoryPools.end()) {
         std::cerr << "Memory pool '" << name << "' already exists" << std::endl;
+        return false;
+    }
+    
+    if (blockSize == 0 || size == 0) {
+        std::cerr << "Memory pool '" << name << "': blockSize and size must be non-zero" << std::endl;
         return false;
     }
     
@@ -252,7 +271,10 @@ void MemoryManager::EnableMemoryTracking(bool enable) {
 
 void MemoryManager::DumpMemoryLeaks() {
     std::lock_guard<std::mutex> lock(mutex);
-    
+    DumpMemoryLeaksUnlocked();
+}
+
+void MemoryManager::DumpMemoryLeaksUnlocked() {
     if (allocationTracker.empty()) {
         std::cout << "No memory leaks detected" << std::endl;
         return;
@@ -300,7 +322,7 @@ float MemoryManager::GetMemoryUsagePercentage() const {
 }
 
 void MemoryManager::PrintStats() const {
-    std::lock_guard<std::mutex> lock(const_cast<std::mutex&>(mutex));
+    std::lock_guard<std::mutex> lock(mutex);
     
     std::cout << "=== Memory Statistics ===" << std::endl;
     std::cout << "Total Allocated: " << stats.totalAllocated << " bytes" << std::endl;
@@ -314,7 +336,7 @@ void MemoryManager::PrintStats() const {
 }
 
 void MemoryManager::PrintPools() const {
-    std::lock_guard<std::mutex> lock(const_cast<std::mutex&>(mutex));
+    std::lock_guard<std::mutex> lock(mutex);
     
     std::cout << "=== Memory Pools ===" << std::endl;
     
@@ -333,8 +355,8 @@ void MemoryManager::PrintPools() const {
 }
 
 void MemoryManager::TrackAllocation(void* pointer, size_t size, size_t alignment, const char* file, int line) {
-    if (!trackingEnabled) return;
-    
+    // 無論 trackingEnabled 都記錄：FreeAligned 需要查表取得 size 來更新統計
+    // trackingEnabled 只控制 Shutdown 時是否輸出洩漏報告
     AllocationInfo info;
     info.pointer = pointer;
     info.size = size;
@@ -348,8 +370,6 @@ void MemoryManager::TrackAllocation(void* pointer, size_t size, size_t alignment
 }
 
 void MemoryManager::TrackDeallocation(void* pointer) {
-    if (!trackingEnabled) return;
-    
     allocationTracker.erase(pointer);
 }
 

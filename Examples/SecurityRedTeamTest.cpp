@@ -95,9 +95,32 @@ std::string BaseName(const std::string& path) {
     return (sep == std::string::npos) ? path : path.substr(sep + 1);
 }
 
+#ifdef _WIN32
+// patch 測試用的無害函數：noinline 確保有獨立程式碼可改
+__declspec(noinline) int DummyPatchTarget() {
+    volatile int x = 42;
+    return x;
+}
+#endif
+
 } // anonymous namespace
 
-int main() {
+int main(int argc, char* argv[]) {
+#ifdef _WIN32
+    // 外部 handle 測試的子行程模式：開一個目標行程的 handle 後掛著
+    if (argc >= 3 && strcmp(argv[1], "--hold-handle") == 0) {
+        DWORD target = static_cast<DWORD>(atoi(argv[2]));
+        HANDLE h = ::OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE,
+                                 FALSE, target);
+        if (!h) return 2;
+        printf("child holding handle\n");
+        ::Sleep(15000);
+        ::CloseHandle(h);
+        return 0;
+    }
+#endif
+    (void)argc; (void)argv;
+
     printf("====================================================\n");
     printf(" Potato Engine Security Red-Team Test\n");
     printf(" 對抗性測試 Security/ 模組的偵測能力\n");
@@ -320,6 +343,291 @@ int main() {
     }
 
     // ------------------------------------------------------------------
+    Section("[攻擊 6] 硬體中斷點（DR 暫存器）-> CheckHardwareBreakpoints");
+    // ------------------------------------------------------------------
+    {
+        // 建立暫停的執行緒，對它設 DR0 硬體中斷點（Cheat Engine 手法）
+        HANDLE th = ::CreateThread(nullptr, 0,
+            [](LPVOID) -> DWORD { ::Sleep(5000); return 0; },
+            nullptr, CREATE_SUSPENDED, nullptr);
+        if (!th) {
+            Info("硬體中斷點測試", "CreateThread failed");
+        } else {
+            CONTEXT ctx{};
+            ctx.ContextFlags = CONTEXT_DEBUG_REGISTERS;
+            ::GetThreadContext(th, &ctx);
+            ctx.Dr0 = reinterpret_cast<DWORD_PTR>(&DummyPatchTarget);
+            ctx.Dr7 = 0x1; // L0 enable
+            ::SetThreadContext(th, &ctx);
+
+            ClearReports();
+            bool detected = sec.CheckHardwareBreakpoints() &&
+                            SawViolation(ViolationType::HardwareBreakpoint);
+            detected ? Pass("偵測到硬體中斷點")
+                     : Fail("偵測到硬體中斷點", "DR breakpoint missed");
+
+            // 清掉後不應再回報
+            ctx.Dr7 = 0; ctx.Dr0 = 0;
+            ::SetThreadContext(th, &ctx);
+            ClearReports();
+            bool clean = !sec.CheckHardwareBreakpoints();
+            clean ? Pass("清除後放行") : Fail("清除後放行", "still flagged");
+
+            ::TerminateThread(th, 0);
+            ::CloseHandle(th);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    Section("[攻擊 7] Shellcode 執行緒 -> CheckInjectedThreads");
+    // ------------------------------------------------------------------
+    {
+        // 在 VirtualAlloc 的可執行記憶體跑執行緒 = CreateRemoteThread+shellcode 的特徵
+        void* code = ::VirtualAlloc(nullptr, 4096, MEM_COMMIT | MEM_RESERVE,
+                                    PAGE_EXECUTE_READWRITE);
+        if (!code) {
+            Info("Shellcode 執行緒測試", "VirtualAlloc failed");
+        } else {
+            // 組一個最小函數：xor eax,eax; ret（只會立即回傳，無惡意行為）
+            uint8_t sc[] = { 0x31, 0xC0, 0xC3 };
+            memcpy(code, sc, sizeof(sc));
+            ::FlushInstructionCache(::GetCurrentProcess(), code, sizeof(sc));
+
+            // 暫停建立：確保枚舉時執行緒還活著
+            DWORD tid = 0;
+            HANDLE th = ::CreateThread(nullptr, 0,
+                reinterpret_cast<LPTHREAD_START_ROUTINE>(code),
+                nullptr, CREATE_SUSPENDED, &tid);
+            if (!th) {
+                Info("Shellcode 執行緒測試", "CreateThread failed");
+            } else {
+                ClearReports();
+                bool detected = sec.CheckInjectedThreads() &&
+                                SawViolation(ViolationType::InjectedThread);
+                detected ? Pass("偵測到 shellcode 執行緒")
+                         : Fail("偵測到 shellcode 執行緒", "injected thread missed");
+                ::TerminateThread(th, 0);
+                ::CloseHandle(th);
+            }
+            ::VirtualFree(code, 0, MEM_RELEASE);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    Section("[攻擊 8] Patch 自身程式碼 -> GuardOwnCode/VerifyOwnCode");
+    // ------------------------------------------------------------------
+    {
+        sec.GuardOwnCode();
+        ClearReports();
+        bool intact = sec.VerifyOwnCode();
+        intact ? Pass("自身 .text 校驗通過") : Fail("自身 .text 校驗通過", "false positive");
+
+        // 攻擊：inline patch 一個 byte（模擬 hook 安裝）
+        uint8_t* target = reinterpret_cast<uint8_t*>(&DummyPatchTarget);
+        DWORD oldProt = 0;
+        if (::VirtualProtect(target, 16, PAGE_EXECUTE_READWRITE, &oldProt)) {
+            uint8_t orig = target[0];
+            target[0] = orig ^ 0xFF;
+            ::FlushInstructionCache(::GetCurrentProcess(), target, 16);
+
+            ClearReports();
+            bool detected = !sec.VerifyOwnCode() &&
+                            SawViolation(ViolationType::CodeTampered);
+            detected ? Pass("偵測到 .text patch")
+                     : Fail("偵測到 .text patch", "code patch missed");
+
+            target[0] = orig; // 還原
+            ::FlushInstructionCache(::GetCurrentProcess(), target, 16);
+            ::VirtualProtect(target, 16, oldProt, &oldProt);
+            ClearReports();
+            bool restored = sec.VerifyOwnCode();
+            restored ? Pass("還原後校驗通過")
+                     : Fail("還原後校驗通過", "still tampered after restore");
+        } else {
+            Info(".text patch 測試", "VirtualProtect failed");
+        }
+    }
+
+    // ------------------------------------------------------------------
+    Section("[攻擊 9] 即時載入攔截 -> EnableImageLoadNotify");
+    // ------------------------------------------------------------------
+    {
+        bool armed = sec.EnableImageLoadNotify();
+        if (!armed) {
+            Info("即時載入通知", "LdrRegisterDllNotification 不可用");
+        } else {
+            Pass("EnableImageLoadNotify 註冊成功");
+
+            auto src = std::filesystem::path(exePath).parent_path() / "FakeCheat.dll";
+            auto dst = std::filesystem::temp_directory_path() / "potato_redteam_rt"
+                       / "sneaky.dll";
+            std::error_code ec;
+            std::filesystem::create_directories(dst.parent_path());
+            std::filesystem::copy_file(src, dst,
+                std::filesystem::copy_options::overwrite_existing, ec);
+
+            ClearReports();
+            HMODULE h = ec ? nullptr : ::LoadLibraryW(dst.wstring().c_str());
+            // 即時通知應在載入後極短時間內觸發（不等掃描週期）
+            bool caught = false;
+            for (int i = 0; i < 20 && !caught; i++) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                caught = SawViolation(ViolationType::UntrustedModule);
+            }
+            caught ? Pass("即時攔截到 sneaky.dll 載入")
+                   : Fail("即時攔截到 sneaky.dll 載入", "not notified");
+            if (h) ::FreeLibrary(h);
+            std::filesystem::remove_all(dst.parent_path(), ec);
+            sec.DisableImageLoadNotify();
+        }
+    }
+
+    // ------------------------------------------------------------------
+    Section("[攻擊 10] 隱藏模組（SEC_IMAGE 手動映射）-> CheckHiddenModules");
+    // ------------------------------------------------------------------
+    {
+        // 用 SEC_IMAGE 檔案映射製造 MEM_IMAGE 區域 —— 等同手動映射 DLL
+        // 的效果：存在映像但不會進 PEB 模組清單，EnumProcessModules 看不到
+        auto src = std::filesystem::path(exePath).parent_path() / "FakeCheat.dll";
+        HANDLE hf = ::CreateFileW(src.wstring().c_str(), GENERIC_READ,
+                                  FILE_SHARE_READ, nullptr, OPEN_EXISTING,
+                                  FILE_ATTRIBUTE_NORMAL, nullptr);
+        HANDLE map = hf ? ::CreateFileMappingW(hf, nullptr,
+                            PAGE_READONLY | SEC_IMAGE, 0, 0, nullptr) : nullptr;
+        void* view = map ? ::MapViewOfFile(map, FILE_MAP_READ, 0, 0, 0) : nullptr;
+
+        if (!view) {
+            Info("隱藏模組測試", "SEC_IMAGE map failed, err=" +
+                 std::to_string(::GetLastError()));
+        } else {
+            ClearReports();
+            bool detected = sec.CheckHiddenModules() &&
+                            SawViolation(ViolationType::HiddenModule);
+            detected ? Pass("偵測到隱藏映像")
+                     : Fail("偵測到隱藏映像", "hidden image missed");
+            ::UnmapViewOfFile(view);
+        }
+        if (map) ::CloseHandle(map);
+        if (hf) ::CloseHandle(hf);
+    }
+
+    // ------------------------------------------------------------------
+    Section("[攻擊 11] RWX 私有記憶體 -> CheckExecutablePrivateMemory");
+    // ------------------------------------------------------------------
+    {
+        void* rwx = ::VirtualAlloc(nullptr, 4096, MEM_COMMIT | MEM_RESERVE,
+                                   PAGE_EXECUTE_READWRITE);
+        if (!rwx) {
+            Info("RWX 記憶體測試", "VirtualAlloc failed");
+        } else {
+            ClearReports();
+            bool detected = sec.CheckExecutablePrivateMemory() &&
+                            SawViolation(ViolationType::SuspiciousMemory);
+            detected ? Pass("偵測到 RWX 私有區域")
+                     : Fail("偵測到 RWX 私有區域", "executable private region missed");
+            ::VirtualFree(rwx, 0, MEM_RELEASE);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    Section("[攻擊 12] IAT hook -> CheckIATHooks");
+    // ------------------------------------------------------------------
+    {
+        HMODULE self = ::GetModuleHandleW(nullptr);
+        auto* dos = reinterpret_cast<IMAGE_DOS_HEADER*>(self);
+        auto* nt = reinterpret_cast<IMAGE_NT_HEADERS*>(
+            reinterpret_cast<uint8_t*>(self) + dos->e_lfanew);
+        auto& impDir = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
+
+        // 按「函數名」找 IAT entry 來 patch：挑 CheckIATHooks 內部不會呼叫的函數
+        // （掃描路徑只用 EnumProcessModules/GetModuleInformation）。
+        bool hooked = false;
+        DWORD oldProt = 0;
+        IMAGE_THUNK_DATA* hookedThunk = nullptr;
+        uintptr_t orig = 0;
+        const char* preferFn[] = { "HeapValidate", "VirtualFree",
+                                   "GetSystemDirectoryW", "GetWindowsDirectoryW",
+                                   "FlushInstructionCache", "TerminateThread" };
+        if (impDir.VirtualAddress) {
+            auto* desc = reinterpret_cast<IMAGE_IMPORT_DESCRIPTOR*>(
+                reinterpret_cast<uint8_t*>(self) + impDir.VirtualAddress);
+            for (; desc->Name && !hooked; desc++) {
+                auto* int_ = reinterpret_cast<IMAGE_THUNK_DATA*>(  // 名稱表
+                    reinterpret_cast<uint8_t*>(self) +
+                    (desc->OriginalFirstThunk ? desc->OriginalFirstThunk
+                                              : desc->FirstThunk));
+                auto* iat = reinterpret_cast<IMAGE_THUNK_DATA*>(
+                    reinterpret_cast<uint8_t*>(self) + desc->FirstThunk);
+                for (int i = 0; int_[i].u1.AddressOfData && !hooked; i++) {
+                    if (IMAGE_SNAP_BY_ORDINAL(int_[i].u1.Ordinal)) continue;
+                    auto* ibn = reinterpret_cast<IMAGE_IMPORT_BY_NAME*>(
+                        reinterpret_cast<uint8_t*>(self) + int_[i].u1.AddressOfData);
+                    for (const char* want : preferFn) {
+                        if (strcmp(reinterpret_cast<const char*>(ibn->Name), want) == 0) {
+                            if (::VirtualProtect(&iat[i], sizeof(iat[i]),
+                                                 PAGE_READWRITE, &oldProt)) {
+                                orig = static_cast<uintptr_t>(iat[i].u1.Function);
+                                iat[i].u1.Function =
+                                    reinterpret_cast<uintptr_t>(&oldProt);
+                                hookedThunk = &iat[i];
+                                hooked = true;
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        if (!hooked) {
+            Info("IAT hook 測試", "no writable import entry found");
+        } else {
+            ClearReports();
+            bool detected = sec.CheckIATHooks() &&
+                            SawViolation(ViolationType::HookDetected);
+            detected ? Pass("偵測到 IAT hook")
+                     : Fail("偵測到 IAT hook", "hooked import missed");
+            hookedThunk->u1.Function = orig; // 還原
+            ::VirtualProtect(hookedThunk, sizeof(*hookedThunk), oldProt, &oldProt);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    Section("[攻擊 13] 外部行程 OpenProcess -> CheckExternalHandles");
+    // ------------------------------------------------------------------
+    {
+        // 啟動子行程對我們 OpenProcess（Cheat Engine 開 handle 的特徵）
+        char cmd[512];
+        snprintf(cmd, sizeof(cmd), "\"%s\" --hold-handle %lu",
+                 exePath, static_cast<unsigned long>(::GetCurrentProcessId()));
+        STARTUPINFOA si{};
+        si.cb = sizeof(si);
+        PROCESS_INFORMATION pi{};
+        if (!::CreateProcessA(nullptr, cmd, nullptr, nullptr, FALSE,
+                            CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
+            Info("外部 handle 測試", "CreateProcess failed, err=" +
+                 std::to_string(::GetLastError()));
+        } else {
+            ::Sleep(800); // 等子行程 OpenProcess
+            // 診斷：子行程是否還活著（失敗會 exit code 2 提早結束）
+            DWORD childExit = STILL_ACTIVE;
+            ::GetExitCodeProcess(pi.hProcess, &childExit);
+            if (childExit != STILL_ACTIVE) {
+                Info("外部 handle 測試", "child exited early, code=" +
+                     std::to_string(childExit));
+            }
+            ClearReports();
+            std::string diag;
+            bool detected = sec.CheckExternalHandles(&diag) &&
+                            SawViolation(ViolationType::ExternalHandle);
+            detected ? Pass("偵測到外部 handle")
+                     : Fail("偵測到外部 handle", "missed: " + diag);
+            ::TerminateProcess(pi.hProcess, 0);
+            ::CloseHandle(pi.hProcess);
+            ::CloseHandle(pi.hThread);
+        }
+    }
+
+    // ------------------------------------------------------------------
     Section("[攻擊 5] 背景監控中注入 -> StartMonitoring");
     // ------------------------------------------------------------------
     if (fakeCheat) {
@@ -346,12 +654,37 @@ int main() {
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
             detected = SawViolation(ViolationType::UntrustedModule);
         }
-        sec.StopMonitoring();
         if (late) ::FreeLibrary(late);
         std::filesystem::remove_all(dir, ec);
 
         detected ? Pass("監控執行緒偵測到注入")
                  : Fail("監控執行緒偵測到注入", "not detected within 2s");
+
+        // 監控中竄改受保護記憶體 -> VerifyAllGuards 自動偵測
+        static uint32_t cheatGold = 100;
+        uint32_t guardId = sec.GuardRegion(&cheatGold, sizeof(cheatGold));
+        ClearReports();
+        cheatGold = 999999; // 模擬作弊器寫入
+        bool autoCaught = false;
+        for (int i = 0; i < 20 && !autoCaught; i++) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            autoCaught = SawViolation(ViolationType::MemoryTampered);
+        }
+        // 監控運行中心跳應為存活
+        bool alive = sec.IsMonitorAlive(2000);
+        alive ? Pass("監控心跳存活") : Fail("監控心跳存活", "heartbeat stale");
+
+        sec.StopMonitoring();
+        sec.UnguardRegion(guardId);
+        cheatGold = 100;
+
+        autoCaught ? Pass("監控自動偵測記憶體竄改")
+                   : Fail("監控自動偵測記憶體竄改", "not detected within 2s");
+
+        // 心跳：監控停止後 IsMonitorAlive 應失效
+        bool dead = !sec.IsMonitorAlive(200);
+        dead ? Pass("監控停止後心跳失效")
+             : Fail("監控停止後心跳失效", "stale heartbeat accepted");
     }
 #endif
 
@@ -363,6 +696,12 @@ int main() {
         bool dbg = sec.CheckDebugger();
         dbg ? Info("CheckDebugger", "偵測到除錯器（測試正被除錯？）")
             : Info("CheckDebugger", "無除錯器。要驗證此防禦：用 VS/WinDbg/x64dbg 附加本測試行程");
+
+        ClearReports();
+        bool dbg2 = sec.CheckDebuggerExtended();
+        dbg2 ? Info("CheckDebuggerExtended", "偵測到除錯器")
+             : Info("CheckDebuggerExtended",
+                    "DebugPort/DebugObject/DebugFlags/PEB 皆正常");
 
         // 計時異常誤報率：連續執行 200 次統計最大耗時
         int anomalies = 0;

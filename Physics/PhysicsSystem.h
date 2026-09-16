@@ -156,6 +156,7 @@ public:
     Matrix4 GetTransformMatrix() const;
     
 private:
+    friend class PhysicsWorld;
     int bodyID;
     
     PhysicsBodyType bodyType;

@@ -10,11 +10,11 @@ namespace Potato {
  * 內存分配統計
  */
 struct MemoryStats {
-    size_t totalAllocated;
-    size_t totalFreed;
-    size_t currentUsage;
-    size_t peakUsage;
-    size_t allocationCount;
+    size_t totalAllocated = 0;
+    size_t totalFreed = 0;
+    size_t currentUsage = 0;
+    size_t peakUsage = 0;
+    size_t allocationCount = 0;
 };
 
 /**

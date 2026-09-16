@@ -220,7 +220,7 @@ Vector3 LightingCalculator::CalculatePBR(
 // ============================================================================
 
 LightingManager::LightingManager()
-    : ambientColor(Vector3(0.1f, 0.1f, 0.1f)
+    : ambientColor(Vector3(0.1f, 0.1f, 0.1f))
     , ambientIntensity(1.0f)
     , shadowsEnabled(false)
     , shadowMapSize(1024)

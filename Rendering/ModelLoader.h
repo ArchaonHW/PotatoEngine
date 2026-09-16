@@ -93,8 +93,8 @@ public:
     bool LoadFromFile(const std::string& path);
     bool LoadFromData(const ModelData& modelData);
     
-    void Draw(const AdvancedShader& shader) const;
-    void DrawInstanced(const AdvancedShader& shader, int instanceCount) const;
+    void Draw(AdvancedShader& shader) const;
+    void DrawInstanced(AdvancedShader& shader, int instanceCount) const;
     
     const std::string& GetName() const { return name; }
     const std::vector<UniquePtr<Mesh>>& GetMeshes() const { return meshes; }

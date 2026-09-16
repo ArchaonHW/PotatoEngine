@@ -1,4 +1,6 @@
 #include "ResourceManager.h"
+#include "Rendering/OpenGLRenderer.h" // Texture / Mesh / Shader 定義
+#include "Audio/AudioSystem.h"       // AudioBuffer 定義
 #include <iostream>
 #include <algorithm>
 

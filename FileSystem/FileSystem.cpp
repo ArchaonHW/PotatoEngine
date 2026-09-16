@@ -4,7 +4,26 @@
 #include <algorithm>
 #include <filesystem>
 
+#ifdef _WIN32
+    #include <windows.h>
+    // Win32 宏會改寫 FileSystem 的同名成員函數定義,必須取消
+    #undef CreateFile
+    #undef DeleteFile
+    #undef CopyFile
+    #undef MoveFile
+    #undef CreateDirectory
+    #undef GetCurrentDirectory
+    #undef SetCurrentDirectory
+#else
+    #include <dirent.h>
+    #include <sys/stat.h>
+    #include <unistd.h>
+    #include <limits.h>
+#endif
+
 namespace fs = std::filesystem;
+
+namespace Potato {
 
 // 全局文件系統指針
 FileSystem* gFileSystem = nullptr;
@@ -29,15 +48,22 @@ bool FileSystem::Initialize() {
         return true;
     }
     
-    // 添加默認搜索路徑
+    // 添加默認搜索路徑（已持有 mutex，直接操作避免 AddSearchPath 重入死結）
     std::string currentDir = GetCurrentDirectoryPlatform();
-    AddSearchPath(currentDir);
+    currentDir = RemoveTrailingSeparator(NormalizePath(currentDir));
+    if (!currentDir.empty() &&
+        std::find(searchPaths.begin(), searchPaths.end(), currentDir) == searchPaths.end()) {
+        searchPaths.push_back(currentDir);
+    }
     
     // 添加可執行文件目錄
     std::string exeDir = GetExecutablePath();
     if (!exeDir.empty()) {
-        std::string exeDirectory = GetDirectoryName(exeDir);
-        AddSearchPath(exeDirectory);
+        std::string exeDirectory = RemoveTrailingSeparator(NormalizePath(GetDirectoryName(exeDir)));
+        if (!exeDirectory.empty() &&
+            std::find(searchPaths.begin(), searchPaths.end(), exeDirectory) == searchPaths.end()) {
+            searchPaths.push_back(exeDirectory);
+        }
     }
     
     initialized = true;
@@ -74,14 +100,24 @@ bool FileSystem::ReadFile(const std::string& path, std::vector<uint8>& data) con
         return false;
     }
     
-    // 獲取文件大小
+    // 獲取文件大小（tellg 失敗回傳 -1，轉 size_t 會變成天量，必須檢查）
     file.seekg(0, std::ios::end);
-    size_t fileSize = file.tellg();
+    std::streampos endPos = file.tellg();
+    if (endPos < 0) {
+        std::cerr << "Failed to determine file size: " << resolvedPath << std::endl;
+        return false;
+    }
+    size_t fileSize = static_cast<size_t>(endPos);
     file.seekg(0, std::ios::beg);
+    if (!file.good()) {
+        return false;
+    }
     
     // 讀取文件內容
     data.resize(fileSize);
-    file.read(reinterpret_cast<char*>(data.data()), fileSize);
+    if (fileSize > 0) {
+        file.read(reinterpret_cast<char*>(data.data()), fileSize);
+    }
     
     return !file.fail();
 }
@@ -293,7 +329,7 @@ FileInfo FileSystem::GetFileInfo(const std::string& path) const {
         info.path = resolvedPath;
         info.size = GetFileSizePlatform(resolvedPath);
         info.isDirectory = fs::is_directory(resolvedPath);
-        info.isReadOnly = !(fs::status(resolvedPath).permissions() & fs::perms::owner_write);
+        info.isReadOnly = (fs::status(resolvedPath).permissions() & fs::perms::owner_write) == fs::perms::none;
     } catch (const fs::filesystem_error& e) {
         std::cerr << "Failed to get file info: " << e.what() << std::endl;
     }
@@ -501,9 +537,16 @@ std::vector<FileInfo> FileSystem::ListDirectoryPlatform(const std::string& path,
             FileInfo info;
             info.name = entry.path().filename().string();
             info.path = entry.path().string();
-            info.size = entry.file_size();
             info.isDirectory = entry.is_directory();
-            info.isReadOnly = !(entry.status().permissions() & fs::perms::owner_write);
+            // file_size 對目錄會拋 filesystem_error，跳過目錄並個別捕捉
+            info.size = 0;
+            if (!info.isDirectory) {
+                std::error_code ec;
+                info.size = static_cast<uint64>(fs::file_size(entry.path(), ec));
+                if (ec) info.size = 0;
+            }
+            std::error_code permEc;
+            info.isReadOnly = (entry.status(permEc).permissions() & fs::perms::owner_write) == fs::perms::none;
             
             if (filesOnly && info.isDirectory) continue;
             if (dirsOnly && !info.isDirectory) continue;

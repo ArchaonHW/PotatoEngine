@@ -3,6 +3,7 @@
 #include "Core/CoreTypes.h"
 #include <cstdint>
 #include <bitset>
+#include <vector>
 
 namespace Potato {
 namespace ECS {

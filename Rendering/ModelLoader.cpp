@@ -211,7 +211,7 @@ bool Model::LoadFromData(const ModelData& modelData) {
     return true;
 }
 
-void Model::Draw(const AdvancedShader& shader) const {
+void Model::Draw(AdvancedShader& shader) const {
     Matrix4 modelMatrix = GetModelMatrix();
     shader.SetMat4("model", modelMatrix);
     
@@ -220,7 +220,7 @@ void Model::Draw(const AdvancedShader& shader) const {
     }
 }
 
-void Model::DrawInstanced(const AdvancedShader& shader, int instanceCount) const {
+void Model::DrawInstanced(AdvancedShader& shader, int instanceCount) const {
     Matrix4 modelMatrix = GetModelMatrix();
     shader.SetMat4("model", modelMatrix);
     

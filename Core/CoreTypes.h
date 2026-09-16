@@ -4,6 +4,7 @@
 #include <string>
 #include <memory>
 #include <utility>
+#include <atomic>
 
 namespace Potato {
 
@@ -49,26 +50,26 @@ struct DefaultDeleter {
  */
 class RefCounted {
 public:
-    RefCounted() : refCount(1) {}
+    // 起始計數為 0：RefPtr 取得所有權時才 +1，避免 MakeRef 出廠即計數 2 造成洩漏
+    RefCounted() : refCount(0) {}
     virtual ~RefCounted() = default;
     
     void AddRef() {
-        refCount++;
+        refCount.fetch_add(1, std::memory_order_relaxed);
     }
     
     void Release() {
-        refCount--;
-        if (refCount <= 0) {
+        if (refCount.fetch_sub(1, std::memory_order_acq_rel) == 1) {
             delete this;
         }
     }
     
     int GetRefCount() const {
-        return refCount;
+        return refCount.load(std::memory_order_relaxed);
     }
     
 private:
-    int refCount;
+    std::atomic<int> refCount;
 };
 
 /**

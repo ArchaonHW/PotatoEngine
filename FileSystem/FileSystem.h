@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Core/Interfaces/IFileSystem.h"
+#include "Core/CoreTypes.h"
 #include <vector>
 #include <string>
 #include <unordered_map>
@@ -8,13 +9,9 @@
 #include <filesystem>
 #include <cstdint>
 
-#ifdef _WIN32
-    #include <windows.h>
-#else
-    #include <dirent.h>
-    #include <sys/stat.h>
-    #include <unistd.h>
-#endif
+// 注意:不可在此引入 <windows.h> — CreateFile/DeleteFile/CopyFile/MoveFile/
+// CreateDirectory/GetCurrentDirectory/SetCurrentDirectory 等 Win32 宏會改寫
+// 下方同名成員函數為 *A/*W 變體,導致 override 失敗。平台 API 在 .cpp 引入。
 
 namespace Potato {
 

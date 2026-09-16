@@ -31,7 +31,7 @@ public:
     template<typename T>
     void AddComponent(Entity entity, T component) {
         EntityID entityID = entity.GetID();
-        componentManager.AddComponent(entityID, component);
+        componentManager->AddComponent(entityID, component);
         
         // 更新實體的組件掩碼
         // 注意：這需要訪問EntityManager的內部狀態，實際實現可能需要調整
@@ -40,22 +40,22 @@ public:
     template<typename T>
     void RemoveComponent(Entity entity) {
         EntityID entityID = entity.GetID();
-        componentManager.RemoveComponent<T>(entityID);
+        componentManager->RemoveComponent<T>(entityID);
     }
     
     template<typename T>
     T& GetComponent(Entity entity) {
-        return componentManager.GetComponent<T>(entity.GetID());
+        return componentManager->GetComponent<T>(entity.GetID());
     }
     
     template<typename T>
     const T& GetComponent(Entity entity) const {
-        return componentManager.GetComponent<T>(entity.GetID());
+        return componentManager->GetComponent<T>(entity.GetID());
     }
     
     template<typename T>
     bool HasComponent(Entity entity) const {
-        return componentManager.HasComponent<T>(entity.GetID());
+        return componentManager->HasComponent<T>(entity.GetID());
     }
     
     // 系統管理
@@ -64,7 +64,7 @@ public:
     
     template<typename T>
     SharedPtr<T> GetSystem() {
-        return systemManager.GetSystem<T>();
+        return systemManager->GetSystem<T>();
     }
     
     // 主循環

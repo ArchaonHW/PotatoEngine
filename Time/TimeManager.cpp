@@ -190,8 +190,9 @@ void TimeManager::Update() {
     // 處理延遲調用
     ProcessDelayedCalls();
     
-    // 調用更新回調
-    for (auto& callback : updateCallbacks) {
+    // 調用更新回調（快照：回調內註冊新回調不會造成迭代器失效）
+    auto callbacks = updateCallbacks;
+    for (auto& callback : callbacks) {
         callback(deltaTime);
     }
 }
@@ -321,17 +322,24 @@ void TimeManager::UpdateFPS() {
 }
 
 void TimeManager::ProcessDelayedCalls() {
+    // 先收集到期回調再呼叫：回調內可安全呼叫 DelayedCall/Shutdown
+    // 而不會造成迭代器失效
+    std::vector<DelayedCallback> dueCallbacks;
     for (auto it = delayedCalls.begin(); it != delayedCalls.end(); ) {
         it->timer += deltaTime;
         
         if (it->timer >= it->delay) {
             if (it->callback) {
-                it->callback();
+                dueCallbacks.push_back(it->callback);
             }
             it = delayedCalls.erase(it);
         } else {
             ++it;
         }
+    }
+    
+    for (auto& callback : dueCallbacks) {
+        callback();
     }
 }
 

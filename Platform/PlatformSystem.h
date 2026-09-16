@@ -10,6 +10,7 @@
 #include <unordered_map>
 #include <memory>
 #include <cstdint>
+#include "Core/CoreTypes.h"
 #include "MathUtils/Vector2.h"
 
 namespace Potato {
@@ -309,6 +310,7 @@ public:
     
 private:
     std::mutex mutex;
+    friend class StandardConditionVariable;
 };
 
 /**

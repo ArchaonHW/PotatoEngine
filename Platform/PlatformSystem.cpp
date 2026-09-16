@@ -9,6 +9,10 @@
 #include <windows.h>
 #include <psapi.h>
 #include <libloaderapi.h>
+// Win32 宏會改寫下方同名成員函數定義,必須取消
+#undef CreateWindow
+#undef CreateMutex
+#undef LoadLibrary
 #elif __linux__
 #include <unistd.h>
 #include <sys/sysinfo.h>
@@ -536,7 +540,7 @@ void StandardPlatformManager::UnloadLibrary(void* handle) {
 
 void* StandardPlatformManager::GetProcAddress(void* handle, const std::string& name) {
 #ifdef _WIN32
-    return reinterpret_cast<void*>(GetProcAddress(static_cast<HMODULE>(handle), name.c_str()));
+    return reinterpret_cast<void*>(::GetProcAddress(static_cast<HMODULE>(handle), name.c_str()));
 #elif __linux__ || __APPLE__
     return dlsym(handle, name.c_str());
 #else

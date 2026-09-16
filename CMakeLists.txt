@@ -110,14 +110,14 @@ include_directories(
 file(GLOB_RECURSE ENGINE_SOURCES 
     "Core/*.cpp"
     "Security/*.cpp"      # 安全模組 - 自包含，無引擎依賴
-    # "Events/*.cpp"
-    # "FileSystem/*.cpp"      # Temporarily disabled - implementation file has structural issues
-    # "Logging/*.cpp"      # Temporarily disabled - depends on CoreTypes
-    # "Memory/*.cpp"      # Temporarily disabled - implementation file has structural issues
+    "Events/*.cpp"
+    "FileSystem/*.cpp"
+    "Logging/*.cpp"
+    "Memory/*.cpp"
     # "Platform/*.cpp"      # Temporarily disabled - depends on GLFW
     # "Scene/*.cpp"      # Temporarily disabled - depends on Matrix4/Quaternion
     # "Serialization/*.cpp"      # Temporarily disabled
-    # "Time/*.cpp"      # Temporarily disabled - implementation file has structural issues
+    "Time/*.cpp"
     # "Rendering/*.cpp"      # Temporarily disabled - depends on Math
     # "Physics/*.cpp"      # Temporarily disabled - depends on Math
     # "Audio/*.cpp"      # Temporarily disabled - depends on Math
@@ -238,6 +238,14 @@ target_link_libraries(AgentChain LLMIntegration)
 add_library(ToolFramework STATIC AI/ToolFramework.cpp)
 target_include_directories(ToolFramework PUBLIC ${CMAKE_SOURCE_DIR}/AI)
 target_link_libraries(ToolFramework LLMIntegration)
+
+# AI 增強模塊 - 知識圖譜（長期記憶與關係推理）
+add_library(KnowledgeGraph STATIC AI/KnowledgeGraph.cpp)
+target_include_directories(KnowledgeGraph PUBLIC ${CMAKE_SOURCE_DIR}/AI)
+
+# AI 增強模塊 - 自我反思引擎（元認知與決策校準）
+add_library(SelfReflection STATIC AI/SelfReflection.cpp)
+target_include_directories(SelfReflection PUBLIC ${CMAKE_SOURCE_DIR}/AI)
 
 # AI 增強模塊 - 智能開發系統
 add_library(IntelligentDevelopmentSystem STATIC AI/IntelligentDevelopmentSystem.cpp)

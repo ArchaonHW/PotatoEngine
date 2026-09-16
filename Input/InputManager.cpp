@@ -4,6 +4,9 @@
 
 namespace Potato {
 
+// GLFW 手柄回調是全局的（非窗口）,用靜態指針轉發到當前 InputManager
+static GLFWInputManager* s_joystickInputManager = nullptr;
+
 // ============================================================================
 // GLFWInputManager 實現
 // ============================================================================
@@ -196,8 +199,11 @@ void GLFWInputManager::SetWindowHandle(void* handle) {
 void GLFWInputManager::SetupGLFWCallbacks() {
     GLFWwindow* window = static_cast<GLFWwindow*>(windowHandle);
     
+    // GLFW 只有 window user pointer;所有窗口回調共用同一個
+    glfwSetWindowUserPointer(window, this);
+    s_joystickInputManager = this;
+    
     // 鍵盤回調
-    glfwSetKeyUserPointer(window, this);
     glfwSetKeyCallback(window, [](GLFWwindow* win, int key, int scancode, int action, int mods) {
         GLFWInputManager* input = static_cast<GLFWInputManager*>(glfwGetWindowUserPointer(win));
         if (input) {
@@ -215,7 +221,6 @@ void GLFWInputManager::SetupGLFWCallbacks() {
     });
     
     // 鼠標按鈕回調
-    glfwSetMouseButtonUserPointer(window, this);
     glfwSetMouseButtonCallback(window, [](GLFWwindow* win, int button, int action, int mods) {
         GLFWInputManager* input = static_cast<GLFWInputManager*>(glfwGetWindowUserPointer(win));
         if (input) {
@@ -234,7 +239,6 @@ void GLFWInputManager::SetupGLFWCallbacks() {
     });
     
     // 鼠標移動回調
-    glfwSetCursorPosUserPointer(window, this);
     glfwSetCursorPosCallback(window, [](GLFWwindow* win, double xpos, double ypos) {
         GLFWInputManager* input = static_cast<GLFWInputManager*>(glfwGetWindowUserPointer(win));
         if (input) {
@@ -259,7 +263,6 @@ void GLFWInputManager::SetupGLFWCallbacks() {
     });
     
     // 鼠標滾輪回調
-    glfwSetScrollUserPointer(window, this);
     glfwSetScrollCallback(window, [](GLFWwindow* win, double xoffset, double yoffset) {
         GLFWInputManager* input = static_cast<GLFWInputManager*>(glfwGetWindowUserPointer(win));
         if (input) {
@@ -275,10 +278,9 @@ void GLFWInputManager::SetupGLFWCallbacks() {
         }
     });
     
-    // 手柄連接回調
-    glfwSetJoystickUserPointer(this);
+    // 手柄連接回調（全局回調,用靜態指針取得 manager）
     glfwSetJoystickCallback([](int jid, int event) {
-        GLFWInputManager* input = static_cast<GLFWInputManager*>(glfwGetJoystickUserPointer());
+        GLFWInputManager* input = s_joystickInputManager;
         if (input) {
             GamepadConnectionEvent connectionEvent;
             connectionEvent.gamepadID = jid;
@@ -291,7 +293,6 @@ void GLFWInputManager::SetupGLFWCallbacks() {
     });
     
     // 窗口大小回調
-    glfwSetWindowSizeUserPointer(window, this);
     glfwSetWindowSizeCallback(window, [](GLFWwindow* win, int width, int height) {
         GLFWInputManager* input = static_cast<GLFWInputManager*>(glfwGetWindowUserPointer(win));
         if (input) {

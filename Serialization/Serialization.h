@@ -1,6 +1,8 @@
 #pragma once
 
 #include "Core/CoreTypes.h"
+#include "MathUtils/Vector3.h"
+#include "MathUtils/Quaternion.h"
 #include <string>
 #include <vector>
 #include <unordered_map>
@@ -156,11 +158,6 @@ void ShutdownSerializationManager();
  */
 SerializationManager* GetSerializationManager();
 
-} // namespace Potato
-
-// 便捷宏
-#define GET_SERIALIZATION() Potato::GetSerializationManager()
-
 // 預定義義可序列化類型
 namespace SerializableTypes {
 
@@ -203,3 +200,7 @@ struct GameStateData : public ISerializable {
 };
 
 } // namespace SerializableTypes
+} // namespace Potato
+
+// 便捷宏
+#define GET_SERIALIZATION() Potato::GetSerializationManager()

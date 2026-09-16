@@ -226,12 +226,13 @@ void PotatoEngine::Render()
 
 void PotatoEngine::SetState(EngineState newState)
 {
+    EngineState oldState = state;
     state = newState;
     
     // Emit state change event
     Event event;
     event.type = "EngineStateChanged";
-    event.data["oldState"] = std::to_string(static_cast<int>(state));
+    event.data["oldState"] = std::to_string(static_cast<int>(oldState));
     event.data["newState"] = std::to_string(static_cast<int>(newState));
     event.timestamp = totalTime;
     
@@ -258,13 +259,19 @@ void PotatoEngine::UnregisterEvent(const std::string& eventType)
 
 void PotatoEngine::EmitEvent(const Event& event)
 {
-    std::lock_guard<std::mutex> lock(eventMutex);
-    
-    auto it = eventListeners.find(event.type);
-    if (it != eventListeners.end()) {
-        for (const auto& callback : it->second) {
-            callback(event);
+    // 鎖內複製回調快照、鎖外執行：回調可安全 Register/Unregister/EmitEvent
+    // 也避免 callback 觸碰 scene/resource 鎖時形成鎖順序死結
+    std::vector<EventCallback> snapshot;
+    {
+        std::lock_guard<std::mutex> lock(eventMutex);
+        auto it = eventListeners.find(event.type);
+        if (it != eventListeners.end()) {
+            snapshot = it->second;
         }
+    }
+    
+    for (const auto& callback : snapshot) {
+        callback(event);
     }
     
     std::cout << "Emitted event: " << event.type << std::endl;
@@ -286,19 +293,21 @@ void PotatoEngine::EmitEvent(const std::string& type, const std::unordered_map<s
 
 ResourceHandle PotatoEngine::LoadResource(const std::string& path, const std::string& type)
 {
-    std::lock_guard<std::mutex> lock(resourceMutex);
-    
     ResourceHandle handle;
-    handle.id = nextResourceId++;
-    handle.type = type;
-    handle.path = path;
-    handle.isValid = true;
-    
-    loadedResources[handle.id] = handle;
+    {
+        std::lock_guard<std::mutex> lock(resourceMutex);
+        
+        handle.id = nextResourceId++;
+        handle.type = type;
+        handle.path = path;
+        handle.isValid = true;
+        
+        loadedResources[handle.id] = handle;
+    }
     
     std::cout << "Loaded resource: " << path << " (ID: " << handle.id << ")" << std::endl;
     
-    // Emit resource loaded event
+    // Emit resource loaded event（釋放 resourceMutex 後才派發，避免回調重入死結）
     Event event;
     event.type = "ResourceLoaded";
     event.data["resourceId"] = std::to_string(handle.id);
@@ -313,13 +322,19 @@ ResourceHandle PotatoEngine::LoadResource(const std::string& path, const std::st
 
 void PotatoEngine::UnloadResource(ResourceHandle handle)
 {
-    std::lock_guard<std::mutex> lock(resourceMutex);
-    
-    auto it = loadedResources.find(handle.id);
-    if (it != loadedResources.end()) {
-        std::cout << "Unloaded resource: " << it->second.path << " (ID: " << handle.id << ")" << std::endl;
-        loadedResources.erase(it);
+    bool unloaded = false;
+    {
+        std::lock_guard<std::mutex> lock(resourceMutex);
         
+        auto it = loadedResources.find(handle.id);
+        if (it != loadedResources.end()) {
+            std::cout << "Unloaded resource: " << it->second.path << " (ID: " << handle.id << ")" << std::endl;
+            loadedResources.erase(it);
+            unloaded = true;
+        }
+    }
+    
+    if (unloaded) {
         // Emit resource unloaded event
         Event event;
         event.type = "ResourceUnloaded";
@@ -337,10 +352,12 @@ bool PotatoEngine::IsResourceLoaded(ResourceHandle handle) {
 
 void PotatoEngine::ClearResourceCache()
 {
-    std::lock_guard<std::mutex> lock(resourceMutex);
-    
-    std::cout << "Clearing resource cache (" << loadedResources.size() << " resources)" << std::endl;
-    loadedResources.clear();
+    {
+        std::lock_guard<std::mutex> lock(resourceMutex);
+        
+        std::cout << "Clearing resource cache (" << loadedResources.size() << " resources)" << std::endl;
+        loadedResources.clear();
+    }
     
     // Emit cache cleared event
     Event event;
@@ -356,14 +373,16 @@ void PotatoEngine::ClearResourceCache()
 
 SceneHandle PotatoEngine::CreateScene(const std::string& name)
 {
-    std::lock_guard<std::mutex> lock(sceneMutex);
-    
     SceneHandle handle;
-    handle.id = nextSceneId++;
-    handle.name = name;
-    handle.isActive = false;
-    
-    scenes[handle.id] = handle;
+    {
+        std::lock_guard<std::mutex> lock(sceneMutex);
+        
+        handle.id = nextSceneId++;
+        handle.name = name;
+        handle.isActive = false;
+        
+        scenes[handle.id] = handle;
+    }
     
     std::cout << "Created scene: " << name << " (ID: " << handle.id << ")" << std::endl;
     
@@ -381,71 +400,83 @@ SceneHandle PotatoEngine::CreateScene(const std::string& name)
 
 void PotatoEngine::LoadScene(SceneHandle handle)
 {
-    std::lock_guard<std::mutex> lock(sceneMutex);
-    
-    auto it = scenes.find(handle.id);
-    if (it != scenes.end()) {
+    {
+        std::lock_guard<std::mutex> lock(sceneMutex);
+        
+        auto it = scenes.find(handle.id);
+        if (it == scenes.end()) {
+            return;
+        }
         std::cout << "Loading scene: " << it->second.name << std::endl;
         // In a real implementation, this would load scene data
-        
-        // Emit scene loaded event
-        Event event;
-        event.type = "SceneLoaded";
-        event.data["sceneId"] = std::to_string(handle.id);
-        event.timestamp = totalTime;
-        
-        EmitEvent(event);
     }
+    
+    // Emit scene loaded event
+    Event event;
+    event.type = "SceneLoaded";
+    event.data["sceneId"] = std::to_string(handle.id);
+    event.timestamp = totalTime;
+    
+    EmitEvent(event);
 }
 
 void PotatoEngine::UnloadScene(SceneHandle handle)
 {
-    std::lock_guard<std::mutex> lock(sceneMutex);
-    
-    auto it = scenes.find(handle.id);
-    if (it != scenes.end()) {
+    {
+        std::lock_guard<std::mutex> lock(sceneMutex);
+        
+        auto it = scenes.find(handle.id);
+        if (it == scenes.end()) {
+            return;
+        }
         std::cout << "Unloading scene: " << it->second.name << std::endl;
         // In a real implementation, this would unload scene data
-        
-        // Emit scene unloaded event
-        Event event;
-        event.type = "SceneUnloaded";
-        event.data["sceneId"] = std::to_string(handle.id);
-        event.timestamp = totalTime;
-        
-        EmitEvent(event);
     }
+    
+    // Emit scene unloaded event
+    Event event;
+    event.type = "SceneUnloaded";
+    event.data["sceneId"] = std::to_string(handle.id);
+    event.timestamp = totalTime;
+    
+    EmitEvent(event);
 }
 
 void PotatoEngine::SetActiveScene(SceneHandle handle)
 {
-    std::lock_guard<std::mutex> lock(sceneMutex);
-    
-    // Deactivate current active scene
-    if (activeScene.id != 0) {
-        auto it = scenes.find(activeScene.id);
-        if (it != scenes.end()) {
-            it->second.isActive = false;
+    std::string sceneName;
+    {
+        std::lock_guard<std::mutex> lock(sceneMutex);
+        
+        // Activate new scene
+        auto it = scenes.find(handle.id);
+        if (it == scenes.end()) {
+            return;
         }
-    }
-    
-    // Activate new scene
-    auto it = scenes.find(handle.id);
-    if (it != scenes.end()) {
+        
+        // Deactivate current active scene
+        if (activeScene.id != 0) {
+            auto prev = scenes.find(activeScene.id);
+            if (prev != scenes.end()) {
+                prev->second.isActive = false;
+            }
+        }
+        
         it->second.isActive = true;
         activeScene = it->second;
-        
-        std::cout << "Active scene set to: " << it->second.name << std::endl;
-        
-        // Emit active scene changed event
-        Event event;
-        event.type = "ActiveSceneChanged";
-        event.data["sceneId"] = std::to_string(handle.id);
-        event.data["sceneName"] = it->second.name;
-        event.timestamp = totalTime;
-        
-        EmitEvent(event);
+        sceneName = it->second.name;
     }
+    
+    std::cout << "Active scene set to: " << sceneName << std::endl;
+    
+    // Emit active scene changed event
+    Event event;
+    event.type = "ActiveSceneChanged";
+    event.data["sceneId"] = std::to_string(handle.id);
+    event.data["sceneName"] = sceneName;
+    event.timestamp = totalTime;
+    
+    EmitEvent(event);
 }
 
 SceneHandle PotatoEngine::GetActiveScene() {

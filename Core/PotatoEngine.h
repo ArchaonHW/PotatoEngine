@@ -84,7 +84,7 @@ struct PerformanceMetrics {
 struct Event {
     std::string type;
     std::unordered_map<std::string, std::string> data;
-    float timestamp;
+    float timestamp = 0.0f;
 };
 
 /**
@@ -96,7 +96,7 @@ using EventCallback = std::function<void(const Event&)>;
  * Resource handle
  */
 struct ResourceHandle {
-    uint64_t id;
+    uint64_t id = 0;
     std::string type;
     std::string path;
     bool isValid = false;
@@ -106,7 +106,7 @@ struct ResourceHandle {
  * Scene handle
  */
 struct SceneHandle {
-    uint64_t id;
+    uint64_t id = 0;
     std::string name;
     bool isActive = false;
 };

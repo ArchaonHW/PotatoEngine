@@ -1,5 +1,6 @@
 #include "EventBus.h"
 #include <iostream>
+#include <algorithm>
 
 namespace Potato {
 
@@ -36,27 +37,37 @@ void EventBus::UnsubscribeListener(std::type_index eventType, IEventListener* li
 }
 
 void EventBus::ProcessEventQueue() {
-    std::lock_guard<std::mutex> lock(mutex);
+    // 換出整個佇列再派發：handler 可安全 Publish/Subscribe 而不會死結或迭代器失效
+    std::vector<std::pair<std::type_index, std::unique_ptr<IEvent>>> queueSnapshot;
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        queueSnapshot.swap(eventQueue);
+    }
     
-    for (auto& [typeIndex, event] : eventQueue) {
-        // 調用處理器
-        auto it = handlers.find(typeIndex);
-        if (it != handlers.end()) {
-            for (auto& handler : it->second) {
-                handler(*event);
+    for (auto& [typeIndex, event] : queueSnapshot) {
+        std::vector<std::function<void(const IEvent&)>> handlerSnapshot;
+        std::vector<IEventListener*> listenerSnapshot;
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            
+            auto it = handlers.find(typeIndex);
+            if (it != handlers.end()) {
+                handlerSnapshot = it->second;
+            }
+            
+            auto listenerIt = listeners.find(typeIndex);
+            if (listenerIt != listeners.end()) {
+                listenerSnapshot = listenerIt->second;
             }
         }
         
-        // 調用監聽器
-        auto listenerIt = listeners.find(typeIndex);
-        if (listenerIt != listeners.end()) {
-            for (auto* listener : listenerIt->second) {
-                listener->OnEvent(*event);
-            }
+        for (auto& handler : handlerSnapshot) {
+            handler(*event);
+        }
+        for (auto* listener : listenerSnapshot) {
+            listener->OnEvent(*event);
         }
     }
-    
-    eventQueue.clear();
 }
 
 void EventBus::ClearEventQueue() {
@@ -65,7 +76,7 @@ void EventBus::ClearEventQueue() {
 }
 
 size_t EventBus::GetHandlerCount() const {
-    std::lock_guard<std::mutex> lock(const_cast<std::mutex&>(mutex));
+    std::lock_guard<std::mutex> lock(mutex);
     
     size_t count = 0;
     for (const auto& [type, handlers] : this->handlers) {
@@ -75,7 +86,7 @@ size_t EventBus::GetHandlerCount() const {
 }
 
 size_t EventBus::GetListenerCount() const {
-    std::lock_guard<std::mutex> lock(const_cast<std::mutex&>(mutex));
+    std::lock_guard<std::mutex> lock(mutex);
     
     size_t count = 0;
     for (const auto& [type, listeners] : this->listeners) {
@@ -85,7 +96,7 @@ size_t EventBus::GetListenerCount() const {
 }
 
 size_t EventBus::GetQueuedEventCount() const {
-    std::lock_guard<std::mutex> lock(const_cast<std::mutex&>(mutex));
+    std::lock_guard<std::mutex> lock(mutex);
     return eventQueue.size();
 }
 
@@ -107,7 +118,7 @@ void EventManager::Initialize() {
     if (initialized) return;
     
     // 創建默認事件總線
-    defaultBus = MakeUnique<EventBus>();
+    defaultBus = new EventBus();
     
     initialized = true;
     std::cout << "Event Manager initialized" << std::endl;
@@ -117,7 +128,8 @@ void EventManager::Shutdown() {
     if (!initialized) return;
     
     buses.clear();
-    defaultBus.reset();
+    delete defaultBus;
+    defaultBus = nullptr;
     
     initialized = false;
     std::cout << "Event Manager shutdown complete" << std::endl;
