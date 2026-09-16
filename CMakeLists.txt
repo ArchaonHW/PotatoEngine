@@ -36,14 +36,24 @@ if(POTATO_SECURITY_HARDENING)
         # 堆疊保護 + PIE (位置無關執行檔，啟用 ASLR)
         add_compile_options(-fstack-protector-strong -fstack-clash-protection -fPIE)
         if(WIN32)
-            # MinGW: PE 格式加固
-            add_link_options(-pie -Wl,--dynamicbase -Wl,--nxcompat -Wl,--high-entropy-va)
+            # MinGW: PE 格式加固(-pie 只能套用於執行檔,SHARED/MODULE 庫加上會導致要求 WinMain)
+            add_link_options(
+                $<$<STREQUAL:$<TARGET_PROPERTY:TYPE>,EXECUTABLE>:-pie>
+                -Wl,--dynamicbase -Wl,--nxcompat -Wl,--high-entropy-va)
         else()
             # Linux/macOS: ELF 加固
             add_compile_definitions(_FORTIFY_SOURCE=2)
-            add_link_options(-pie -Wl,-z,relro,-z,now -Wl,-z,noexecstack)
+            add_link_options(
+                $<$<STREQUAL:$<TARGET_PROPERTY:TYPE>,EXECUTABLE>:-pie>
+                -Wl,-z,relro,-z,now -Wl,-z,noexecstack)
         endif()
     endif()
+endif()
+
+# MinGW: 靜態連結 GCC 執行時（libgcc/libstdc++/winpthread），
+# 讓產物不依賴 MinGW bin 目錄的 DLL,可直接執行
+if(MINGW)
+    add_link_options(-static-libgcc -static-libstdc++ -static)
 endif()
 
 # 查找依賴
@@ -187,8 +197,9 @@ target_link_libraries(PotatoEngine
 )
 
 # Windows: psapi.lib（Security 模組的模組枚舉用；MSVC 由 #pragma comment 處理，MinGW 需顯式連結）
+# wintrust: Authenticode 簽章驗證;bcrypt: BCryptGenRandom 隨機數
 if(WIN32 AND NOT MSVC)
-    target_link_libraries(PotatoEngine psapi wintrust)
+    target_link_libraries(PotatoEngine psapi wintrust bcrypt)
 endif()
 
 target_compile_definitions(PotatoEngine PRIVATE POTATO_ENGINE_VERSION="${PROJECT_VERSION}")
@@ -269,7 +280,7 @@ target_include_directories(SelfReflection PUBLIC ${CMAKE_SOURCE_DIR}/AI)
 # AI 增強模塊 - 智能開發系統
 add_library(IntelligentDevelopmentSystem STATIC AI/IntelligentDevelopmentSystem.cpp)
 target_include_directories(IntelligentDevelopmentSystem PUBLIC ${CMAKE_SOURCE_DIR}/AI)
-target_link_libraries(IntelligentDevelopmentSystem LLMIntegration RAGSystem AgentChain ToolFramework AIAgentSystem NeuralNetwork NaturalLanguageProcessing)
+target_link_libraries(IntelligentDevelopmentSystem LLMIntegration RAGSystem AgentChain ToolFramework AIAgentSystem NeuralNetwork NaturalLanguageProcessing KnowledgeGraph SelfReflection)
 
 # MingGoRTS IDE 智能建議系統
 add_library(IntelligentSuggestion STATIC MingGoRTS_IDE/IntelligentSuggestion.cpp)
@@ -297,6 +308,22 @@ target_link_libraries(IntelligentDevelopmentDemo IntelligentDevelopmentSystem LL
 add_executable(CognitiveDemo Examples/CognitiveDemo.cpp)
 target_include_directories(CognitiveDemo PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(CognitiveDemo KnowledgeGraph SelfReflection)
+
+# 開發助手本地管線煙霧測試（無 LLM 客戶端亦可生成）
+add_executable(DevAssistantSmoke Examples/DevAssistantSmoke.cpp)
+target_include_directories(DevAssistantSmoke PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(DevAssistantSmoke
+    IntelligentDevelopmentSystem
+    KnowledgeGraph
+    SelfReflection
+    LLMIntegration
+    RAGSystem
+    AgentChain
+    ToolFramework
+    AIAgentSystem
+    NeuralNetwork
+    NaturalLanguageProcessing
+)
 
 # MingGoRTS IDE（AI Agent 整合 IDE - 命令行版本）
 add_executable(MingGoRTS_IDE_CLI MingGoRTS_IDE/MingGoRTS_IDE_Main.cpp MingGoRTS_IDE/IDECore.cpp MingGoRTS_IDE/AIIntegration.cpp)
@@ -333,12 +360,19 @@ target_link_libraries(MingGoRTS_IDE_GUI glfw ${OPENGL_LIBRARIES}
     AIAgentSystem
     NeuralNetwork
     NaturalLanguageProcessing
+    KnowledgeGraph
+    SelfReflection
 )
 
 # 數學測試程序
 add_executable(MathTest Examples/MathTest.cpp)
 target_include_directories(MathTest PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(MathTest)
+
+# 物理積分測試
+add_executable(PhysicsTest Examples/PhysicsTest.cpp)
+target_include_directories(PhysicsTest PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(PhysicsTest PotatoEngine)
 
 # 安全模組紅隊測試（對抗性驗證 Security/ 的偵測能力）
 add_executable(SecurityRedTeamTest Examples/SecurityRedTeamTest.cpp)
@@ -349,15 +383,22 @@ target_link_libraries(SecurityRedTeamTest PotatoEngine)
 add_library(FakeCheatModule SHARED Examples/FakeCheatModule.cpp)
 set_target_properties(FakeCheatModule PROPERTIES OUTPUT_NAME "FakeCheat" PREFIX "")
 
-# 測試程序 (暫時禁用 - 依賴 PotatoEngine)
-# add_executable(FileSystemTest Examples/FileSystemTest.cpp)
-# target_link_libraries(FileSystemTest PotatoEngine)
+# 子系統測試程序
+add_executable(FileSystemTest Examples/FileSystemTest.cpp)
+target_include_directories(FileSystemTest PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(FileSystemTest PotatoEngine)
 
-# add_executable(LoggerTest Examples/LoggerTest.cpp)
-# target_link_libraries(LoggerTest PotatoEngine)
+add_executable(LoggerTest Examples/LoggerTest.cpp)
+target_include_directories(LoggerTest PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(LoggerTest PotatoEngine)
 
-# add_executable(MemoryTest Examples/MemoryTest.cpp)
-# target_link_libraries(MemoryTest PotatoEngine)
+add_executable(MemoryTest Examples/MemoryTest.cpp)
+target_include_directories(MemoryTest PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(MemoryTest PotatoEngine)
+
+add_executable(PlatformTest Examples/PlatformTest.cpp)
+target_include_directories(PlatformTest PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(PlatformTest PotatoEngine)
 
 # add_executable(PlatformTest Examples/PlatformTest.cpp)
 # target_link_libraries(PlatformTest PotatoEngine)
