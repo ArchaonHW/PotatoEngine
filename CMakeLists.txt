@@ -325,6 +325,20 @@ target_link_libraries(DevAssistantSmoke
     NaturalLanguageProcessing
 )
 
+# 戰鬥玩法層 - 小隊/flow field/doctrine 腳本/戰鬥控制器
+add_library(Gameplay STATIC
+    Gameplay/FlowField.cpp
+    Gameplay/Squad.cpp
+    Gameplay/Doctrine.cpp
+    Gameplay/BattleController.cpp
+)
+target_include_directories(Gameplay PUBLIC ${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/Gameplay)
+
+# Doctrine 戰鬥演示（無頭模式：規劃階段寫腳本，即時層自動執行）
+add_executable(DoctrineBattleDemo Examples/DoctrineBattleDemo.cpp)
+target_include_directories(DoctrineBattleDemo PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(DoctrineBattleDemo Gameplay)
+
 # MingGoRTS IDE（AI Agent 整合 IDE - 命令行版本）
 add_executable(MingGoRTS_IDE_CLI MingGoRTS_IDE/MingGoRTS_IDE_Main.cpp MingGoRTS_IDE/IDECore.cpp MingGoRTS_IDE/AIIntegration.cpp)
 target_include_directories(MingGoRTS_IDE_CLI PRIVATE ${CMAKE_SOURCE_DIR})
