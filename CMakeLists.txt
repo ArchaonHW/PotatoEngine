@@ -2,7 +2,7 @@
 # 完全獨立的遊戲引擎，不依賴 UE5
 
 cmake_minimum_required(VERSION 3.15)
-project(PotatoEngine VERSION 1.0.0 LANGUAGES CXX)
+project(PotatoEngine VERSION 1.0.0 LANGUAGES C CXX)
 
 # 設置 C++ 標準
 set(CMAKE_CXX_STANDARD 20)
@@ -50,26 +50,43 @@ endif()
 find_package(OpenGL REQUIRED)
 
 # GLFW - 窗口和輸入管理
-include(FetchContent)
-FetchContent_Declare(
-    glfw
-    GIT_REPOSITORY https://github.com/glfw/glfw.git
-    GIT_TAG 3.3.8
-)
-FetchContent_MakeAvailable(glfw)
-
-# Disable GLFW tests
-set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+# 優先使用本機安裝的 GLFW（設 GLFW_ROOT 或 CMAKE_PREFIX_PATH 指向安裝目錄）,
+# 找不到才從 GitHub FetchContent
+find_package(glfw3 3.3 QUIET)
+if(NOT glfw3_FOUND)
+    find_path(GLFW3_INCLUDE_DIR GLFW/glfw3.h
+        HINTS ${GLFW_ROOT} $ENV{GLFW_ROOT}
+        PATH_SUFFIXES include)
+    find_library(GLFW3_LIBRARY NAMES glfw3 glfw
+        HINTS ${GLFW_ROOT} $ENV{GLFW_ROOT}
+        PATH_SUFFIXES lib lib-mingw-w64 lib-vc2022 lib-vc2026)
+    if(GLFW3_INCLUDE_DIR AND GLFW3_LIBRARY)
+        add_library(glfw STATIC IMPORTED)
+        set_target_properties(glfw PROPERTIES
+            IMPORTED_LOCATION "${GLFW3_LIBRARY}"
+            INTERFACE_INCLUDE_DIRECTORIES "${GLFW3_INCLUDE_DIR}")
+        set(glfw3_FOUND TRUE)
+        message(STATUS "Using local GLFW: ${GLFW3_LIBRARY}")
+    endif()
+endif()
+if(NOT glfw3_FOUND)
+    include(FetchContent)
+    FetchContent_Declare(
+        glfw
+        GIT_REPOSITORY https://github.com/glfw/glfw.git
+        GIT_TAG 3.3.8
+    )
+    set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(glfw)
+endif()
 
 # GLAD - OpenGL 加載器
-include(FetchContent)
-FetchContent_Declare(
-    glad
-    GIT_REPOSITORY https://github.com/Dav1dde/glad.git
-    GIT_TAG v2.0.4
-)
-FetchContent_MakeAvailable(glad)
+# 使用本地生成的 glad1 綁定（external/glad_gen）,提供 <glad/glad.h>
+# 注意:glad v2.x 的頭文件是 <glad/gl.h>,與引擎代碼不相容,勿改回 FetchContent
+add_library(glad STATIC external/glad_gen/src/glad.c)
+target_include_directories(glad PUBLIC external/glad_gen/include)
 
 # OpenAL - 音頻庫 (可選)
 # include(FetchContent)
@@ -106,7 +123,7 @@ include_directories(
     ${OPENGL_INCLUDE_DIRS}
 )
 
-# Project files - Gradually enable subsystems
+# Project files - 所有引擎模組
 file(GLOB_RECURSE ENGINE_SOURCES 
     "Core/*.cpp"
     "Security/*.cpp"      # 安全模組 - 自包含，無引擎依賴
@@ -114,20 +131,20 @@ file(GLOB_RECURSE ENGINE_SOURCES
     "FileSystem/*.cpp"
     "Logging/*.cpp"
     "Memory/*.cpp"
-    # "Platform/*.cpp"      # Temporarily disabled - depends on GLFW
-    # "Scene/*.cpp"      # Temporarily disabled - depends on Matrix4/Quaternion
-    # "Serialization/*.cpp"      # Temporarily disabled
+    "Platform/*.cpp"
+    "Scene/*.cpp"
+    "Serialization/*.cpp"
     "Time/*.cpp"
-    # "Rendering/*.cpp"      # Temporarily disabled - depends on Math
-    # "Physics/*.cpp"      # Temporarily disabled - depends on Math
-    # "Audio/*.cpp"      # Temporarily disabled - depends on Math
-    # "Input/*.cpp"      # Temporarily disabled - depends on Math
-    # "Resources/*.cpp"      # Temporarily disabled - depends on Math
-    # "ECS/*.cpp"      # Temporarily disabled - depends on Math
-    # "GameObject/*.cpp"      # Temporarily disabled - depends on Math
-    # "AI/*.cpp"      # Temporarily disabled - encoding issues need fixing
-    # "GUI/*.cpp"      # Temporarily disabled
-    # "MathUtils/*.cpp"      # Temporarily disabled
+    "Rendering/*.cpp"
+    "Physics/*.cpp"
+    "Audio/*.cpp"
+    "Input/*.cpp"
+    "Resources/*.cpp"
+    "ECS/*.cpp"
+    "GameObject/*.cpp"
+    "GUI/*.cpp"
+    # "MathUtils/*.cpp"      # 全 header-only
+    # "AI/*.cpp"      # AI 模組另有獨立靜態庫目標,避免重複編譯
 )
 
 file(GLOB_RECURSE ENGINE_HEADERS
@@ -164,8 +181,8 @@ target_include_directories(PotatoEngine PUBLIC
 
 target_link_libraries(PotatoEngine
     ${OPENGL_LIBRARIES}
-    # glfw
-    # glad
+    glfw
+    glad
     ${CMAKE_DL_LIBS}
 )
 
@@ -176,6 +193,8 @@ endif()
 
 target_compile_definitions(PotatoEngine PRIVATE POTATO_ENGINE_VERSION="${PROJECT_VERSION}")
 target_compile_definitions(PotatoEngine PRIVATE _USE_MATH_DEFINES)
+# 防止 GLFW 自動引入系統 gl.h,與 glad 衝突(引擎與所有連結目標都需要)
+target_compile_definitions(PotatoEngine PUBLIC GLFW_INCLUDE_NONE)
 
 # 示例程序
 # add_executable(SimpleExample Examples/SimpleExample.cpp)
@@ -273,6 +292,11 @@ target_link_libraries(UltimateAIAgentDemo AIAgentSystem LLMIntegration RAGSystem
 add_executable(IntelligentDevelopmentDemo Examples/IntelligentDevelopmentDemo.cpp)
 target_include_directories(IntelligentDevelopmentDemo PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(IntelligentDevelopmentDemo IntelligentDevelopmentSystem LLMIntegration AIAgentSystem)
+
+# 認知增強演示（知識圖譜 + 自我反思）
+add_executable(CognitiveDemo Examples/CognitiveDemo.cpp)
+target_include_directories(CognitiveDemo PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(CognitiveDemo KnowledgeGraph SelfReflection)
 
 # MingGoRTS IDE（AI Agent 整合 IDE - 命令行版本）
 add_executable(MingGoRTS_IDE_CLI MingGoRTS_IDE/MingGoRTS_IDE_Main.cpp MingGoRTS_IDE/IDECore.cpp MingGoRTS_IDE/AIIntegration.cpp)

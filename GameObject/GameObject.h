@@ -146,7 +146,8 @@ private:
 private:
     std::vector<UniquePtr<GameObject>> objects;
     std::vector<GameObject*> pendingDestruction;
-    std::unordered_map<std::string, GameObject*> nameMap;
+    // multimap：同名物件共存，DestroyObject 只移除對應指標的條目
+    std::unordered_multimap<std::string, GameObject*> nameMap;
     std::unordered_map<std::string, std::vector<GameObject*>> tagMap;
 };
 

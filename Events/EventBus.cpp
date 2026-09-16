@@ -79,8 +79,8 @@ size_t EventBus::GetHandlerCount() const {
     std::lock_guard<std::mutex> lock(mutex);
     
     size_t count = 0;
-    for (const auto& [type, handlers] : this->handlers) {
-        count += handlers.size();
+    for (const auto& [type, handlerList] : this->handlers) {
+        count += handlerList.size();
     }
     return count;
 }
@@ -89,8 +89,8 @@ size_t EventBus::GetListenerCount() const {
     std::lock_guard<std::mutex> lock(mutex);
     
     size_t count = 0;
-    for (const auto& [type, listeners] : this->listeners) {
-        count += listeners.size();
+    for (const auto& [type, listenerList] : this->listeners) {
+        count += listenerList.size();
     }
     return count;
 }

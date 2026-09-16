@@ -291,6 +291,7 @@ void TimeManager::RegisterUpdateCallback(TimeCallback callback) {
 }
 
 void TimeManager::UnregisterUpdateCallback(TimeCallback callback) {
+    (void)callback; // std::function 無法比較；需改用 handle 機制才能正確移除
     for (auto it = updateCallbacks.begin(); it != updateCallbacks.end(); ) {
         // Note: This is a simple comparison, for proper comparison we'd need to use a different approach
         // For now, just clear the callback if it matches (using target with a specific lambda)

@@ -14,7 +14,9 @@ namespace Potato {
  * 變點類
  * 場景圖中的基本節點，包含變換信息
  */
-class SceneNode {
+// enable_shared_from_this：SetParent 需要安全地取得自身的 SharedPtr
+// （直接 SharedPtr<SceneNode>(this) 會建立第二個控制塊導致雙重釋放）
+class SceneNode : public std::enable_shared_from_this<SceneNode> {
 public:
     SceneNode();
     explicit SceneNode(const std::string& name);

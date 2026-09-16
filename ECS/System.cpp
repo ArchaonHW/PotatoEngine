@@ -41,8 +41,9 @@ void SystemManager::RemoveSystem(SharedPtr<ISystem> system) {
 }
 
 void SystemManager::RemoveSystem(const char* name) {
+    if (!name) return;
     for (auto it = systems.begin(); it != systems.end(); ++it) {
-        if (strcmp((*it)->GetName(), name) == 0) {
+        if ((*it)->GetName() && strcmp((*it)->GetName(), name) == 0) {
             (*it)->Shutdown();
             systems.erase(it);
             break;
@@ -53,7 +54,9 @@ void SystemManager::RemoveSystem(const char* name) {
 void SystemManager::InitializeAllSystems() {
     if (initialized) return;
     
-    for (auto& system : systems) {
+    // 快照迭代：Initialize 內若 AddSystem 不會造成迭代器失效
+    auto snapshot = systems;
+    for (auto& system : snapshot) {
         system->Initialize();
     }
     
@@ -63,13 +66,17 @@ void SystemManager::InitializeAllSystems() {
 void SystemManager::UpdateAllSystems(float deltaTime) {
     if (!initialized) return;
     
-    for (auto& system : systems) {
+    // 快照迭代：Update 內若 Add/RemoveSystem 不會造成迭代器失效
+    auto snapshot = systems;
+    for (auto& system : snapshot) {
         system->Update(deltaTime);
     }
 }
 
 void SystemManager::ShutdownAllSystems() {
-    for (auto& system : systems) {
+    // 快照迭代：Shutdown 內若操作 systems 不會造成迭代器失效
+    auto snapshot = systems;
+    for (auto& system : snapshot) {
         system->Shutdown();
     }
     

@@ -298,7 +298,7 @@ std::string FileSystem::GetRelativePath(const std::string& path, const std::stri
 std::string FileSystem::GetFileName(const std::string& path) const {
     try {
         return fs::path(path).filename().string();
-    } catch (const fs::filesystem_error& e) {
+    } catch (const fs::filesystem_error&) {
         return path;
     }
 }
@@ -306,7 +306,7 @@ std::string FileSystem::GetFileName(const std::string& path) const {
 std::string FileSystem::GetFileExtension(const std::string& path) const {
     try {
         return fs::path(path).extension().string();
-    } catch (const fs::filesystem_error& e) {
+    } catch (const fs::filesystem_error&) {
         return "";
     }
 }
@@ -314,7 +314,7 @@ std::string FileSystem::GetFileExtension(const std::string& path) const {
 std::string FileSystem::GetDirectoryName(const std::string& path) const {
     try {
         return fs::path(path).parent_path().string();
-    } catch (const fs::filesystem_error& e) {
+    } catch (const fs::filesystem_error&) {
         return "";
     }
 }
@@ -434,21 +434,38 @@ std::string FileSystem::GetTempDirectory() const {
 #endif
 }
 
+namespace {
+// getenv 在 /sdl 下被禁用；Windows 用 _dupenv_s 安全版本
+std::string GetEnvVar(const char* name) {
+#ifdef _WIN32
+    char* value = nullptr;
+    size_t len = 0;
+    if (_dupenv_s(&value, &len, name) != 0 || value == nullptr) {
+        return "";
+    }
+    std::string result(value, len > 0 ? len - 1 : 0); // len 含 null 結尾
+    std::free(value);
+    return result;
+#else
+    const char* value = std::getenv(name);
+    return value ? std::string(value) : "";
+#endif
+}
+} // namespace
+
 std::string FileSystem::GetHomeDirectory() const {
 #ifdef _WIN32
-    const char* homeDir = std::getenv("USERPROFILE");
-    if (homeDir) return std::string(homeDir);
+    std::string homeDir = GetEnvVar("USERPROFILE");
+    if (!homeDir.empty()) return homeDir;
     
-    const char* homeDrive = std::getenv("HOMEDRIVE");
-    const char* homePath = std::getenv("HOMEPATH");
-    if (homeDrive && homePath) {
-        return std::string(homeDrive) + std::string(homePath);
+    std::string homeDrive = GetEnvVar("HOMEDRIVE");
+    std::string homePath = GetEnvVar("HOMEPATH");
+    if (!homeDrive.empty() && !homePath.empty()) {
+        return homeDrive + homePath;
     }
     return "";
 #else
-    const char* homeDir = std::getenv("HOME");
-    if (homeDir) return std::string(homeDir);
-    return "";
+    return GetEnvVar("HOME");
 #endif
 }
 

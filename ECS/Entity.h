@@ -29,17 +29,21 @@ public:
     EntityID GetID() const { return id; }
     bool IsValid() const { return id != INVALID_ENTITY; }
     
-    // 組件掩碼操作
+    // 組件掩碼操作（bitset 對越界索引會拋出，先檢查範圍）
     bool HasComponent(size_t componentType) const {
-        return componentMask.test(componentType);
+        return componentType < MAX_COMPONENTS && componentMask.test(componentType);
     }
     
     void AddComponent(size_t componentType) {
-        componentMask.set(componentType);
+        if (componentType < MAX_COMPONENTS) {
+            componentMask.set(componentType);
+        }
     }
     
     void RemoveComponent(size_t componentType) {
-        componentMask.reset(componentType);
+        if (componentType < MAX_COMPONENTS) {
+            componentMask.reset(componentType);
+        }
     }
     
     const std::bitset<MAX_COMPONENTS>& GetComponentMask() const {

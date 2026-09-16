@@ -1,5 +1,6 @@
 #include "GameObject.h"
 #include <algorithm>
+#include <iostream>
 
 namespace Potato {
 
@@ -141,7 +142,7 @@ GameObject* GameObjectManager::CreateObject(const std::string& name) {
     GameObject* objectPtr = object.get();
     
     objects.push_back(std::move(object));
-    nameMap[name] = objectPtr;
+    nameMap.emplace(name, objectPtr);
     tagMap[objectPtr->GetTag()].push_back(objectPtr);
     
     objectPtr->Awake();
@@ -207,9 +208,18 @@ std::vector<GameObject*> GameObjectManager::FindObjectsByLayer(int layer) {
 }
 
 void GameObjectManager::UpdateAll(float deltaTime) {
-    // 更新所有活動對象
+    // 快照迭代：Update 內可安全 CreateObject/DestroyObject 而不會造成迭代器失效
+    std::vector<GameObject*> snapshot;
+    snapshot.reserve(objects.size());
     for (auto& object : objects) {
-        if (object->IsActive()) {
+        snapshot.push_back(object.get());
+    }
+    
+    for (auto* object : snapshot) {
+        // 物件可能在本次迭代中已被標記待銷毀，再次確認仍存在
+        bool stillAlive = std::find(pendingDestruction.begin(), pendingDestruction.end(), object)
+                          == pendingDestruction.end();
+        if (stillAlive && object->IsActive()) {
             object->Update(deltaTime);
         }
     }
@@ -265,8 +275,14 @@ void GameObjectManager::Clear() {
 
 void GameObjectManager::DestroyPendingObjects() {
     for (GameObject* object : pendingDestruction) {
-        // 從地圖中移除
-        nameMap.erase(object->GetName());
+        // 從名稱 multimap 中移除對應指標的條目（同名物件不受影響）
+        auto range = nameMap.equal_range(object->GetName());
+        for (auto it = range.first; it != range.second; ++it) {
+            if (it->second == object) {
+                nameMap.erase(it);
+                break;
+            }
+        }
         
         // 從標籤地圖中移除
         for (auto& [tag, objects] : tagMap) {

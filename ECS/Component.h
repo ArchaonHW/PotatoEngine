@@ -6,6 +6,7 @@
 #include <typeindex>
 #include <memory>
 #include <vector>
+#include <stdexcept>
 
 namespace Potato {
 namespace ECS {
@@ -82,7 +83,8 @@ public:
     }
     
     T& GetComponent(EntityID entityID) {
-        return components[entityID];
+        // 用 at() 而非 operator[]：查詢不存在的組件應拋出，而非誤插入預設值
+        return components.at(entityID);
     }
     
     const T& GetComponent(EntityID entityID) const {
@@ -132,12 +134,18 @@ public:
     
     template<typename T>
     const T& GetComponent(EntityID entityID) const {
-        return GetComponentArray<T>()->GetComponent(entityID);
+        const ComponentArray<T>* array = GetComponentArrayConst<T>();
+        if (!array) {
+            throw std::out_of_range("Component array does not exist for this type");
+        }
+        return array->GetComponent(entityID);
     }
     
     template<typename T>
     bool HasComponent(EntityID entityID) const {
-        return GetComponentArray<T>()->HasComponent(entityID);
+        // const 查詢不得建立新數組（誤插入）
+        const ComponentArray<T>* array = GetComponentArrayConst<T>();
+        return array ? array->HasComponent(entityID) : false;
     }
     
     // 組件數組管理
@@ -156,6 +164,18 @@ public:
     
     void RemoveEntityComponents(EntityID entityID);
     void Clear();
+    
+private:
+    // const 版本：不建立新數組，不存在回傳 nullptr
+    template<typename T>
+    const ComponentArray<T>* GetComponentArrayConst() const {
+        size_t typeID = ComponentTypeRegistry::GetTypeID<T>();
+        auto it = componentArrays.find(typeID);
+        if (it == componentArrays.end()) {
+            return nullptr;
+        }
+        return static_cast<const ComponentArray<T>*>(it->second.get());
+    }
     
 private:
     std::unordered_map<size_t, SharedPtr<IComponentArray>> componentArrays;

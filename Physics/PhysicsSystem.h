@@ -61,13 +61,17 @@ struct CollisionData {
     Vector3 position;
     Vector3 normal;
     float penetrationDepth;
-    int otherBodyID;
+    int otherBodyID;  // 舊版相容欄位：等同 bodyBID
+    int bodyAID;      // 碰撞對的第一個物體
+    int bodyBID;      // 碰撞對的第二個物體
     
     CollisionData()
         : position(Vector3::Zero())
         , normal(Vector3::Zero())
         , penetrationDepth(0.0f)
         , otherBodyID(-1)
+        , bodyAID(-1)
+        , bodyBID(-1)
     {
     }
 };

@@ -112,32 +112,51 @@ Matrix4 SceneNode::GetLocalMatrix() const {
 
 void SceneNode::SetParent(SceneNode* newParent) {
     if (parent == newParent) return;
+    if (newParent == this) return; // 防止自我循環
+    
+    // 防止循環：newParent 不能是 this 的子孫（沿 parent 鏈往上找）
+    for (SceneNode* p = newParent; p; p = p->parent) {
+        if (p == this) return;
+    }
+    
+    // 先取得自身的共享引用：從舊父節點移除時若其為唯一擁有者，
+    // 沒有 self 的話 this 會在成員函式中途被刪除
+    SharedPtr<SceneNode> self;
+    try {
+        self = shared_from_this();
+    } catch (const std::bad_weak_ptr&) {
+        // 節點不由 shared_ptr 管理：只能更新 parent 指標，無法進入 children
+    }
     
     // 從舊父節點移除
     if (parent) {
-        auto it = std::find_if(parent->children.begin(), parent->children.end(),
-            [this](const SharedPtr<SceneNode>& child) {
-                return child.get() == this;
-            });
-        
-        if (it != parent->children.end()) {
-            parent->children.erase(it);
-        }
+        auto& siblings = parent->children;
+        siblings.erase(
+            std::remove_if(siblings.begin(), siblings.end(),
+                [this](const SharedPtr<SceneNode>& child) {
+                    return child.get() == this;
+                }),
+            siblings.end());
     }
     
     // 設置新父節點
     parent = newParent;
     
-    // 添加到新父節點
-    if (parent) {
-        parent->children.push_back(SharedPtr<SceneNode>(this));
+    // 添加到新父節點（僅當能取得共享所有權時）
+    if (parent && self) {
+        parent->children.push_back(std::move(self));
     }
     
     MarkDirty();
 }
 
 void SceneNode::AddChild(SharedPtr<SceneNode> child) {
-    if (!child) return;
+    if (!child || child.get() == this) return;
+    
+    // 防止循環：this 不能是 child 的子孫（沿 this 的 parent 鏈往上找）
+    for (SceneNode* p = this; p; p = p->parent) {
+        if (p == child.get()) return;
+    }
     
     // 如果子節點已有父節點，先移除
     if (child->parent) {
@@ -245,6 +264,9 @@ SceneNode* SceneGraph::FindNode(const std::string& name) {
 SceneNode* SceneGraph::FindNodeByName(const std::string& name, SceneNode* startNode) {
     if (!startNode) {
         startNode = rootNode.get();
+    }
+    if (!startNode) {
+        return nullptr; // rootNode 也為空時直接返回，避免空指標解引用
     }
     
     if (startNode->GetName() == name) {

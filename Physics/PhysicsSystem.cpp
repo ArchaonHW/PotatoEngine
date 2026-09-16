@@ -95,7 +95,8 @@ void PhysicsBody::SetCollisionCallback(CollisionCallback callback) {
 }
 
 void PhysicsBody::ApplyForce(const Vector3& force) {
-    if (bodyType == PhysicsBodyType::Dynamic) {
+    // mass <= 0 視為無限質量（不加速），避免除零產生 inf/NaN
+    if (bodyType == PhysicsBodyType::Dynamic && mass > 0.0f) {
         linearVelocity += force / mass;
     }
 }
@@ -112,7 +113,7 @@ void PhysicsBody::ApplyTorque(const Vector3& torque) {
 }
 
 void PhysicsBody::ApplyImpulse(const Vector3& impulse) {
-    if (bodyType == PhysicsBodyType::Dynamic) {
+    if (bodyType == PhysicsBodyType::Dynamic && mass > 0.0f) {
         linearVelocity += impulse / mass;
     }
 }
@@ -224,9 +225,10 @@ PhysicsBody* PhysicsWorld::CreateBody() {
 void PhysicsWorld::DestroyBody(PhysicsBody* body) {
     auto it = std::find(bodies.begin(), bodies.end(), body);
     if (it != bodies.end()) {
+        int bodyID = body->GetBodyID(); // 先取出 ID：delete 後再讀是 UAF
         bodies.erase(it);
         delete body;
-        LOG_INFO("Destroyed physics body with ID: " + std::to_string(body->GetBodyID()));
+        LOG_INFO("Destroyed physics body with ID: " + std::to_string(bodyID));
     }
 }
 
@@ -253,15 +255,15 @@ void PhysicsWorld::EnableCollisionDetection(bool enable) {
 }
 
 void PhysicsWorld::SetCollisionIterations(int iterations) {
-    collisionIterations = iterations;
+    collisionIterations = (iterations < 1) ? 1 : iterations;
 }
 
 void PhysicsWorld::SetSubSteps(int steps) {
-    subSteps = steps;
+    subSteps = (steps < 1) ? 1 : steps; // Step() 有 fixedTimeStep / subSteps，不可為 0
 }
 
 void PhysicsWorld::SetFixedTimeStep(float timeStep) {
-    fixedTimeStep = timeStep;
+    fixedTimeStep = (timeStep > 0.0f) ? timeStep : (1.0f / 60.0f);
 }
 
 void PhysicsWorld::SetGlobalCollisionCallback(CollisionCallback callback) {
@@ -269,32 +271,55 @@ void PhysicsWorld::SetGlobalCollisionCallback(CollisionCallback callback) {
 }
 
 bool PhysicsWorld::Raycast(const Vector3& from, const Vector3& to, CollisionData& result) {
-    // 簡化實現：線段與 AABB 碰撞檢測
+    // 線段-球體測試：檢查線段上最近點到物體中心的距離
     Vector3 direction = to - from;
     float distance = direction.Length();
-    direction.Normalize();
+    if (distance <= 1e-6f) {
+        return false;
+    }
+    direction = direction / distance; // Normalize() 回傳副本，需重新賦值
+    
+    PhysicsBody* closestBody = nullptr;
+    float closestProj = distance;
+    Vector3 closestPoint;
+    float closestDist = 0.0f;
     
     for (auto body : bodies) {
-        if (body->GetBodyType() == PhysicsBodyType::Static) {
-            continue;
+        Vector3 bodyPos = body->GetPosition();
+        float radius = body->GetCollisionShapeDimensions().x * 0.5f;
+        if (radius <= 0.0f) {
+            radius = 0.5f;
         }
         
-        // 簡化碰撞檢測
-        Vector3 bodyPos = body->GetPosition();
         Vector3 toBody = bodyPos - from;
-        float bodyDistance = toBody.Length();
+        float proj = toBody.Dot(direction);
+        if (proj < 0.0f || proj > closestProj) {
+            continue; // 在射線反方向，或比已找到的命中更遠
+        }
         
-        if (bodyDistance < distance) {
-            result.position = bodyPos;
-            result.normal = (from - bodyPos).Normalized();
-            result.penetrationDepth = distance - bodyDistance;
-            result.otherBodyID = body->GetBodyID();
-            
-            return true;
+        Vector3 pointOnRay = from + direction * proj;
+        float distToCenter = (bodyPos - pointOnRay).Length();
+        if (distToCenter <= radius) {
+            closestBody = body;
+            closestProj = proj;
+            closestPoint = pointOnRay;
+            closestDist = distToCenter;
         }
     }
     
-    return false;
+    if (!closestBody) {
+        return false;
+    }
+    
+    result.position = closestPoint;
+    // 法線方向：從物體中心指向命中點（頂著射線方向）
+    Vector3 n = closestPoint - closestBody->GetPosition();
+    result.normal = (n.Length() > 1e-6f) ? n.Normalized() : Vector3(0.0f, 1.0f, 0.0f);
+    result.penetrationDepth = closestDist;
+    result.otherBodyID = closestBody->GetBodyID();
+    result.bodyBID = closestBody->GetBodyID();
+    
+    return true;
 }
 
 void PhysicsWorld::UpdateBodies(float deltaTime) {

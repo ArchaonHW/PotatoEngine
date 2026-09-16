@@ -42,7 +42,9 @@ enum class ViolationType {
     SuspiciousMemory,       // 存在可執行的 MEM_PRIVATE 區域（shellcode staging）
     HookDetected,           // IAT entry 指向模組外（import hook）
     ExternalHandle,         // 外部行程持有本行程 handle（Cheat Engine 類工具特徵）
-    HeapCorruption          // Heap 完整性檢查失敗
+    HeapCorruption,         // Heap 完整性檢查失敗
+    ApiHook,                // 關鍵 API 前導碼被 patch（inline hook 攔截系統呼叫）
+    ExternalTool            // 偵測到已知作弊/除錯工具行程
 };
 
 // 違規報告
@@ -116,6 +118,20 @@ public:
     bool CheckExternalHandles(std::string* diag = nullptr);
     // Heap 完整性：HeapValidate 檢查主堆
     bool CheckHeapIntegrity();
+    // 關鍵 API inline hook 偵測：x64 的 ntdll syscall stub 前導碼恆為
+    // 4C 8B D1 B8（mov r10,rcx; mov eax,imm）。被 E9/FF25 等覆寫 = 被 hook，
+    // 這是外掛攔截 NtProtectVirtualMemory/NtWriteVirtualMemory 的慣用手法。
+    bool CheckCriticalApiHooks();
+    // 已知作弊/除錯工具行程掃描：cheatengine、x64dbg、ollydbg、windbg、
+    // processhacker、reclass 等（子字串比對映像檔名）
+    bool CheckKnownToolProcesses();
+    // 執行緒 RIP 稽核：短暫暫停各執行緒檢查指令指標是否落在已載入模組內。
+    // 補 CheckInjectedThreads 的盲點——後者只看起始位址，無法抓到
+    // 「合法起點建立、之後跳入 shellcode」的執行緒。
+    bool CheckThreadContexts();
+    // 外部 handle 持有者白名單（exe 檔名，如 "conhost.exe"）。
+    // 系統目錄內的已簽章二進位自動視為合法持有者，不需手動加入。
+    void AddTrustedHandleHolder(const std::string& imageName);
 
     // ---- DLL 注入偵測 ----
     // 將模組名稱加入信任清單（例如 "myplugin.dll"）。
@@ -206,6 +222,10 @@ private:
     std::unordered_map<std::string, std::string> moduleHashes;
     // 已回報過的外部 handle 持有者（去重）
     std::unordered_set<uintptr_t> extHandleSeen;
+    // 外部 handle 持有者白名單（小寫 exe 檔名）
+    std::unordered_set<std::string> trustedHandleHolders;
+    // 已回報過的外部工具行程（去重）
+    std::unordered_set<uintptr_t> extToolSeen;
     mutable std::mutex trustedMutex;
 
     // 受信任模組目錄（正規化：小寫、反斜線、無尾分隔符）

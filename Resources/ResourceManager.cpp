@@ -3,6 +3,11 @@
 #include "Audio/AudioSystem.h"       // AudioBuffer 定義
 #include <iostream>
 #include <algorithm>
+#include <filesystem>
+
+// 注意：LoadX/GetX 回傳的 SharedPtr 使用 no-op deleter —
+// 資源生命週期由 ResourceCache 擁有，shared_ptr 僅作為非擁有性參照，
+// 避免 shared_ptr 析構與 loader->Unload 雙重釋放。
 
 namespace Potato {
 
@@ -42,11 +47,14 @@ ResourceCache::~ResourceCache() {
 void* ResourceCache::LoadRaw(const std::string& path, ResourceType type) {
     std::lock_guard<std::mutex> lock(mutex);
     
-    // 檢查是否已加載
-    if (IsLoaded(path)) {
+    // 檢查是否已加載（直接查表：IsLoaded 會重入同一 mutex 造成死結）
+    auto existing = resources.find(path);
+    if (existing != resources.end()) {
         ResourceMetadata& meta = metadata[path];
-        meta.referenceCount++;
-        return resources[path];
+        if (meta.referenceCount < UINT32_MAX) {
+            meta.referenceCount++;
+        }
+        return existing->second;
     }
     
     // 檢查加載器
@@ -95,9 +103,9 @@ void ResourceCache::UnloadAll() {
     std::lock_guard<std::mutex> lock(mutex);
     
     for (auto& [path, resource] : resources) {
-        ResourceMetadata& meta = metadata[path];
-        if (loaders.find(meta.type) != loaders.end()) {
-            loaders[meta.type]->Unload(resource);
+        auto metaIt = metadata.find(path);
+        if (metaIt != metadata.end() && loaders.find(metaIt->second.type) != loaders.end()) {
+            loaders[metaIt->second.type]->Unload(resource);
         }
     }
     
@@ -113,12 +121,12 @@ void ResourceCache::RegisterLoader(ResourceType type, SharedPtr<IResourceLoader>
 }
 
 bool ResourceCache::IsLoaded(const std::string& path) const {
-    std::lock_guard<std::mutex> lock(const_cast<std::mutex&>(mutex));
+    std::lock_guard<std::mutex> lock(mutex);
     return resources.find(path) != resources.end();
 }
 
 ResourceMetadata ResourceCache::GetMetadata(const std::string& path) const {
-    std::lock_guard<std::mutex> lock(const_cast<std::mutex&>(mutex));
+    std::lock_guard<std::mutex> lock(mutex);
     auto it = metadata.find(path);
     if (it != metadata.end()) {
         return it->second;
@@ -127,12 +135,12 @@ ResourceMetadata ResourceCache::GetMetadata(const std::string& path) const {
 }
 
 size_t ResourceCache::GetLoadedResourceCount() const {
-    std::lock_guard<std::mutex> lock(const_cast<std::mutex&>(mutex));
+    std::lock_guard<std::mutex> lock(mutex);
     return resources.size();
 }
 
 size_t ResourceCache::GetTotalMemoryUsage() const {
-    std::lock_guard<std::mutex> lock(const_cast<std::mutex&>(mutex));
+    std::lock_guard<std::mutex> lock(mutex);
     return currentMemoryUsage;
 }
 
@@ -153,7 +161,7 @@ void ResourceCache::SetAutoUnloadThreshold(float threshold) {
 }
 
 void ResourceCache::PrintStatistics() const {
-    std::lock_guard<std::mutex> lock(const_cast<std::mutex&>(mutex));
+    std::lock_guard<std::mutex> lock(mutex);
     
     std::cout << "=== Resource Cache Statistics ===" << std::endl;
     std::cout << "Loaded Resources: " << resources.size() << std::endl;
@@ -174,15 +182,22 @@ void ResourceCache::UnloadResource(const std::string& path) {
     }
     
     ResourceMetadata& meta = metadata[path];
-    meta.referenceCount--;
+    // uint32 在 0 時遞減會繞回 UINT_MAX，導致永遠無法卸載
+    if (meta.referenceCount > 0) {
+        meta.referenceCount--;
+    }
     
-    if (meta.referenceCount <= 0 && !meta.persistent) {
+    if (meta.referenceCount == 0 && !meta.persistent) {
         // 卸載資源
         if (loaders.find(meta.type) != loaders.end()) {
             loaders[meta.type]->Unload(it->second);
         }
         
-        currentMemoryUsage -= meta.size;
+        if (currentMemoryUsage >= meta.size) {
+            currentMemoryUsage -= meta.size;
+        } else {
+            currentMemoryUsage = 0;
+        }
         resources.erase(it);
         metadata.erase(path);
         
@@ -259,7 +274,7 @@ SharedPtr<Texture> ResourceManager::LoadTexture(const std::string& path) {
     void* resource = cache->LoadRaw(resolvedPath, ResourceType::Texture);
     
     if (resource) {
-        return SharedPtr<Texture>(static_cast<Texture*>(resource));
+        return SharedPtr<Texture>(static_cast<Texture*>(resource), [](Texture*){});
     }
     
     return nullptr;
@@ -275,7 +290,7 @@ SharedPtr<Texture> ResourceManager::GetTexture(const std::string& path) {
     void* resource = cache->LoadRaw(resolvedPath, ResourceType::Texture);
     
     if (resource) {
-        return SharedPtr<Texture>(static_cast<Texture*>(resource));
+        return SharedPtr<Texture>(static_cast<Texture*>(resource), [](Texture*){});
     }
     
     return nullptr;
@@ -286,7 +301,7 @@ SharedPtr<Mesh> ResourceManager::LoadMesh(const std::string& path) {
     void* resource = cache->LoadRaw(resolvedPath, ResourceType::Mesh);
     
     if (resource) {
-        return SharedPtr<Mesh>(static_cast<Mesh*>(resource));
+        return SharedPtr<Mesh>(static_cast<Mesh*>(resource), [](Mesh*){});
     }
     
     return nullptr;
@@ -302,7 +317,7 @@ SharedPtr<Mesh> ResourceManager::GetMesh(const std::string& path) {
     void* resource = cache->LoadRaw(resolvedPath, ResourceType::Mesh);
     
     if (resource) {
-        return SharedPtr<Mesh>(static_cast<Mesh*>(resource));
+        return SharedPtr<Mesh>(static_cast<Mesh*>(resource), [](Mesh*){});
     }
     
     return nullptr;
@@ -317,7 +332,7 @@ SharedPtr<Shader> ResourceManager::LoadShader(const std::string& vertexPath, con
     void* resource = cache->LoadRaw(combinedPath, ResourceType::Shader);
     
     if (resource) {
-        return SharedPtr<Shader>(static_cast<Shader*>(resource));
+        return SharedPtr<Shader>(static_cast<Shader*>(resource), [](Shader*){});
     }
     
     return nullptr;
@@ -331,7 +346,7 @@ SharedPtr<Shader> ResourceManager::GetShader(const std::string& name) {
     void* resource = cache->LoadRaw(name, ResourceType::Shader);
     
     if (resource) {
-        return SharedPtr<Shader>(static_cast<Shader*>(resource));
+        return SharedPtr<Shader>(static_cast<Shader*>(resource), [](Shader*){});
     }
     
     return nullptr;
@@ -342,7 +357,7 @@ SharedPtr<AudioBuffer> ResourceManager::LoadAudio(const std::string& path) {
     void* resource = cache->LoadRaw(resolvedPath, ResourceType::Audio);
     
     if (resource) {
-        return SharedPtr<AudioBuffer>(static_cast<AudioBuffer*>(resource));
+        return SharedPtr<AudioBuffer>(static_cast<AudioBuffer*>(resource), [](AudioBuffer*){});
     }
     
     return nullptr;
@@ -358,7 +373,7 @@ SharedPtr<AudioBuffer> ResourceManager::GetAudio(const std::string& path) {
     void* resource = cache->LoadRaw(resolvedPath, ResourceType::Audio);
     
     if (resource) {
-        return SharedPtr<AudioBuffer>(static_cast<AudioBuffer*>(resource));
+        return SharedPtr<AudioBuffer>(static_cast<AudioBuffer*>(resource), [](AudioBuffer*){});
     }
     
     return nullptr;
@@ -408,12 +423,16 @@ bool ResourceManager::IsAsyncLoadingEnabled() const {
 }
 
 std::string ResourceManager::ResolvePath(const std::string& path) const {
+    if (path.empty()) {
+        return path;
+    }
+    
     // 如果是絕對路徑，直接返回
     if (path.find(':') != std::string::npos || path[0] == '/' || path[0] == '\\') {
         return path;
     }
     
-    // 在資源路徑中查找
+    // 在資源路徑中查找第一個實際存在的檔案
     for (const auto& resourcePath : resourcePaths) {
         std::string fullPath = resourcePath;
         if (!fullPath.empty() && fullPath.back() != '/' && fullPath.back() != '\\') {
@@ -421,9 +440,10 @@ std::string ResourceManager::ResolvePath(const std::string& path) const {
         }
         fullPath += path;
         
-        // 檢查文件是否存在（簡化檢查）
-        // 實際應該使用文件系統檢查
-        return fullPath;
+        std::error_code ec;
+        if (std::filesystem::exists(fullPath, ec)) {
+            return fullPath;
+        }
     }
     
     return path;
