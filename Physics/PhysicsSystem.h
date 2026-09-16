@@ -171,6 +171,7 @@ private:
     float mass;
     Vector3 linearVelocity;
     Vector3 angularVelocity;
+    Vector3 accumulatedForce;   // 本步累積的力，IntegrateVelocity 時以 dt 積分後清零
     float linearDamping;
     float angularDamping;
     

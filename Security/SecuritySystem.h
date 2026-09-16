@@ -130,7 +130,7 @@ public:
     // 「合法起點建立、之後跳入 shellcode」的執行緒。
     bool CheckThreadContexts();
     // 外部 handle 持有者白名單（exe 檔名，如 "conhost.exe"）。
-    // 系統目錄內的已簽章二進位自動視為合法持有者，不需手動加入。
+    // 位於系統目錄的二進位自動視為合法持有者，不需手動加入。
     void AddTrustedHandleHolder(const std::string& imageName);
 
     // ---- DLL 注入偵測 ----

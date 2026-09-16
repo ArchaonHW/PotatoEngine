@@ -208,8 +208,9 @@ void SceneNode::UpdateWorldTransform() {
         Matrix4 parentMatrix = parent->GetWorldMatrix();
         worldMatrix = parentMatrix * localMatrix;
         
-        // 繼承世界變換（簡化版本）
-        worldPosition = parent->GetWorldPosition() + localPosition;
+        // 繼承世界變換：位置須經父矩陣完整變換(含旋轉/縮放),
+        // 直接相加會忽略父節點的旋轉與縮放
+        worldPosition = parentMatrix.TransformPoint(localPosition);
         worldRotation = parent->GetWorldRotation() * localRotation;
         worldScale = parent->GetWorldScale() * localScale;
     } else {

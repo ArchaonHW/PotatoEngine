@@ -34,6 +34,15 @@
 - **計時異常偵測**：`CheckTimingAnomaly()` 偵測單步執行
 - **硬體中斷點偵測**：`CheckHardwareBreakpoints()` 掃描全部執行緒 DR0-DR7
 - **注入執行緒偵測**：`CheckInjectedThreads()` 執行緒起始位址不在任何模組內（shellcode / CreateRemoteThread）
+- **執行緒 RIP 稽核**：`CheckThreadContexts()` 暫停各執行緒檢查指令指標是否落在模組內，補起始位址檢查的盲點（合法起點建立後跳入 shellcode）
+- **隱藏模組偵測**：`CheckHiddenModules()` 掃描 `MEM_IMAGE` 區域交叉比對模組清單，抓 PEB unlinked / 手動映射的映像
+- **可疑記憶體掃描**：`CheckExecutablePrivateMemory()` 偵測可執行的 `MEM_PRIVATE` 區域（shellcode staging）
+- **IAT hook 偵測**：`CheckIATHooks()` import 表 entry 解析位址必須落在已載入模組內
+- **關鍵 API inline hook 偵測**：`CheckCriticalApiHooks()` 驗證 ntdll syscall stub 前導碼（x64 恆為 `4C 8B D1 B8`），偵測攔截 `NtProtectVirtualMemory` / `NtWriteVirtualMemory` 等的 hook
+- **外部 handle 偵測**：`CheckExternalHandles()` 枚舉系統 handle 表，找出持有本行程 handle 的外部行程；系統目錄內的持有者自動放行，`AddTrustedHandleHolder()` 可加白名單
+- **已知工具行程掃描**：`CheckKnownToolProcesses()` 偵測 cheatengine / x64dbg / ollydbg / windbg / processhacker 等
+- **Heap 完整性**：`CheckHeapIntegrity()`（HeapValidate）
+- **監控心跳**：`IsMonitorAlive()` 監控執行緒被凍結/殺死時可偵測
 - **DLL 注入偵測**：`ScanModules()` / `CheckLoadedModules()` — 三重判定：
   - 系統 DLL（`kernel32` 等）：必須位於系統目錄 **且** 通過 Authenticode 簽章驗證（WinVerifyTrust）
   - 信任 DLL（`AddTrustedModule`）：必須位於受信任目錄（exe 目錄 / `AddTrustedDirectory`）
@@ -47,7 +56,8 @@
 
 對抗性驗證：`Examples/SecurityRedTeamTest.cpp` + `FakeCheatModule.cpp` 為紅隊測試
 （模擬注入、冒名 DLL、記憶體竄改、雜湊釘選繞過、硬體中斷點、shellcode 執行緒、
-.text patch、即時載入攔截），目前 26 PASS / 0 BYPASS。
+.text patch、即時載入攔截、隱藏模組、RWX 記憶體、IAT hook、外部 handle、
+syscall stub hook、作弊工具行程、RIP 稽核），目前 **39 PASS / 0 FAIL / 0 BYPASS**。
 
 使用範例：
 

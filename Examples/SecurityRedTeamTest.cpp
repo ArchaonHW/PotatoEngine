@@ -101,6 +101,16 @@ __declspec(noinline) int DummyPatchTarget() {
     volatile int x = 42;
     return x;
 }
+
+// 攻擊 16 用：執行緒「合法起點」（位於本 exe 內），進入後跳入 shellcode。
+// CheckInjectedThreads 只看起始位址抓不到這種；CheckThreadContexts 看 RIP 才抓得到。
+volatile void* g_shellcodeTarget = nullptr;
+DWORD WINAPI LegitTrampoline(LPVOID) {
+    auto f = reinterpret_cast<void(*)()>(
+        const_cast<void*>(g_shellcodeTarget));
+    f();
+    return 0;
+}
 #endif
 
 } // anonymous namespace
@@ -624,6 +634,144 @@ int main(int argc, char* argv[]) {
             ::TerminateProcess(pi.hProcess, 0);
             ::CloseHandle(pi.hProcess);
             ::CloseHandle(pi.hThread);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    Section("[攻擊 14] Patch ntdll syscall stub（inline hook）-> CheckCriticalApiHooks");
+    // ------------------------------------------------------------------
+    {
+        ClearReports();
+        bool clean = !sec.CheckCriticalApiHooks();
+        clean ? Pass("乾淨狀態 syscall stub 完整")
+              : Fail("乾淨狀態 syscall stub 完整", "unexpected hook report");
+
+        auto* fn = reinterpret_cast<uint8_t*>(::GetProcAddress(
+            ::GetModuleHandleW(L"ntdll.dll"), "NtWriteVirtualMemory"));
+        uint8_t orig = 0;
+        bool patched = false;
+        DWORD oldProt = 0;
+        if (fn && ::VirtualProtect(fn, 8, PAGE_EXECUTE_READWRITE, &oldProt)) {
+            orig = fn[0];
+            fn[0] = 0xE9; // jmp rel32 —— 典型 inline hook 起頭
+            ::VirtualProtect(fn, 8, oldProt, &oldProt);
+            patched = true;
+        }
+
+        ClearReports();
+        bool detected = patched && sec.CheckCriticalApiHooks() &&
+                        SawViolation(ViolationType::ApiHook);
+        detected ? Pass("偵測到 syscall stub hook")
+                 : Fail("偵測到 syscall stub hook",
+                        patched ? "missed" : "VirtualProtect failed");
+
+        if (patched) {
+            ::VirtualProtect(fn, 8, PAGE_EXECUTE_READWRITE, &oldProt);
+            fn[0] = orig;
+            ::VirtualProtect(fn, 8, oldProt, &oldProt);
+        }
+        ClearReports();
+        bool restored = !sec.CheckCriticalApiHooks();
+        restored ? Pass("還原後放行")
+                 : Fail("還原後放行", "still flagged after restore");
+    }
+
+    // ------------------------------------------------------------------
+    Section("[攻擊 15] 作弊工具行程 + handle 白名單 -> CheckKnownToolProcesses");
+    // ------------------------------------------------------------------
+    {
+        // 把測試 exe 複製成 cheatengine64.exe 執行（工具名黑名單 + 持 handle）
+        auto toolDir = std::filesystem::temp_directory_path() / "potato_redteam_tool";
+        std::error_code ec;
+        std::filesystem::create_directories(toolDir, ec);
+        auto fakeTool = toolDir / "cheatengine64.exe";
+        std::filesystem::copy_file(exePath, fakeTool,
+            std::filesystem::copy_options::overwrite_existing, ec);
+
+        auto spawnTool = [&](PROCESS_INFORMATION& pi) {
+            char cmd[512];
+            snprintf(cmd, sizeof(cmd), "\"%s\" --hold-handle %lu",
+                     fakeTool.string().c_str(),
+                     static_cast<unsigned long>(::GetCurrentProcessId()));
+            STARTUPINFOA si{};
+            si.cb = sizeof(si);
+            return ::CreateProcessA(nullptr, cmd, nullptr, nullptr, FALSE,
+                                    CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi) != 0;
+        };
+        auto killTool = [&](PROCESS_INFORMATION& pi) {
+            ::TerminateProcess(pi.hProcess, 0);
+            ::CloseHandle(pi.hProcess);
+            ::CloseHandle(pi.hThread);
+        };
+
+        PROCESS_INFORMATION pi1{};
+        if (ec || !spawnTool(pi1)) {
+            Info("作弊工具測試", "無法建立測試工具行程");
+        } else {
+            ::Sleep(800);
+            ClearReports();
+            bool toolFound = sec.CheckKnownToolProcesses() &&
+                             SawViolation(ViolationType::ExternalTool);
+            toolFound ? Pass("偵測到作弊工具行程")
+                      : Fail("偵測到作弊工具行程", "cheatengine64.exe missed");
+
+            ClearReports();
+            std::string diag;
+            bool handleFlagged = sec.CheckExternalHandles(&diag) &&
+                                 SawViolation(ViolationType::ExternalHandle);
+            handleFlagged ? Pass("偵測到工具持有的 handle")
+                          : Fail("偵測到工具持有的 handle", "missed: " + diag);
+            killTool(pi1);
+
+            // 白名單：把工具名加入 trusted holder 後，新 pid 不再回報
+            sec.AddTrustedHandleHolder("cheatengine64.exe");
+            PROCESS_INFORMATION pi2{};
+            if (spawnTool(pi2)) {
+                ::Sleep(800);
+                ClearReports();
+                bool stillFlagged = sec.CheckExternalHandles(&diag) &&
+                                    SawViolation(ViolationType::ExternalHandle);
+                stillFlagged ? Fail("白名單持有者放行", "whitelisted holder reported")
+                             : Pass("白名單持有者放行");
+                killTool(pi2);
+            }
+        }
+        std::filesystem::remove_all(toolDir, ec);
+    }
+
+    // ------------------------------------------------------------------
+    Section("[攻擊 16] 合法起點執行緒跳入 shellcode -> CheckThreadContexts");
+    // ------------------------------------------------------------------
+    {
+        auto* sc = reinterpret_cast<uint8_t*>(::VirtualAlloc(
+            nullptr, 64, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE));
+        if (!sc) {
+            Info("RIP 稽核測試", "VirtualAlloc failed");
+        } else {
+            sc[0] = 0xEB; sc[1] = 0xFE; // jmp $ 無限迴圈
+            g_shellcodeTarget = sc;
+            HANDLE t = ::CreateThread(nullptr, 0, LegitTrampoline,
+                                      nullptr, 0, nullptr);
+            ::Sleep(100); // 等執行緒跳進 shellcode
+
+            ClearReports();
+            bool det = sec.CheckThreadContexts() &&
+                       SawViolation(ViolationType::InjectedThread);
+            det ? Pass("偵測到執行緒 RIP 在模組外")
+                : Fail("偵測到執行緒 RIP 在模組外", "missed");
+
+            // 對照：起始位址在模組內，CheckInjectedThreads 抓不到這隻
+            ClearReports();
+            bool startAddrMiss = !sec.CheckInjectedThreads();
+            startAddrMiss ? Info("對照組",
+                "CheckInjectedThreads 未回報——證明 RIP 稽核是必要的互補")
+                          : Info("對照組",
+                "CheckInjectedThreads 也回報（可能有其他可疑執行緒）");
+
+            ::TerminateThread(t, 0);
+            ::CloseHandle(t);
+            ::VirtualFree(sc, 0, MEM_RELEASE);
+            g_shellcodeTarget = nullptr;
         }
     }
 

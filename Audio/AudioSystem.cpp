@@ -190,9 +190,10 @@ AudioSource* OpenALAudioManager::CreateSource() {
 void OpenALAudioManager::DestroySource(AudioSource* source) {
     auto it = std::find(sources.begin(), sources.end(), source);
     if (it != sources.end()) {
+        int sourceID = source->GetSourceID(); // 先取出 ID：delete 後再讀是 UAF
         sources.erase(it);
         delete source;
-        LOG_INFO("Destroyed audio source with ID: " + std::to_string(source->GetSourceID()));
+        LOG_INFO("Destroyed audio source with ID: " + std::to_string(sourceID));
     }
 }
 
@@ -261,6 +262,10 @@ bool OpenALAudioManager::LoadWAV(const std::string& filePath, AudioData& data) {
     // 讀取 WAV 頭部
     char header[44];
     file.read(header, 44);
+    if (!file.good()) {
+        LOG_ERROR("WAV file too small or unreadable: " + filePath);
+        return false;
+    }
     
     // 簡化解析
     data.format = AudioFormat::WAV;
@@ -270,14 +275,24 @@ bool OpenALAudioManager::LoadWAV(const std::string& filePath, AudioData& data) {
     
     // 讀取音頻數據
     file.seekg(0, std::ios::end);
-    size_t fileSize = file.tellg();
+    std::streampos endPos = file.tellg();
+    if (endPos < 44) {
+        LOG_ERROR("WAV file too small: " + filePath);
+        return false;
+    }
     file.seekg(44, std::ios::beg);
     
-    size_t dataSize = fileSize - 44;
+    size_t dataSize = static_cast<size_t>(endPos) - 44;
     data.data.resize(dataSize);
-    file.read(reinterpret_cast<char*>(data.data.data()), dataSize);
+    if (dataSize > 0) {
+        file.read(reinterpret_cast<char*>(data.data.data()), dataSize);
+    }
     
-    data.duration = static_cast<int>((dataSize / (data.channels * data.sampleRate * (data.bitsPerSample / 8))) * 1000);
+    // duration（毫秒）= 資料大小 / 每秒位元組數 * 1000
+    size_t bytesPerSecond = static_cast<size_t>(data.channels) * data.sampleRate * (data.bitsPerSample / 8);
+    data.duration = (bytesPerSecond > 0)
+        ? static_cast<int>((dataSize * 1000) / bytesPerSecond)
+        : 0;
     
     return true;
 }

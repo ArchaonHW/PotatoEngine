@@ -69,10 +69,10 @@ struct ResourceMetadata {
  * 資源句柄
  * 用於安全地訪問資源
  */
-class ResourceHandle {
+class ResourceCacheHandle {
 public:
-    ResourceHandle();
-    explicit ResourceHandle(uint32 handle);
+    ResourceCacheHandle();
+    explicit ResourceCacheHandle(uint32 handle);
     
     uint32 GetHandle() const { return handle; }
     bool IsValid() const { return handle != 0; }

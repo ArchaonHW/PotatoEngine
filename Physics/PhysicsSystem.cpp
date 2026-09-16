@@ -20,6 +20,7 @@ PhysicsBody::PhysicsBody()
     , mass(1.0f)
     , linearVelocity(Vector3::Zero())
     , angularVelocity(Vector3::Zero())
+    , accumulatedForce(Vector3::Zero())
     , linearDamping(0.0f)
     , angularDamping(0.0f)
     , collisionShape(CollisionShape::Box)
@@ -95,9 +96,10 @@ void PhysicsBody::SetCollisionCallback(CollisionCallback callback) {
 }
 
 void PhysicsBody::ApplyForce(const Vector3& force) {
-    // mass <= 0 視為無限質量（不加速），避免除零產生 inf/NaN
-    if (bodyType == PhysicsBodyType::Dynamic && mass > 0.0f) {
-        linearVelocity += force / mass;
+    // 力是連續量：累積到本步，IntegrateVelocity 時乘 dt 積分進速度
+    // （瞬間改變速度請用 ApplyImpulse）
+    if (bodyType == PhysicsBodyType::Dynamic) {
+        accumulatedForce += force;
     }
 }
 
@@ -341,37 +343,63 @@ void PhysicsWorld::UpdateBodies(float deltaTime) {
         // 應用阻尼
         body->SetLinearVelocity(body->GetLinearVelocity() * (1.0f - body->GetLinearDamping() * deltaTime));
         body->SetAngularVelocity(body->GetAngularVelocity() * (1.0f - body->GetAngularDamping() * deltaTime));
-        
-        // 積分速度
-        IntegrateVelocity(deltaTime);
     }
+    
+    // 積分：先速度（累積力 -> 速度）再位置（速度 -> 位置）
+    // 兩者內部皆已遍歷所有物體,不可放在每物體迴圈內
+    IntegrateVelocity(deltaTime);
+    IntegratePosition(deltaTime);
 }
+
+namespace {
+// 簡化碰撞檢測用包圍球半徑:Sphere 直接取 dimensions.x,其他形狀取最大邊一半
+float BoundingRadius(const PhysicsBody* body) {
+    const Vector3& d = body->GetCollisionShapeDimensions();
+    if (body->GetCollisionShape() == CollisionShape::Sphere) {
+        return (d.x > 0.0f) ? d.x : 0.5f;
+    }
+    float maxDim = std::max({d.x, d.y, d.z});
+    return (maxDim > 0.0f) ? maxDim * 0.5f : 0.5f;
+}
+} // namespace
 
 void PhysicsWorld::DetectCollisions() {
     activeCollisions.clear();
     collisionCount = 0;
     
+    // 快照：碰撞回調可能呼叫 DestroyBody/CreateBody 導致迭代器失效
+    std::vector<PhysicsBody*> snapshot = bodies;
+    
     // 簡化實現：O(N^2) 碰撞檢測
-    for (size_t i = 0; i < bodies.size(); i++) {
-        for (size_t j = i + 1; j < bodies.size(); j++) {
-            PhysicsBody* bodyA = bodies[i];
-            PhysicsBody* bodyB = bodies[j];
+    for (size_t i = 0; i < snapshot.size(); i++) {
+        for (size_t j = i + 1; j < snapshot.size(); j++) {
+            PhysicsBody* bodyA = snapshot[i];
+            PhysicsBody* bodyB = snapshot[j];
+            
+            // 回調可能已銷毀物體，確認仍屬於世界
+            if (std::find(bodies.begin(), bodies.end(), bodyA) == bodies.end() ||
+                std::find(bodies.begin(), bodies.end(), bodyB) == bodies.end()) {
+                continue;
+            }
             
             // 檢查碰撞過濾
             if ((bodyA->GetCollisionGroup() & bodyB->GetCollisionMask()) == 0) {
                 continue;
             }
             
-            // 簡化碰撞檢測：球體碰撞
+            // 簡化碰撞檢測：以包圍球判定
             Vector3 diff = bodyA->GetPosition() - bodyB->GetPosition();
             float distance = diff.Length();
-            float minDistance = 1.0f; // 簡化
+            float minDistance = BoundingRadius(bodyA) + BoundingRadius(bodyB);
             
             if (distance < minDistance) {
                 CollisionData collision;
                 collision.position = (bodyA->GetPosition() + bodyB->GetPosition()) * 0.5f;
-                collision.normal = diff.Normalized();
+                // 兩物體完全重疊時 diff 為零向量，Normalized 會產生 NaN
+                collision.normal = (distance > 1e-6f) ? diff.Normalized() : Vector3(0.0f, 1.0f, 0.0f);
                 collision.penetrationDepth = minDistance - distance;
+                collision.bodyAID = bodyA->GetBodyID();
+                collision.bodyBID = bodyB->GetBodyID();
                 collision.otherBodyID = bodyB->GetBodyID();
                 
                 activeCollisions.push_back(collision);
@@ -393,11 +421,9 @@ void PhysicsWorld::DetectCollisions() {
 void PhysicsWorld::ResolveCollisions() {
     // 簡化實現：分離軸定理
     for (const auto& collision : activeCollisions) {
-        PhysicsBody* bodyA = GetBody(collision.otherBodyID);
-        if (!bodyA) continue;
-        
-        PhysicsBody* bodyB = GetBody(collision.otherBodyID); // 需要正確的實現
-        if (!bodyB) continue;
+        PhysicsBody* bodyA = GetBody(collision.bodyAID);
+        PhysicsBody* bodyB = GetBody(collision.bodyBID);
+        if (!bodyA || !bodyB || bodyA == bodyB) continue;
         
         // 分離物體
         Vector3 separation = collision.normal * collision.penetrationDepth * 0.5f;
@@ -410,8 +436,8 @@ void PhysicsWorld::ResolveCollisions() {
             bodyB->SetPosition(bodyB->GetPosition() - separation);
         }
         
-        // 計算衝量
-        float restitution = 0.5f; // 簡化
+        // 計算衝量：彈性係數取兩材質平均
+        float restitution = (bodyA->GetMaterial().restitution + bodyB->GetMaterial().restitution) * 0.5f;
         Vector3 relativeVelocity = bodyA->GetLinearVelocity() - bodyB->GetLinearVelocity();
         float velocityAlongNormal = Vector3::Dot(relativeVelocity, collision.normal);
         
@@ -419,8 +445,17 @@ void PhysicsWorld::ResolveCollisions() {
             continue; // 物體正在分離
         }
         
+        // 兩者皆為零質量（視為無限質量）時無衝量
+        float massA = bodyA->GetMass();
+        float massB = bodyB->GetMass();
+        float invMassA = (massA > 0.0f) ? 1.0f / massA : 0.0f;
+        float invMassB = (massB > 0.0f) ? 1.0f / massB : 0.0f;
+        if (invMassA + invMassB <= 0.0f) {
+            continue;
+        }
+        
         float j = -(1 + restitution) * velocityAlongNormal;
-        j /= (1.0f / bodyA->GetMass() + 1.0f / bodyB->GetMass());
+        j /= (invMassA + invMassB);
         
         Vector3 impulse = collision.normal * j;
         
@@ -435,22 +470,28 @@ void PhysicsWorld::ResolveCollisions() {
 }
 
 void PhysicsWorld::IntegrateVelocity(float deltaTime) {
+    // v += (F / m) * dt,積分完清空累積力
     for (auto body : bodies) {
-        if (body->GetBodyType() == PhysicsBodyType::Dynamic) {
-            IntegratePosition(deltaTime);
+        if (body->GetBodyType() != PhysicsBodyType::Dynamic) {
+            continue;
         }
+        float mass = body->GetMass();
+        if (mass > 0.0f) {
+            body->linearVelocity += (body->accumulatedForce / mass) * deltaTime;
+        }
+        body->accumulatedForce = Vector3::Zero();
     }
 }
 
 void PhysicsWorld::IntegratePosition(float deltaTime) {
     for (auto body : bodies) {
-        if (body->GetBodyType() == PhysicsBodyType::Dynamic) {
-            Vector3 position = body->GetPosition();
-            Vector3 velocity = body->GetLinearVelocity();
-            
-            position += velocity * deltaTime;
-            body->SetPosition(position);
+        // Static 不移動;Kinematic 由速度驅動(不受力)但同樣要積分位置
+        if (body->GetBodyType() == PhysicsBodyType::Static) {
+            continue;
         }
+        Vector3 position = body->GetPosition();
+        position += body->GetLinearVelocity() * deltaTime;
+        body->SetPosition(position);
     }
 }
 

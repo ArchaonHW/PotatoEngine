@@ -1264,16 +1264,18 @@ bool SecurityManager::CheckExternalHandles(std::string* diag) {
                 if (slash != std::string::npos)
                     holderName = holderPath.substr(slash + 1);
 
-                // 持有者白名單：手動加入的檔名，或系統目錄內的已簽章二進位
-                // （conhost / 父 shell 等正常持有者不該洗版誤報）
+                // 持有者白名單：手動加入的檔名，或位於系統目錄的二進位。
+                // 注意不用簽章判定：conhost 等系統檔是 catalog 簽章，
+                // WinVerifyTrust 對其回 TRUST_E_NOSIGNATURE 會誤判；
+                // 而能把檔案放進 System32 的攻擊者本來就有 admin 權限，
+                // 已超出此防禦層的威脅模型。
                 bool holderTrusted;
                 {
                     std::lock_guard<std::mutex> lock(trustedMutex);
                     holderTrusted = trustedHandleHolders.count(holderName) != 0;
                 }
                 if (!holderTrusted && slash != std::string::npos &&
-                    IsSystemDir(holderPath.substr(0, slash)) &&
-                    VerifyModuleSignature(name)) {
+                    IsSystemDir(holderPath.substr(0, slash))) {
                     holderTrusted = true;
                 }
                 if (holderTrusted) { ::CloseHandle(dup); ::CloseHandle(owner); continue; }

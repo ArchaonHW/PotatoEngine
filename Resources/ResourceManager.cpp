@@ -18,12 +18,12 @@ ResourceManager* gResourceManager = nullptr;
 // ResourceHandle 實現
 // ============================================================================
 
-ResourceHandle::ResourceHandle()
+ResourceCacheHandle::ResourceCacheHandle()
     : handle(0)
 {
 }
 
-ResourceHandle::ResourceHandle(uint32 handle)
+ResourceCacheHandle::ResourceCacheHandle(uint32 handle)
     : handle(handle)
 {
 }
