@@ -310,6 +310,175 @@ int main() {
               "短線段未命中(端點在球前)");
     }
 
+    // [14] 碰撞回調雙向觸發:A、B 各自的 callback 都要收到,otherBodyID 指向對方
+    {
+        PhysicsManager& mgr = PhysicsManager::GetInstance();
+        PhysicsWorld* world = mgr.CreateWorld("cb_both");
+        world->Initialize();
+        world->SetGravity(Vector3::Zero());
+
+        auto mkBall = [&](float x) {
+            PhysicsBody* b = world->CreateBody();
+            b->SetCollisionShape(CollisionShape::Sphere);
+            b->SetCollisionShapeDimensions(Vector3(0.5f, 0.5f, 0.5f));
+            b->SetPosition(Vector3(x, 0.0f, 0.0f));
+            b->SetGravityEnabled(false);
+            return b;
+        };
+        PhysicsBody* a = mkBall(0.0f);
+        PhysicsBody* b = mkBall(0.6f);
+
+        int aOther = -1, bOther = -1;
+        a->SetCollisionCallback([&](const CollisionData& c) { aOther = c.otherBodyID; });
+        b->SetCollisionCallback([&](const CollisionData& c) { bOther = c.otherBodyID; });
+
+        world->Step(1.0f / 60.0f);
+        Check(aOther == b->GetBodyID(), "bodyA 回調收到 otherBodyID=B", (float)aOther, (float)b->GetBodyID());
+        Check(bOther == a->GetBodyID(), "bodyB 回調收到 otherBodyID=A", (float)bOther, (float)a->GetBodyID());
+    }
+
+    // [15] 回調內 DestroyBody 不 crash（pair 迴圈用 snapshot 且每步驗活）
+    {
+        PhysicsManager& mgr = PhysicsManager::GetInstance();
+        PhysicsWorld* world = mgr.CreateWorld("cb_destroy");
+        world->Initialize();
+        world->SetGravity(Vector3::Zero());
+
+        PhysicsBody* a = world->CreateBody();
+        a->SetCollisionShape(CollisionShape::Sphere);
+        a->SetCollisionShapeDimensions(Vector3(0.5f, 0.5f, 0.5f));
+        a->SetPosition(Vector3::Zero());
+        a->SetGravityEnabled(false);
+
+        PhysicsBody* b = world->CreateBody();
+        b->SetCollisionShape(CollisionShape::Sphere);
+        b->SetCollisionShapeDimensions(Vector3(0.5f, 0.5f, 0.5f));
+        b->SetPosition(Vector3(0.6f, 0.0f, 0.0f));
+        b->SetGravityEnabled(false);
+
+        a->SetCollisionCallback([world, b](const CollisionData&) {
+            world->DestroyBody(b); // 在回調內銷毀對方
+        });
+        world->Step(1.0f / 60.0f);
+        world->Step(1.0f / 60.0f); // 再一步確認無殘留野指標
+        Check(true, "回調內 DestroyBody 後續 Step 不 crash");
+    }
+
+    // [16] kinematic 布林旗標與 bodyType 語義一致：Dynamic+SetKinematic(true) 不受力
+    {
+        PhysicsManager& mgr = PhysicsManager::GetInstance();
+        PhysicsWorld* world = mgr.CreateWorld("kin_flag");
+        world->Initialize();
+        world->SetGravity(Vector3::Zero());
+
+        PhysicsBody* b = world->CreateBody();
+        b->SetPosition(Vector3::Zero());
+        b->SetGravityEnabled(false);
+        b->SetKinematic(true); // 布林旗標路徑
+        b->ApplyForce(Vector3(600.0f, 0.0f, 0.0f));
+        b->ApplyImpulse(Vector3(5.0f, 0.0f, 0.0f));
+
+        world->Step(1.0f / 60.0f);
+        float vx = b->GetLinearVelocity().x;
+        Check(std::fabs(vx) < 1e-4f, "SetKinematic(true) 的 Dynamic 不受力/衝量", vx, 0.0f);
+    }
+
+    // [17] 零質量對：兩個 mass=0 物體重疊不產生 NaN/除零
+    {
+        PhysicsManager& mgr = PhysicsManager::GetInstance();
+        PhysicsWorld* world = mgr.CreateWorld("zero_mass");
+        world->Initialize();
+        world->SetGravity(Vector3::Zero());
+
+        PhysicsBody* a = world->CreateBody();
+        a->SetCollisionShape(CollisionShape::Sphere);
+        a->SetCollisionShapeDimensions(Vector3(0.5f, 0.5f, 0.5f));
+        a->SetMass(0.0f);
+        a->SetPosition(Vector3::Zero());
+        a->SetGravityEnabled(false);
+
+        PhysicsBody* b = world->CreateBody();
+        b->SetCollisionShape(CollisionShape::Sphere);
+        b->SetCollisionShapeDimensions(Vector3(0.5f, 0.5f, 0.5f));
+        b->SetMass(0.0f);
+        b->SetPosition(Vector3(0.6f, 0.0f, 0.0f));
+        b->SetGravityEnabled(false);
+
+        world->Step(1.0f / 60.0f);
+        float v = a->GetLinearVelocity().x + b->GetLinearVelocity().x;
+        Check(std::isfinite(v), "零質量對碰撞不產生 NaN 速度", v, 0.0f);
+    }
+
+    // [18] 完全重合（coincident）兩球：法線退化時不 crash
+    {
+        PhysicsManager& mgr = PhysicsManager::GetInstance();
+        PhysicsWorld* world = mgr.CreateWorld("coincident");
+        world->Initialize();
+        world->SetGravity(Vector3::Zero());
+
+        for (int i = 0; i < 2; i++) {
+            PhysicsBody* b = world->CreateBody();
+            b->SetCollisionShape(CollisionShape::Sphere);
+            b->SetCollisionShapeDimensions(Vector3(0.5f, 0.5f, 0.5f));
+            b->SetPosition(Vector3::Zero());
+            b->SetGravityEnabled(false);
+        }
+        world->Step(1.0f / 60.0f);
+        Check(true, "完全重合球體 Step 不 crash");
+    }
+
+    // [19] restitution：正向對撞,彈性 1 應近似反轉速度
+    {
+        PhysicsManager& mgr = PhysicsManager::GetInstance();
+        PhysicsWorld* world = mgr.CreateWorld("restitution");
+        world->Initialize();
+        world->SetGravity(Vector3::Zero());
+
+        PhysicsBody* a = world->CreateBody();
+        a->SetCollisionShape(CollisionShape::Sphere);
+        a->SetCollisionShapeDimensions(Vector3(0.5f, 0.5f, 0.5f));
+        a->SetPosition(Vector3::Zero());
+        a->SetLinearVelocity(Vector3(2.0f, 0.0f, 0.0f));
+        a->SetGravityEnabled(false);
+        PhysicsMaterial matA; matA.restitution = 1.0f; a->SetMaterial(matA);
+
+        PhysicsBody* b = world->CreateBody();
+        b->SetCollisionShape(CollisionShape::Sphere);
+        b->SetCollisionShapeDimensions(Vector3(0.5f, 0.5f, 0.5f));
+        b->SetPosition(Vector3(0.9f, 0.0f, 0.0f)); // 已重疊,下一步即解算
+        b->SetLinearVelocity(Vector3(-2.0f, 0.0f, 0.0f));
+        b->SetGravityEnabled(false);
+        PhysicsMaterial matB; matB.restitution = 1.0f; b->SetMaterial(matB);
+
+        world->Step(1.0f / 60.0f);
+        float va = a->GetLinearVelocity().x;
+        float vb = b->GetLinearVelocity().x;
+        Check(va < -1.0f && vb > 1.0f, "restitution=1 對撞後速度近似反轉", va, -2.0f);
+    }
+
+    // [20] 非球形 BoundingRadius：Box 用最大邊一半,broadphase 不漏碰撞
+    {
+        PhysicsManager& mgr = PhysicsManager::GetInstance();
+        PhysicsWorld* world = mgr.CreateWorld("box_bounds");
+        world->Initialize();
+        world->SetGravity(Vector3::Zero());
+
+        PhysicsBody* a = world->CreateBody();
+        a->SetCollisionShape(CollisionShape::Box);
+        a->SetCollisionShapeDimensions(Vector3(4.0f, 0.2f, 0.2f)); // 長盒,半長 2
+        a->SetPosition(Vector3::Zero());
+        a->SetGravityEnabled(false);
+
+        PhysicsBody* b = world->CreateBody();
+        b->SetCollisionShape(CollisionShape::Box);
+        b->SetCollisionShapeDimensions(Vector3(4.0f, 0.2f, 0.2f));
+        b->SetPosition(Vector3(0.0f, 0.3f, 0.0f)); // y 方向重疊
+        b->SetGravityEnabled(false);
+
+        world->Step(1.0f / 60.0f);
+        Check(world->GetCollisionCount() == 1, "長盒 broadphase 以最大邊計算不漏碰");
+    }
+
     printf("\n=== 結果: %d PASS, %d FAIL ===\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

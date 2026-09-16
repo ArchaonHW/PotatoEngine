@@ -437,6 +437,10 @@ add_executable(ModelLoaderTest Examples/ModelLoaderTest.cpp)
 target_include_directories(ModelLoaderTest PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(ModelLoaderTest PotatoEngine)
 
+add_executable(InputTest Examples/InputTest.cpp)
+target_include_directories(InputTest PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(InputTest PotatoEngine)
+
 # AI Agent GUI 示例 (暫時禁用)
 # add_executable(AIAgentGUIExample Examples/AIAgentGUIExample.cpp)
 # target_link_libraries(AIAgentGUIExample PotatoEngine)
@@ -486,6 +490,7 @@ set(POTATO_TESTS
     SerializationTest
     RenderPipelineTest
     ModelLoaderTest
+    InputTest
     SecurityRedTeamTest
     AITestSuite
     DevAssistantSmoke

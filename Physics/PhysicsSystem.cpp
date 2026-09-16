@@ -106,7 +106,8 @@ void PhysicsBody::SetCollisionCallback(CollisionCallback callback) {
 void PhysicsBody::ApplyForce(const Vector3& force) {
     // 力是連續量：累積到本步，IntegrateVelocity 時乘 dt 積分進速度
     // （瞬間改變速度請用 ApplyImpulse）
-    if (bodyType == PhysicsBodyType::Dynamic) {
+    // Kinematic（bodyType 或布林旗標）不受力——旗標由 IsKinematic() 統一判定
+    if (bodyType == PhysicsBodyType::Dynamic && !IsKinematic()) {
         accumulatedForce += force;
     }
 }
@@ -117,13 +118,13 @@ void PhysicsBody::ApplyForceAtPoint(const Vector3& force, const Vector3& point) 
 }
 
 void PhysicsBody::ApplyTorque(const Vector3& torque) {
-    if (bodyType == PhysicsBodyType::Dynamic) {
+    if (bodyType == PhysicsBodyType::Dynamic && !IsKinematic()) {
         angularVelocity += torque;
     }
 }
 
 void PhysicsBody::ApplyImpulse(const Vector3& impulse) {
-    if (bodyType == PhysicsBodyType::Dynamic && mass > 0.0f) {
+    if (bodyType == PhysicsBodyType::Dynamic && !IsKinematic() && mass > 0.0f) {
         linearVelocity += impulse / mass;
     }
 }
@@ -531,11 +532,12 @@ void PhysicsWorld::ResolveCollisions() {
         // 分離物體
         Vector3 separation = collision.normal * collision.penetrationDepth * 0.5f;
         
-        if (bodyA->GetBodyType() == PhysicsBodyType::Dynamic) {
+        // Kinematic（兩種旗標皆含）不受碰撞反應影響,不做分離位移
+        if (bodyA->GetBodyType() == PhysicsBodyType::Dynamic && !bodyA->IsKinematic()) {
             bodyA->SetPosition(bodyA->GetPosition() + separation);
         }
-        
-        if (bodyB->GetBodyType() == PhysicsBodyType::Dynamic) {
+
+        if (bodyB->GetBodyType() == PhysicsBodyType::Dynamic && !bodyB->IsKinematic()) {
             bodyB->SetPosition(bodyB->GetPosition() - separation);
         }
         
@@ -562,10 +564,11 @@ void PhysicsWorld::ResolveCollisions() {
         
         Vector3 impulse = collision.normal * j;
         
+        // ApplyImpulse 內部已擋 Kinematic;此處 bodyType 檢查保留作為快速路徑
         if (bodyA->GetBodyType() == PhysicsBodyType::Dynamic) {
             bodyA->ApplyImpulse(impulse);
         }
-        
+
         if (bodyB->GetBodyType() == PhysicsBodyType::Dynamic) {
             bodyB->ApplyImpulse(-impulse);
         }
@@ -575,7 +578,10 @@ void PhysicsWorld::ResolveCollisions() {
 void PhysicsWorld::IntegrateVelocity(float deltaTime) {
     // v += (F / m) * dt,積分完清空累積力
     for (auto body : bodies) {
-        if (body->GetBodyType() != PhysicsBodyType::Dynamic) {
+        // Kinematic（bodyType 或布林旗標）不由力驅動;
+        // 累積力照樣清空,避免 kinematic 期間堆積的力在解除後一次爆發
+        if (body->GetBodyType() != PhysicsBodyType::Dynamic || body->IsKinematic()) {
+            body->accumulatedForce = Vector3::Zero();
             continue;
         }
         float mass = body->GetMass();

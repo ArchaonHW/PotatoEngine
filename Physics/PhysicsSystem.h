@@ -148,7 +148,9 @@ public:
     
     // 約束
     void SetKinematic(bool kinematic);
-    bool IsKinematic() const { return kinematic; }
+    // kinematic 布林旗標與 SetBodyType(Kinematic) 是同義的：
+    // 兩者皆表示「由速度驅動、不受力/衝量/碰撞反應影響」
+    bool IsKinematic() const { return kinematic || bodyType == PhysicsBodyType::Kinematic; }
     
     void SetGravityEnabled(bool enabled);
     bool IsGravityEnabled() const { return gravityEnabled; }
