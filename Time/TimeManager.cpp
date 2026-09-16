@@ -184,8 +184,8 @@ void TimeManager::Update() {
     // 更新時間刻度
     UpdateTimeScale();
     
-    // 更新FPS
-    UpdateFPS();
+    // 更新FPS（用真實時間,暫停時也能反映渲染幀率）
+    UpdateFPS(rawDeltaTime);
     
     // 處理延遲調用
     ProcessDelayedCalls();
@@ -311,9 +311,9 @@ void TimeManager::PrintStatistics() const {
     std::cout << "Delayed Calls: " << delayedCalls.size() << std::endl;
 }
 
-void TimeManager::UpdateFPS() {
+void TimeManager::UpdateFPS(float rawDeltaTime) {
     frameCount++;
-    fpsUpdateTime += deltaTime;
+    fpsUpdateTime += rawDeltaTime;
     
     if (fpsUpdateTime >= 1.0f) {
         currentFPS = static_cast<int>(frameCount / fpsUpdateTime);

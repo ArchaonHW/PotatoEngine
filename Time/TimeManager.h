@@ -138,7 +138,7 @@ public:
     void PrintStatistics() const;
     
 private:
-    void UpdateFPS();
+    void UpdateFPS(float rawDeltaTime);
     void ProcessDelayedCalls();
     void UpdateTimeScale();
     

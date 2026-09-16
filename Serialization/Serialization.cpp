@@ -2,6 +2,7 @@
 #include <iostream>
 #include <algorithm>
 #include <cstdio>
+#include <filesystem>
 
 namespace Potato {
 
@@ -141,7 +142,8 @@ void SerializationManager::Initialize() {
     RegisterSerializer(SerializationFormat::Binary, MakeShared<BinarySerializer>());
     
     // 創建存檔目錄
-    // 實際應該使用文件系統創建目錄
+    std::error_code ec;
+    std::filesystem::create_directories(saveDirectory, ec);
     
     initialized = true;
     std::cout << "Serialization Manager initialized" << std::endl;
@@ -169,68 +171,37 @@ ISerializer* SerializationManager::GetSerializer(SerializationFormat format) {
     return nullptr;
 }
 
-template<typename T>
-bool SerializationManager::Serialize(const std::string& filePath, const T& object, SerializationFormat format) {
-    ISerializer* serializer = GetSerializer(format);
-    if (!serializer) {
-        std::cerr << "No serializer registered for format: " << static_cast<int>(format) << std::endl;
-        return false;
-    }
-    
-    return serializer->Serialize(filePath, object);
-}
-
-template<typename T>
-bool SerializationManager::Deserialize(const std::string& filePath, T& object, SerializationFormat format) {
-    ISerializer* serializer = GetSerializer(format);
-    if (!serializer) {
-        std::cerr << "No serializer registered for format: " << static_cast<int>(format) << std::endl;
-        return false;
-    }
-    
-    return serializer->Deserialize(filePath, object);
-}
-
-template<typename T>
-bool SerializationManager::SaveGame(const std::string& saveSlot, const T& gameState) {
-    std::string filePath = GetSaveSlotPath(saveSlot);
-    return Serialize(filePath, gameState, SerializationFormat::JSON);
-}
-
-template<typename T>
-bool SerializationManager::LoadGame(const std::string& saveSlot, T& gameState) {
-    std::string filePath = GetSaveSlotPath(saveSlot);
-    return Deserialize(filePath, gameState, SerializationFormat::JSON);
-}
-
 std::vector<std::string> SerializationManager::GetSaveSlots() const {
     std::vector<std::string> saveSlots;
-    
-    // 簡化實現：應該掃描存檔目錄
-    saveSlots.push_back("auto_save_1");
-    saveSlots.push_back("auto_save_2");
-    saveSlots.push_back("manual_save_1");
-    saveSlots.push_back("manual_save_2");
-    
+
+    // 掃描存檔目錄中的 .json 檔，去除副檔名作為 slot 名
+    std::error_code ec;
+    if (!std::filesystem::is_directory(saveDirectory, ec)) {
+        return saveSlots;
+    }
+    for (const auto& entry : std::filesystem::directory_iterator(saveDirectory, ec)) {
+        if (entry.is_regular_file() && entry.path().extension() == ".json") {
+            saveSlots.push_back(entry.path().stem().string());
+        }
+    }
+    std::sort(saveSlots.begin(), saveSlots.end());
     return saveSlots;
 }
 
 bool SerializationManager::DeleteSaveSlot(const std::string& saveSlot) {
     std::string filePath = GetSaveSlotPath(saveSlot);
-    
-    // 刪除文件
-    // 簡化實現：使用文件系統刪除
-    std::cout << "Deleted save slot: " << saveSlot << std::endl;
-    
-    return true;
+
+    std::error_code ec;
+    bool removed = std::filesystem::remove(filePath, ec);
+    if (removed) {
+        std::cout << "Deleted save slot: " << saveSlot << std::endl;
+    }
+    return removed;
 }
 
 bool SerializationManager::SaveSlotExists(const std::string& saveSlot) const {
-    std::string filePath = GetSaveSlotPath(saveSlot);
-    
-    // 檢查文件是否存在
-    // 簡化實現：使用文件系統檢查
-    return false;
+    std::error_code ec;
+    return std::filesystem::is_regular_file(GetSaveSlotPath(saveSlot), ec);
 }
 
 void SerializationManager::EnableAutoSave(bool enable) {
