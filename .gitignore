@@ -67,6 +67,27 @@ Desktop.ini
 *.bak
 *.orig
 
+# Secrets & credentials - NEVER commit these
+.env
+.env.*
+!.env.example
+!.env.sample
+*.pem
+*.key
+*.p12
+*.keystore
+*.jks
+id_rsa
+id_rsa.*
+id_ed25519
+id_ed25519.*
+*.asc
+*.gpg
+credentials*
+secrets.*
+*.secret
+*.token
+
 # Crash reports
 *.crashdump
 *.dmp

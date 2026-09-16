@@ -1,6 +1,7 @@
 #include "Serialization.h"
 #include <iostream>
 #include <algorithm>
+#include <cstdio>
 
 namespace Potato {
 
@@ -259,7 +260,19 @@ void SerializationManager::Update(float deltaTime) {
 }
 
 std::string SerializationManager::GetSaveSlotPath(const std::string& saveSlot) const {
-    return saveDirectory + "/" + saveSlot + ".json";
+    // 防止路徑遍歷：存檔名稱只允許英數字、底線、連字號
+    std::string sanitized;
+    sanitized.reserve(saveSlot.size());
+    for (char c : saveSlot) {
+        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+            (c >= '0' && c <= '9') || c == '_' || c == '-') {
+            sanitized += c;
+        }
+    }
+    if (sanitized.empty()) {
+        sanitized = "invalid_slot";
+    }
+    return saveDirectory + "/" + sanitized + ".json";
 }
 
 void SerializationManager::ProcessAutoSave() {
@@ -304,17 +317,43 @@ SerializationManager* GetSerializationManager() {
 
 namespace SerializableTypes {
 
+// 跳脫 JSON 字串中的特殊字元，防止產生不合法 JSON 與注入
+static std::string EscapeJsonString(const std::string& input) {
+    std::string out;
+    out.reserve(input.size() + 8);
+    for (char c : input) {
+        switch (c) {
+            case '"':  out += "\\\""; break;
+            case '\\': out += "\\\\"; break;
+            case '\b': out += "\\b";  break;
+            case '\f': out += "\\f";  break;
+            case '\n': out += "\\n";  break;
+            case '\r': out += "\\r";  break;
+            case '\t': out += "\\t";  break;
+            default:
+                if (static_cast<unsigned char>(c) < 0x20) {
+                    char buf[8];
+                    snprintf(buf, sizeof(buf), "\\u%04x", c);
+                    out += buf;
+                } else {
+                    out += c;
+                }
+        }
+    }
+    return out;
+}
+
 std::string SceneNodeData::Serialize() const {
     std::stringstream ss;
     ss << "{";
-    ss << "\"name\":\"" << name << "\",";
+    ss << "\"name\":\"" << EscapeJsonString(name) << "\",";
     ss << "\"position\":[" << position.x << "," << position.y << "," << position.z << "],";
     ss << "\"rotation\":[" << rotation.x << "," << rotation.y << "," << rotation.z << "," << rotation.w << "],";
     ss << "\"scale\":[" << scale.x << "," << scale.y << "," << scale.z << "],";
     ss << "\"children\":[";
     for (size_t i = 0; i < children.size(); i++) {
         if (i > 0) ss << ",";
-        ss << "\"" << children[i] << "\"";
+        ss << "\"" << EscapeJsonString(children[i]) << "\"";
     }
     ss << "]}";
     return ss.str();
@@ -330,11 +369,11 @@ bool SceneNodeData::Deserialize(const std::string& data) {
 std::string GameObjectData::Serialize() const {
     std::stringstream ss;
     ss << "{";
-    ss << "\"name\":\"" << name << "\",";
-    ss << "\"tag\":\"" << tag << "\",";
+    ss << "\"name\":\"" << EscapeJsonString(name) << "\",";
+    ss << "\"tag\":\"" << EscapeJsonString(tag) << "\",";
     ss << "\"layer\":" << layer << ",";
     ss << "\"active\":" << (active ? "true" : "false") << ",";
-    ss << "\"sceneNodeData\":\"" << sceneNodeData << "\"";
+    ss << "\"sceneNodeData\":\"" << EscapeJsonString(sceneNodeData) << "\"";
     ss << "}";
     return ss.str();
 }
@@ -348,13 +387,13 @@ bool GameObjectData::Deserialize(const std::string& data) {
 std::string GameStateData::Serialize() const {
     std::stringstream ss;
     ss << "{";
-    ss << "\"levelName\":\"" << levelName << "\",";
+    ss << "\"levelName\":\"" << EscapeJsonString(levelName) << "\",";
     ss << "\"playTime\":" << playTime << ",";
     ss << "\"score\":" << score << ",";
     ss << "\"activeObjects\":[";
     for (size_t i = 0; i < activeObjects.size(); i++) {
         if (i > 0) ss << ",";
-        ss << "\"" << activeObjects[i] << "\"";
+        ss << "\"" << EscapeJsonString(activeObjects[i]) << "\"";
     }
     ss << "]}";
     return ss.str();

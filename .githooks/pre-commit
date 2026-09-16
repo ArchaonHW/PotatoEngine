@@ -41,8 +41,66 @@ if [ "$current_branch" = "develop" ]; then
     fi
 fi
 
+# ============================================================================
+# 秘密掃描：阻止 API key / 密碼 / 私鑰被提交
+# ============================================================================
+staged_files=$(git diff --cached --name-only --diff-filter=ACM || true)
+
+if [ -n "$staged_files" ]; then
+    secret_hits=0
+
+    # 1) 檢查檔名是否為已知秘密檔案
+    for f in $staged_files; do
+        case "$f" in
+            *.example|*.sample|*.template)
+                ;; # 範例檔放行
+            *.pem|*.key|*.p12|*.keystore|*.jks|id_rsa|id_rsa.*|id_ed25519|id_ed25519.*|*.env|*.env.*|*.token|credentials*)
+                echo "${RED}❌ $f: Looks like a secret/credential file - commit blocked${NC}"
+                secret_hits=$((secret_hits + 1))
+                ;;
+        esac
+    done
+
+    # 2) 掃描暫存內容中的秘密模式
+    secret_pattern='(BEGIN [A-Z ]*PRIVATE KEY|api[_-]?key["'"'"' ]*[:=]["'"'"' ]*[A-Za-z0-9_\-]{16,}|secret["'"'"' ]*[:=]["'"'"' ]*[A-Za-z0-9_\-]{16,}|password["'"'"' ]*[:=]["'"'"' ]*[^"'"'"' ]{8,}|sk-[A-Za-z0-9]{20,}|ghp_[A-Za-z0-9]{20,}|xox[baprs]-[A-Za-z0-9\-]{10,}|AKIA[0-9A-Z]{16})'
+    for f in $staged_files; do
+        if [ -f "$f" ]; then
+            if git diff --cached -- "$f" | grep -nEi "$secret_pattern" > /dev/null 2>&1; then
+                echo "${RED}❌ $f: Possible secret detected in staged changes${NC}"
+                secret_hits=$((secret_hits + 1))
+            fi
+        fi
+    done
+
+    if [ $secret_hits -gt 0 ]; then
+        echo ""
+        echo "${RED}❌ Secret scan failed: $secret_hits potential secret(s) found.${NC}"
+        echo "${YELLOW}Remove secrets before committing. If this is a false positive, use git commit --no-verify${NC}"
+        exit 1
+    fi
+    echo "${GREEN}✓ Secret scan passed${NC}"
+fi
+
+# ============================================================================
+# 危險函式掃描：警告不安全的 C/C++ API
+# ============================================================================
+for f in $staged_files; do
+    case "$f" in
+        *.cpp|*.h|*.c|*.hpp)
+            if [ -f "$f" ]; then
+                if git diff --cached -- "$f" | grep -nE '\+(.*)(strcpy|strcat|sprintf|gets|system)\s*\(' > /dev/null 2>&1; then
+                    echo "${YELLOW}⚠️  $f: New code uses unsafe function (strcpy/strcat/sprintf/gets/system)${NC}"
+                fi
+            fi
+            ;;
+    esac
+done
+
 # 獲取將要提交的文件的列表
 files=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.(h|cpp)$' || true)
+
+errors=0
+warnings=0
 
 if [ -z "$files" ]; then
     echo "${GREEN}✓ No C++ files to check${NC}"
@@ -50,8 +108,6 @@ else
     echo "Checking $($files | wc -l) C++ file(s)..."
     
     # 檢查每個文件
-    errors=0
-    warnings=0
     
     for file in $files; do
         # 檢查文件是否存在（可能已被刪除）

@@ -511,8 +511,12 @@ void StandardPlatformManager::DestroyConditionVariable(IConditionVariable* cv) {
 }
 
 void* StandardPlatformManager::LoadLibrary(const std::string& path) {
+    if (path.empty()) {
+        return nullptr;
+    }
 #ifdef _WIN32
-    return LoadLibraryA(path.c_str());
+    // 限制 DLL 搜尋路徑，防止 DLL 搜尋順序劫持 (DLL search-order hijacking)
+    return LoadLibraryExA(path.c_str(), nullptr, LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
 #elif __linux__
     return dlopen(path.c_str(), RTLD_LAZY);
 #elif __APPLE__

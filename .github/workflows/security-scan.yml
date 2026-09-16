@@ -3,25 +3,6 @@
 on:
   push:
     branches: [ main, develop ]
-    paths:
-      - 'Core/**'
-      - 'Rendering/**'
-      - 'Physics/**'
-      - 'Audio/**'
-      - 'Input/**'
-      - 'Resources/**'
-      - 'ECS/**'
-      - 'GameObject/**'
-      - 'Events/**'
-      - 'FileSystem/**'
-      - 'Logging/**'
-      - 'Math/**'
-      - 'Memory/**'
-      - 'Platform/**'
-      - 'Scene/**'
-      - 'Serialization/**'
-      - 'Time/**'
-      - '.github/workflows/security-scan.yml'
   pull_request:
     branches: [ main, develop ]
   schedule:
@@ -29,28 +10,89 @@ on:
   workflow_dispatch:
 
 jobs:
-  security-scan:
-    name: Security Scan
+  secret-scan:
+    name: Secret Scanning
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-    
+    timeout-minutes: 10
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    - name: Run Basic Security Check
+    - name: Scan for secrets and credentials
       run: |
-        echo "Running security scan..."
-        mkdir -p Reports/Security
-        echo "Security scan completed at $(date)" > Reports/Security/scan.log
-        echo "Scan complete"
-      continue-on-error: true
+        echo "Scanning for hardcoded secrets..."
+        PATTERN='(BEGIN [A-Z ]*PRIVATE KEY|api[_-]?key["'"'"' ]*[:=]["'"'"' ]*[A-Za-z0-9_\-]{16,}|secret["'"'"' ]*[:=]["'"'"' ]*[A-Za-z0-9_\-]{16,}|sk-[A-Za-z0-9]{20,}|ghp_[A-Za-z0-9]{20,}|xox[baprs]-[A-Za-z0-9\-]{10,}|AKIA[0-9A-Z]{16})'
+        # 排除：第三方依賴、文件中的範例、技能定義
+        if grep -rnEi --exclude-dir=.git --exclude-dir=external --exclude-dir=build --exclude-dir=skills "$PATTERN" . ; then
+          echo "::error::Potential secrets found in repository!"
+          exit 1
+        fi
+        echo "No secrets found."
 
-    - name: Upload scan results
+    - name: Scan for credential files
+      run: |
+        echo "Checking for credential files..."
+        if find . -path ./external -prune -o -type f \( -name "*.pem" -o -name "*.key" -o -name "*.p12" -o -name "id_rsa*" -o -name "id_ed25519*" -o -name ".env" \) -print | grep .; then
+          echo "::error::Credential files found in repository!"
+          exit 1
+        fi
+        echo "No credential files found."
+
+  unsafe-api-scan:
+    name: Unsafe API Scan (C/C++)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Scan for banned/unsafe functions
+      run: |
+        echo "Scanning C++ sources for unsafe functions..."
+        # 高危函式：必須為零
+        BANNED='(gets|strcpy|strcat|sprintf|vsprintf|scanf)\s*\('
+        if grep -rnE --include='*.cpp' --include='*.h' --exclude-dir=external --exclude-dir=build "$BANNED" . ; then
+          echo "::error::Banned unsafe functions found (gets/strcpy/strcat/sprintf/vsprintf/scanf)"
+          exit 1
+        fi
+        echo "No banned functions found."
+
+    - name: Scan for command execution
+      run: |
+        echo "Scanning for shell command execution..."
+        # system()/popen() 出現時警告（人工審查）
+        if grep -rnE --include='*.cpp' --include='*.h' --exclude-dir=external --exclude-dir=build '(system|popen|ShellExecute|WinExec)\s*\(' . ; then
+          echo "::warning::Command execution APIs found - manual review required"
+        fi
+
+    - name: Check submodule pinning
+      run: |
+        echo "Verifying submodules use pinned versions..."
+        if [ -f .gitmodules ]; then
+          git submodule status || true
+        fi
+
+  report:
+    name: Security Report
+    needs: [secret-scan, unsafe-api-scan]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+    - name: Generate report
+      run: |
+        mkdir -p Reports/Security
+        {
+          echo "# Security Scan Report"
+          echo "Date: $(date -u)"
+          echo "Commit: ${{ github.sha }}"
+          echo "secret-scan: ${{ needs.secret-scan.result }}"
+          echo "unsafe-api-scan: ${{ needs.unsafe-api-scan.result }}"
+        } > Reports/Security/scan.md
+        cat Reports/Security/scan.md
+
+    - name: Upload report
       uses: actions/upload-artifact@v4
-      if: always()
       with:
         name: security-scan-results
         path: Reports/Security/
-        retention-days: 7
-      continue-on-error: true
+        retention-days: 30

@@ -21,6 +21,31 @@ else()
     add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
+# ============================================================================
+# 安全強化旗標 (Security hardening)
+# 可用 -DPOTATO_SECURITY_HARDENING=OFF 關閉
+# ============================================================================
+option(POTATO_SECURITY_HARDENING "Enable security hardening flags" ON)
+if(POTATO_SECURITY_HARDENING)
+    if(MSVC)
+        # /sdl: SDL 安全檢查, /GS: 堆疊保護, /guard:cf: 控制流防護
+        add_compile_options(/sdl /GS /guard:cf)
+        # ASLR + DEP + 高位址熵 + CFG + CET 陰影堆疊
+        add_link_options(/DYNAMICBASE /NXCOMPAT /HIGHENTROPYVA /GUARD:CF /CETCOMPAT)
+    else()
+        # 堆疊保護 + PIE (位置無關執行檔，啟用 ASLR)
+        add_compile_options(-fstack-protector-strong -fstack-clash-protection -fPIE)
+        if(WIN32)
+            # MinGW: PE 格式加固
+            add_link_options(-pie -Wl,--dynamicbase -Wl,--nxcompat -Wl,--high-entropy-va)
+        else()
+            # Linux/macOS: ELF 加固
+            add_compile_definitions(_FORTIFY_SOURCE=2)
+            add_link_options(-pie -Wl,-z,relro,-z,now -Wl,-z,noexecstack)
+        endif()
+    endif()
+endif()
+
 # 查找依賴
 find_package(OpenGL REQUIRED)
 
@@ -77,12 +102,14 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/Time
     ${CMAKE_SOURCE_DIR}/AI
     ${CMAKE_SOURCE_DIR}/GUI
+    ${CMAKE_SOURCE_DIR}/Security
     ${OPENGL_INCLUDE_DIRS}
 )
 
 # Project files - Gradually enable subsystems
 file(GLOB_RECURSE ENGINE_SOURCES 
     "Core/*.cpp"
+    "Security/*.cpp"      # 安全模組 - 自包含，無引擎依賴
     # "Events/*.cpp"
     # "FileSystem/*.cpp"      # Temporarily disabled - implementation file has structural issues
     # "Logging/*.cpp"      # Temporarily disabled - depends on CoreTypes
@@ -141,6 +168,11 @@ target_link_libraries(PotatoEngine
     # glad
     ${CMAKE_DL_LIBS}
 )
+
+# Windows: psapi.lib（Security 模組的模組枚舉用；MSVC 由 #pragma comment 處理，MinGW 需顯式連結）
+if(WIN32 AND NOT MSVC)
+    target_link_libraries(PotatoEngine psapi)
+endif()
 
 target_compile_definitions(PotatoEngine PRIVATE POTATO_ENGINE_VERSION="${PROJECT_VERSION}")
 target_compile_definitions(PotatoEngine PRIVATE _USE_MATH_DEFINES)
@@ -259,7 +291,17 @@ target_include_directories(MingGoRTS_IDE_GUI PRIVATE
     ${CMAKE_SOURCE_DIR}/external/imgui
     ${CMAKE_SOURCE_DIR}/external/imgui/backends
 )
-target_link_libraries(MingGoRTS_IDE_GUI glfw ${OPENGL_LIBRARIES})
+target_link_libraries(MingGoRTS_IDE_GUI glfw ${OPENGL_LIBRARIES}
+    IntelligentDevelopmentSystem
+    IntelligentSuggestion
+    LLMIntegration
+    RAGSystem
+    AgentChain
+    ToolFramework
+    AIAgentSystem
+    NeuralNetwork
+    NaturalLanguageProcessing
+)
 
 # 數學測試程序
 add_executable(MathTest Examples/MathTest.cpp)
