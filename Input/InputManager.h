@@ -26,7 +26,11 @@ enum class KeyCode {
     NumPadMultiply, NumPadSubtract, NumPadAdd, NumPadEnter, NumPadEqual,
     LeftShift, LeftControl, LeftAlt, LeftSuper,
     RightShift, RightControl, RightAlt, RightSuper,
-    Menu
+    Menu,
+    // 後補按鍵（追加在末尾以保持既有枚舉值不變）
+    Escape, Enter, Tab, Backspace, Insert, Delete,
+    Right, Left, Down, Up, PageUp, PageDown, Home, End,
+    PrintScreen, Pause
 };
 
 /**
@@ -249,11 +253,22 @@ public:
     // GLFW 窗口句柄設置
     void SetWindowHandle(void* handle);
     
+    // 窗口銷毀通知（由 GLFWWindow::Shutdown 經共享 context 呼叫,防止懸垂 windowHandle）
+    void OnWindowDestroyed();
+    
+    // GLFW 共享回調分發（由 GLFWSharedContext 的統一回調呼叫）
+    void OnKeyEvent(int key, int scancode, int action, int mods);
+    void OnMouseButtonEvent(int button, int action, int mods);
+    void OnCursorPosEvent(double xpos, double ypos);
+    void OnScrollEvent(double xoffset, double yoffset);
+    void OnWindowSizeEvent(int width, int height);
+    
 private:
     void SetupGLFWCallbacks();
     void ProcessInput();
     
     KeyCode GLFWKeyToKeyCode(int glfwKey);
+    int KeyCodeToGLFWKey(KeyCode key) const;
     MouseButton GLFWMouseButtonToButton(int glfwButton);
     
 private:

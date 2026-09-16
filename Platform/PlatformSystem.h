@@ -6,6 +6,7 @@
 #include <mutex>
 #include <condition_variable>
 #include <chrono>
+#include <atomic>
 #include <vector>
 #include <unordered_map>
 #include <memory>
@@ -264,6 +265,10 @@ public:
     
     void RegisterCallback(WindowCallback callback) override;
     
+    // GLFW 共享回調分發（由 GLFWSharedContext 的統一回調呼叫）
+    void OnCloseEvent();
+    void OnResizeEvent(int width, int height);
+    
 private:
     void SetupGLFWCallbacks();
     
@@ -293,7 +298,7 @@ public:
 private:
     std::function<void()> task;
     std::thread thread;
-    bool running;
+    std::atomic<bool> running;
 };
 
 /**
@@ -394,9 +399,13 @@ public:
     PlatformInfo GetPlatformInfo();
     
     IWindow* CreateWindow(const WindowConfig& config);
+    void DestroyWindow(IWindow* window);
     IThread* CreateThread(std::function<void()> task);
+    void DestroyThread(IThread* thread);
     IMutex* CreateMutex();
+    void DestroyMutex(IMutex* mutex);
     IConditionVariable* CreateConditionVariable();
+    void DestroyConditionVariable(IConditionVariable* cv);
     
 private:
     PlatformManager();

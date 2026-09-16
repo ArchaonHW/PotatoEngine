@@ -1,4 +1,6 @@
 #include "PlatformSystem.h"
+#include "GLFWSharedContext.h"
+#include "Input/InputManager.h"
 #include <GLFW/glfw3.h>
 #include <algorithm>
 #include <filesystem>
@@ -90,7 +92,17 @@ void GLFWWindow::Shutdown() {
     }
     
     if (windowHandle) {
-        glfwDestroyWindow(static_cast<GLFWwindow*>(windowHandle));
+        GLFWwindow* window = static_cast<GLFWwindow*>(windowHandle);
+        // 先通知 input manager 窗口即將銷毀(清其 windowHandle),
+        // 再清 user pointer 與共享 context,最後銷毀窗口
+        if (GLFWSharedContext* ctx = FindGLFWContext(window)) {
+            if (ctx->inputOwner) {
+                ctx->inputOwner->OnWindowDestroyed();
+            }
+        }
+        glfwSetWindowUserPointer(window, nullptr);
+        ReleaseGLFWContext(window);
+        glfwDestroyWindow(window);
         windowHandle = nullptr;
     }
     
@@ -201,34 +213,32 @@ void GLFWWindow::RegisterCallback(WindowCallback callback) {
     callbacks.push_back(callback);
 }
 
+void GLFWWindow::OnCloseEvent() {
+    WindowEvent event;
+    event.type = WindowEventType::Close;
+    for (const auto& callback : callbacks) {
+        callback(event);
+    }
+}
+
+void GLFWWindow::OnResizeEvent(int width, int height) {
+    WindowEvent event;
+    event.type = WindowEventType::Resize;
+    event.data1 = width;
+    event.data2 = height;
+    for (const auto& callback : callbacks) {
+        callback(event);
+    }
+}
+
 void GLFWWindow::SetupGLFWCallbacks() {
     GLFWwindow* window = static_cast<GLFWwindow*>(windowHandle);
     
-    glfwSetWindowUserPointer(window, this);
-    
-    glfwSetWindowCloseCallback(window, [](GLFWwindow* win) {
-        GLFWWindow* glfwWindow = static_cast<GLFWWindow*>(glfwGetWindowUserPointer(win));
-        if (glfwWindow) {
-            WindowEvent event;
-            event.type = WindowEventType::Close;
-            for (const auto& callback : glfwWindow->callbacks) {
-                callback(event);
-            }
-        }
-    });
-    
-    glfwSetWindowSizeCallback(window, [](GLFWwindow* win, int width, int height) {
-        GLFWWindow* glfwWindow = static_cast<GLFWWindow*>(glfwGetWindowUserPointer(win));
-        if (glfwWindow) {
-            WindowEvent event;
-            event.type = WindowEventType::Resize;
-            event.data1 = width;
-            event.data2 = height;
-            for (const auto& callback : glfwWindow->callbacks) {
-                callback(event);
-            }
-        }
-    });
+    // 註冊到共享 context 並安裝統一 dispatch 回調：
+    // 與 GLFWInputManager 共用同一個 window user pointer，
+    // 且 glfwSetWindowSizeCallback 只能設一次，兩邊都需收到事件
+    GetOrCreateGLFWContext(window).windowOwner = this;
+    InstallGLFWDispatchCallbacks(window);
 }
 
 // ============================================================================
@@ -307,7 +317,9 @@ StandardConditionVariable::~StandardConditionVariable() {
 
 void StandardConditionVariable::Wait(IMutex& mutex) {
     StandardMutex* stdMutex = static_cast<StandardMutex*>(&mutex);
-    std::unique_lock<std::mutex> lock(stdMutex->mutex);
+    // adopt_lock：呼叫者依 cv 契約已持有 mutex；
+    // 用預設建構的 unique_lock 會對已鎖定的 mutex 再次 lock() 造成自我死結
+    std::unique_lock<std::mutex> lock(stdMutex->mutex, std::adopt_lock);
     cv.wait(lock);
 }
 
@@ -321,7 +333,7 @@ void StandardConditionVariable::NotifyAll() {
 
 bool StandardConditionVariable::WaitFor(IMutex& mutex, uint32 milliseconds) {
     StandardMutex* stdMutex = static_cast<StandardMutex*>(&mutex);
-    std::unique_lock<std::mutex> lock(stdMutex->mutex);
+    std::unique_lock<std::mutex> lock(stdMutex->mutex, std::adopt_lock);
     return cv.wait_for(lock, std::chrono::milliseconds(milliseconds)) == std::cv_status::no_timeout;
 }
 
@@ -649,11 +661,23 @@ IWindow* PlatformManager::CreateWindow(const WindowConfig& config) {
     return nullptr;
 }
 
+void PlatformManager::DestroyWindow(IWindow* window) {
+    if (platformManager) {
+        platformManager->DestroyWindow(window);
+    }
+}
+
 IThread* PlatformManager::CreateThread(std::function<void()> task) {
     if (platformManager) {
         return platformManager->CreateThread(task);
     }
     return nullptr;
+}
+
+void PlatformManager::DestroyThread(IThread* thread) {
+    if (platformManager) {
+        platformManager->DestroyThread(thread);
+    }
 }
 
 IMutex* PlatformManager::CreateMutex() {
@@ -663,11 +687,23 @@ IMutex* PlatformManager::CreateMutex() {
     return nullptr;
 }
 
+void PlatformManager::DestroyMutex(IMutex* mutex) {
+    if (platformManager) {
+        platformManager->DestroyMutex(mutex);
+    }
+}
+
 IConditionVariable* PlatformManager::CreateConditionVariable() {
     if (platformManager) {
         return platformManager->CreateConditionVariable();
     }
     return nullptr;
+}
+
+void PlatformManager::DestroyConditionVariable(IConditionVariable* cv) {
+    if (platformManager) {
+        platformManager->DestroyConditionVariable(cv);
+    }
 }
 
 // ============================================================================
