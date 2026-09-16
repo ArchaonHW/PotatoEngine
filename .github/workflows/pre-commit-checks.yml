@@ -16,11 +16,25 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    - name: Check C++ Syntax
+    - name: Check banned C functions
       run: |
-        echo "Checking C++ syntax..."
-        find . -name "*.cpp" -o -name "*.h" | head -20
-        echo "Syntax check passed"
+        echo "Scanning for banned unsafe functions..."
+        BANNED='(gets|strcpy|strcat|sprintf|vsprintf|scanf)\s*\('
+        if grep -rnE --include='*.cpp' --include='*.h' --exclude-dir=external --exclude-dir=build --exclude-dir=_bmad "$BANNED" . ; then
+          echo "::error::Banned unsafe functions found (gets/strcpy/strcat/sprintf/vsprintf/scanf)"
+          exit 1
+        fi
+        echo "No banned functions found."
+
+    - name: Check for hardcoded secrets
+      run: |
+        echo "Scanning for hardcoded secrets..."
+        PATTERN='(BEGIN [A-Z ]*PRIVATE KEY|sk-[A-Za-z0-9]{20,}|ghp_[A-Za-z0-9]{20,}|xox[baprs]-[A-Za-z0-9\-]{10,}|AKIA[0-9A-Z]{16})'
+        if grep -rnE --exclude-dir=.git --exclude-dir=external --exclude-dir=build --exclude-dir=_bmad --exclude-dir=.agents "$PATTERN" . ; then
+          echo "::error::Potential secrets found!"
+          exit 1
+        fi
+        echo "No secrets found."
         
   build-check:
     name: Build Check
