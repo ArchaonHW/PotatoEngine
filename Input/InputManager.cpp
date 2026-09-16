@@ -115,19 +115,23 @@ void GLFWInputManager::Update() {
 }
 
 bool GLFWInputManager::IsKeyPressed(KeyCode key) const {
-    if (!windowHandle) return false;
-    
     int glfwKey = KeyCodeToGLFWKey(key);
     if (glfwKey < 0) return false;
-    return glfwGetKey(static_cast<GLFWwindow*>(windowHandle), glfwKey) == GLFW_PRESS;
+    // 有窗口時直接問 GLFW（權威來源）；無窗口（測試/headless）時
+    // 退回 OnKeyEvent 維護的 keyStates,讓狀態查詢在無顯示環境也可用
+    if (windowHandle) {
+        return glfwGetKey(static_cast<GLFWwindow*>(windowHandle), glfwKey) == GLFW_PRESS;
+    }
+    return (glfwKey < 512) ? keyStates[glfwKey] : false;
 }
 
 bool GLFWInputManager::IsKeyReleased(KeyCode key) const {
-    if (!windowHandle) return false;
-    
     int glfwKey = KeyCodeToGLFWKey(key);
     if (glfwKey < 0) return false;
-    return glfwGetKey(static_cast<GLFWwindow*>(windowHandle), glfwKey) == GLFW_RELEASE;
+    if (windowHandle) {
+        return glfwGetKey(static_cast<GLFWwindow*>(windowHandle), glfwKey) == GLFW_RELEASE;
+    }
+    return (glfwKey < 512) ? !keyStates[glfwKey] : true;
 }
 
 Vector2 GLFWInputManager::GetMousePosition() const {
@@ -139,10 +143,13 @@ Vector2 GLFWInputManager::GetMousePosition() const {
 }
 
 bool GLFWInputManager::IsMouseButtonPressed(MouseButton button) const {
-    if (!windowHandle) return false;
-    
     int glfwButton = static_cast<int>(button);
-    return glfwGetMouseButton(static_cast<GLFWwindow*>(windowHandle), glfwButton) == GLFW_PRESS;
+    if (glfwButton < 0) return false;
+    // 同 IsKeyPressed：無窗口時退回 OnMouseButtonEvent 維護的狀態
+    if (windowHandle) {
+        return glfwGetMouseButton(static_cast<GLFWwindow*>(windowHandle), glfwButton) == GLFW_PRESS;
+    }
+    return (glfwButton < 8) ? mouseButtonStates[glfwButton] : false;
 }
 
 bool GLFWInputManager::IsGamepadConnected(int gamepadID) const {
@@ -327,9 +334,13 @@ void GLFWInputManager::ProcessInput() {
 }
 
 KeyCode GLFWInputManager::GLFWKeyToKeyCode(int glfwKey) {
-    // 簡化映射
     switch (glfwKey) {
         case GLFW_KEY_SPACE: return KeyCode::Space;
+        case GLFW_KEY_APOSTROPHE: return KeyCode::Apostrophe;
+        case GLFW_KEY_COMMA: return KeyCode::Comma;
+        case GLFW_KEY_MINUS: return KeyCode::Minus;
+        case GLFW_KEY_PERIOD: return KeyCode::Period;
+        case GLFW_KEY_SLASH: return KeyCode::Slash;
         case GLFW_KEY_A: return KeyCode::A;
         case GLFW_KEY_B: return KeyCode::B;
         case GLFW_KEY_C: return KeyCode::C;
@@ -366,6 +377,14 @@ KeyCode GLFWInputManager::GLFWKeyToKeyCode(int glfwKey) {
         case GLFW_KEY_7: return KeyCode::_7;
         case GLFW_KEY_8: return KeyCode::_8;
         case GLFW_KEY_9: return KeyCode::_9;
+        case GLFW_KEY_SEMICOLON: return KeyCode::Semicolon;
+        case GLFW_KEY_EQUAL: return KeyCode::Equal;
+        case GLFW_KEY_LEFT_BRACKET: return KeyCode::LeftBracket;
+        case GLFW_KEY_BACKSLASH: return KeyCode::Backslash;
+        case GLFW_KEY_RIGHT_BRACKET: return KeyCode::RightBracket;
+        case GLFW_KEY_GRAVE_ACCENT: return KeyCode::GraveAccent;
+        case GLFW_KEY_WORLD_1: return KeyCode::World1;
+        case GLFW_KEY_WORLD_2: return KeyCode::World2;
         case GLFW_KEY_ESCAPE: return KeyCode::Escape;
         case GLFW_KEY_ENTER: return KeyCode::Enter;
         case GLFW_KEY_TAB: return KeyCode::Tab;
@@ -397,6 +416,36 @@ KeyCode GLFWInputManager::GLFWKeyToKeyCode(int glfwKey) {
         case GLFW_KEY_F10: return KeyCode::F10;
         case GLFW_KEY_F11: return KeyCode::F11;
         case GLFW_KEY_F12: return KeyCode::F12;
+        case GLFW_KEY_F13: return KeyCode::F13;
+        case GLFW_KEY_F14: return KeyCode::F14;
+        case GLFW_KEY_F15: return KeyCode::F15;
+        case GLFW_KEY_F16: return KeyCode::F16;
+        case GLFW_KEY_F17: return KeyCode::F17;
+        case GLFW_KEY_F18: return KeyCode::F18;
+        case GLFW_KEY_F19: return KeyCode::F19;
+        case GLFW_KEY_F20: return KeyCode::F20;
+        case GLFW_KEY_F21: return KeyCode::F21;
+        case GLFW_KEY_F22: return KeyCode::F22;
+        case GLFW_KEY_F23: return KeyCode::F23;
+        case GLFW_KEY_F24: return KeyCode::F24;
+        case GLFW_KEY_F25: return KeyCode::F25;
+        case GLFW_KEY_KP_0: return KeyCode::NumPad0;
+        case GLFW_KEY_KP_1: return KeyCode::NumPad1;
+        case GLFW_KEY_KP_2: return KeyCode::NumPad2;
+        case GLFW_KEY_KP_3: return KeyCode::NumPad3;
+        case GLFW_KEY_KP_4: return KeyCode::NumPad4;
+        case GLFW_KEY_KP_5: return KeyCode::NumPad5;
+        case GLFW_KEY_KP_6: return KeyCode::NumPad6;
+        case GLFW_KEY_KP_7: return KeyCode::NumPad7;
+        case GLFW_KEY_KP_8: return KeyCode::NumPad8;
+        case GLFW_KEY_KP_9: return KeyCode::NumPad9;
+        case GLFW_KEY_KP_DECIMAL: return KeyCode::NumPadDecimal;
+        case GLFW_KEY_KP_DIVIDE: return KeyCode::NumPadDivide;
+        case GLFW_KEY_KP_MULTIPLY: return KeyCode::NumPadMultiply;
+        case GLFW_KEY_KP_SUBTRACT: return KeyCode::NumPadSubtract;
+        case GLFW_KEY_KP_ADD: return KeyCode::NumPadAdd;
+        case GLFW_KEY_KP_ENTER: return KeyCode::NumPadEnter;
+        case GLFW_KEY_KP_EQUAL: return KeyCode::NumPadEqual;
         case GLFW_KEY_LEFT_SHIFT: return KeyCode::LeftShift;
         case GLFW_KEY_LEFT_CONTROL: return KeyCode::LeftControl;
         case GLFW_KEY_LEFT_ALT: return KeyCode::LeftAlt;
@@ -461,6 +510,9 @@ int GLFWInputManager::KeyCodeToGLFWKey(KeyCode key) const {
         case KeyCode::Backslash: return GLFW_KEY_BACKSLASH;
         case KeyCode::RightBracket: return GLFW_KEY_RIGHT_BRACKET;
         case KeyCode::GraveAccent: return GLFW_KEY_GRAVE_ACCENT;
+        case KeyCode::World1: return GLFW_KEY_WORLD_1;
+        case KeyCode::World2: return GLFW_KEY_WORLD_2;
+        // World3-World12 無對應 GLFW 鍵碼 → 落到 default 回 -1
         case KeyCode::F1: return GLFW_KEY_F1;
         case KeyCode::F2: return GLFW_KEY_F2;
         case KeyCode::F3: return GLFW_KEY_F3;
