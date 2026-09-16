@@ -149,4 +149,20 @@ RefPtr<T> MakeRef(Args&&... args) {
     return RefPtr<T>(new T(std::forward<Args>(args)...));
 }
 
+/**
+ * UniquePtr 工廠函數
+ */
+template<typename T, typename... Args>
+UniquePtr<T> MakeUnique(Args&&... args) {
+    return std::make_unique<T>(std::forward<Args>(args)...);
+}
+
+/**
+ * SharedPtr 工廠函數
+ */
+template<typename T, typename... Args>
+SharedPtr<T> MakeShared(Args&&... args) {
+    return std::make_shared<T>(std::forward<Args>(args)...);
+}
+
 } // namespace Potato

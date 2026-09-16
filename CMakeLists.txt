@@ -16,7 +16,7 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 
 # 編譯選項
 if(MSVC)
-    add_compile_options(/W4)
+    add_compile_options(/W4 /utf-8)
 else()
     add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
@@ -171,7 +171,7 @@ target_link_libraries(PotatoEngine
 
 # Windows: psapi.lib（Security 模組的模組枚舉用；MSVC 由 #pragma comment 處理，MinGW 需顯式連結）
 if(WIN32 AND NOT MSVC)
-    target_link_libraries(PotatoEngine psapi)
+    target_link_libraries(PotatoEngine psapi wintrust)
 endif()
 
 target_compile_definitions(PotatoEngine PRIVATE POTATO_ENGINE_VERSION="${PROJECT_VERSION}")
@@ -307,6 +307,15 @@ target_link_libraries(MingGoRTS_IDE_GUI glfw ${OPENGL_LIBRARIES}
 add_executable(MathTest Examples/MathTest.cpp)
 target_include_directories(MathTest PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(MathTest)
+
+# 安全模組紅隊測試（對抗性驗證 Security/ 的偵測能力）
+add_executable(SecurityRedTeamTest Examples/SecurityRedTeamTest.cpp)
+target_include_directories(SecurityRedTeamTest PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(SecurityRedTeamTest PotatoEngine)
+
+# 紅隊測試用的無害 DLL（模擬被注入的作弊模組）
+add_library(FakeCheatModule SHARED Examples/FakeCheatModule.cpp)
+set_target_properties(FakeCheatModule PROPERTIES OUTPUT_NAME "FakeCheat" PREFIX "")
 
 # 測試程序 (暫時禁用 - 依賴 PotatoEngine)
 # add_executable(FileSystemTest Examples/FileSystemTest.cpp)

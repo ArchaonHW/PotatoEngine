@@ -19,6 +19,7 @@
 #include <atomic>
 #include <thread>
 #include <mutex>
+#include <unordered_map>
 
 namespace Potato {
 namespace Security {
@@ -32,7 +33,10 @@ enum class ViolationType {
     TimingAnomaly,          // 計時異常（可能被單步執行或 patch）
     UntrustedModule,        // 載入了未授權的 DLL/共享庫（注入）
     IntegrityMismatch,      // 檔案完整性校驗失敗（被竄改）
-    MemoryTampered          // 受保護記憶體區域被竄改
+    MemoryTampered,         // 受保護記憶體區域被竄改
+    HardwareBreakpoint,     // 偵測到 DR0-DR7 硬體中斷點
+    InjectedThread,         // 偵測到起始位址不在任何模組內的執行緒
+    CodeTampered            // 自身 .text 程式碼區段被修改（inline patch/hook）
 };
 
 // 違規報告
@@ -43,6 +47,14 @@ struct SecurityReport {
 
 // 違規事件回呼
 using ViolationCallback = std::function<void(const SecurityReport&)>;
+
+// 模組掃描結果（含不受信任原因，供診斷用）
+struct ModuleScanResult {
+    std::string name;    // 模組檔名（小寫）
+    std::string path;    // 模組完整路徑
+    bool trusted = false;
+    std::string reason;  // trusted == false 時的原因
+};
 
 // ============================================================================
 // 密碼學與校驗工具
@@ -78,12 +90,26 @@ public:
     // ---- 反除錯 ----
     // 偵測是否有除錯器附加（IsDebuggerPresent / CheckRemoteDebuggerPresent / TracerPid）
     bool CheckDebugger();
+    // 延伸反除錯（Windows）：ProcessDebugPort / DebugObject / DebugFlags / PEB 旗標
+    bool CheckDebuggerExtended();
     // 計時異常偵測：執行一段已知耗時極短的程式碼，若耗時異常表示可能被單步執行
     bool CheckTimingAnomaly();
+    // 硬體中斷點偵測：掃描全部執行緒的 DR0-DR3/DR7 除錯暫存器
+    bool CheckHardwareBreakpoints();
+    // 注入執行緒偵測：執行緒起始位址不在任何已載入模組內（CreateRemoteThread/shellcode）
+    bool CheckInjectedThreads();
 
     // ---- DLL 注入偵測 ----
-    // 將模組名稱加入信任清單（例如 "kernel32.dll"）
+    // 將模組名稱加入信任清單（例如 "myplugin.dll"）。
+    // 信任條件：檔名相符 + 模組位於受信任目錄（exe 目錄 / 系統目錄 / AddTrustedDirectory 指定的目錄）。
     void AddTrustedModule(const std::string& moduleName);
+    // 對信任模組釘選 SHA-256（建議用於隨遊戲散佈、未簽章的自家 DLL）。
+    // 釘選後模組除名稱與路徑外，檔案內容雜湊也必須相符，可阻擋冒名替換。
+    void AddTrustedModuleHash(const std::string& moduleName, const std::string& sha256Hex);
+    // 加入額外的受信任模組目錄（例如外掛目錄）。系統目錄與 exe 目錄預設已信任。
+    void AddTrustedDirectory(const std::string& dirPath);
+    // 掃描目前已載入的模組，回傳每個模組的信任判定與原因
+    std::vector<ModuleScanResult> ScanModules();
     // 掃描目前已載入的模組，回傳不在信任清單中的模組名稱
     std::vector<std::string> FindUntrustedModules();
     // 檢查是否有未授權模組；發現時觸發回呼
@@ -92,11 +118,27 @@ public:
     // ---- 完整性校驗 ----
     // 驗證檔案 SHA-256 是否符合預期值
     bool VerifyFileIntegrity(const std::string& filePath, const std::string& expectedSha256Hex);
-    // 為記憶體區域建立完整性快照，回傳快照 ID（之後用 VerifyRegion 驗證）
+    // 為記憶體區域建立完整性快照（keyed HMAC-SHA256），回傳快照 ID。
+    // 受保護位址會被記錄，監控執行緒會定期自動驗證（VerifyAllGuards）。
+    // 注意：data 指標在 UnguardRegion 前必須保持有效。
     uint32_t GuardRegion(const void* data, size_t size);
     // 驗證受保護區域是否仍完整
     bool VerifyRegion(uint32_t guardId, const void* data, size_t size);
+    // 重新驗證所有受保護區域（使用 GuardRegion 記錄的位址）；有任一被竄改回傳 false
+    bool VerifyAllGuards();
     void UnguardRegion(uint32_t guardId);
+
+    // ---- 自身程式碼完整性 ----
+    // 對本模組的 .text 區段建立 HMAC 快照（偵測 inline patch / hook）
+    bool GuardOwnCode();
+    // 驗證 .text 是否仍與快照相符
+    bool VerifyOwnCode();
+
+    // ---- 即時載入通知（消除輪詢空窗）----
+    // 註冊 LdrRegisterDllNotification：DLL 載入當下即由背景執行緒驗證，
+    // 不再依賴掃描間隔。回傳 false 表示系統不支援。
+    bool EnableImageLoadNotify();
+    void DisableImageLoadNotify();
 
     // ---- 定期監控 ----
     // 啟動背景監控執行緒，每 intervalMs 毫秒執行一次全部檢查
@@ -116,20 +158,79 @@ private:
     void ReportViolation(ViolationType type, const std::string& details);
     void MonitorLoop(uint32_t intervalMs);
 
+#ifdef _WIN32
+    // 判定單一已載入模組是否受信任；reason 輸出不受信任的原因
+    bool IsTrustedModuleWin(const std::wstring& fullPath, std::string& reason);
+    // Authenticode 簽章驗證（WinVerifyTrust，結果按路徑快取）
+    bool VerifyModuleSignature(const std::wstring& fullPath);
+    static std::wstring NormalizeDirW(std::wstring dir);
+#endif
+    // 檢查目錄是否在受信任目錄清單內（含子目錄前綴比對）
+    bool IsTrustedDir(const std::string& dirLower) const;
+    bool IsSystemDir(const std::string& dirLower) const;
+
     std::atomic<bool> initialized{false};
     std::atomic<bool> monitoring{false};
     std::thread monitorThread;
     ViolationCallback violationCallback;
     std::mutex callbackMutex;
 
-    // 信任模組清單（小寫模組名）
+    // 系統模組清單（小寫檔名）：必須位於系統目錄且通過 Authenticode 簽章驗證
+    std::vector<std::string> systemModules;
+    // 一般信任模組清單（小寫檔名）：必須位於受信任目錄
     std::vector<std::string> trustedModules;
+    // 模組 SHA-256 釘選：小寫檔名 -> 預期雜湊
+    std::unordered_map<std::string, std::string> moduleHashes;
     mutable std::mutex trustedMutex;
 
-    // 受保護記憶體區域：guardId -> CRC32
-    std::vector<std::pair<uint32_t, uint32_t>> guardedRegions;
+    // 受信任模組目錄（正規化：小寫、反斜線、無尾分隔符）
+    std::vector<std::string> trustedDirs;
+    // 系統目錄（system32 / syswow64 或 /lib /usr/lib 等）
+    std::vector<std::string> systemDirs;
+
+#ifdef _WIN32
+    // 簽章 / 雜湊驗證結果快取（小寫完整路徑 -> 通過與否），避免每次掃描重複驗證
+    std::unordered_map<std::wstring, bool> sigVerifyCache;
+    std::unordered_map<std::wstring, bool> hashVerifyCache;
+    std::mutex verifyMutex;
+#endif
+
+    // ---- 記憶體防護（keyed HMAC-SHA256，攻擊者無法重算校驗值）----
+    struct GuardRecord {
+        uint32_t id;
+        const void* ptr;         // 受保護位址（供 VerifyAllGuards 定期驗證）
+        size_t size;
+        uint8_t mac[32];
+    };
+    std::vector<GuardRecord> guardedRegions;
     std::mutex guardMutex;
     uint32_t nextGuardId = 1;
+    uint8_t macKey[32] = {};      // 隨機金鑰，Initialize 時產生
+
+    // ---- 自身程式碼完整性 ----
+    bool ownCodeArmed = false;
+    const void* ownCodeBase = nullptr;
+    size_t ownCodeSize = 0;
+    uint8_t ownCodeMac[32] = {};
+
+#ifdef _WIN32
+    // ---- 即時載入通知 ----
+    // loader-lock 安全的無鎖 ring：callback 只複製路徑 + SetEvent
+    static constexpr int kNotifyRingSize = 64;
+    struct NotifySlot { std::atomic<long> ready{0}; wchar_t path[260]; };
+    NotifySlot notifyRing[kNotifyRingSize];
+    std::atomic<long> notifyWrite{0};
+    long notifyRead = 0;
+    void* notifyWakeEvent = nullptr;   // HANDLE
+    void* ldrCookie = nullptr;          // LdrRegisterDllNotification cookie
+    std::thread notifyWorker;
+    std::atomic<bool> notifyRun{false};
+    std::atomic<uint64_t> notifyDropped{0};
+
+    static void CALLBACK LdrNotifyThunk(unsigned long reason, const void* data, void* ctx);
+    void NotifyWorkerLoop();
+    void OnImageLoad(const wchar_t* path);
+#endif
 };
 
 // 取得違規類型的可讀字串（用於 log）

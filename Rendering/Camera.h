@@ -5,6 +5,8 @@
 #include "MathUtils/Vector2.h"
 #include "MathUtils/Matrix4.h"
 #include "MathUtils/Quaternion.h"
+#include <string>
+#include <unordered_map>
 
 namespace Potato {
 

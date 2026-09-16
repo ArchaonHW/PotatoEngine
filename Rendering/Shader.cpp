@@ -446,7 +446,7 @@ void AdvancedShader::SetMat3(const std::string& name, const float* matrix) {
 }
 
 void AdvancedShader::SetMat4(const std::string& name, const Matrix4& matrix) {
-    glUniformMatrix4fv(uniformCache.GetUniformLocation(name), 1, GL_FALSE, matrix.data);
+    glUniformMatrix4fv(uniformCache.GetUniformLocation(name), 1, GL_FALSE, matrix.m);
 }
 
 void AdvancedShader::SetIntArray(const std::string& name, const int* values, int count) {

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Core/CoreTypes.h"
+#include "MathUtils/Vector2.h"
 #include "MathUtils/Vector3.h"
 #include "MathUtils/Matrix4.h"
 #include <string>

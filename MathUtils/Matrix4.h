@@ -47,6 +47,10 @@ public:
         return result;
     }
 
+    static Matrix4 Translation(const Vector3& v) {
+        return Translation(v.x, v.y, v.z);
+    }
+
     static Matrix4 RotationX(float angle) {
         Matrix4 result = Identity();
         float c = Cos(angle);
@@ -88,6 +92,10 @@ public:
         return result;
     }
 
+    static Matrix4 Scale(const Vector3& v) {
+        return Scale(v.x, v.y, v.z);
+    }
+
     static Matrix4 Perspective(float fov, float aspect, float near, float far) {
         Matrix4 result;
         float tanHalfFov = Tan(fov * 0.5f);
@@ -99,6 +107,17 @@ public:
         result.m[14] = -(2.0f * far * near) / (far - near);
         result.m[15] = 0.0f;
         
+        return result;
+    }
+
+    static Matrix4 Orthographic(float left, float right, float bottom, float top, float near, float far) {
+        Matrix4 result;
+        result.m[0] = 2.0f / (right - left);
+        result.m[5] = 2.0f / (top - bottom);
+        result.m[10] = -2.0f / (far - near);
+        result.m[12] = -(right + left) / (right - left);
+        result.m[13] = -(top + bottom) / (top - bottom);
+        result.m[14] = -(far + near) / (far - near);
         return result;
     }
 

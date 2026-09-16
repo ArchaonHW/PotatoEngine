@@ -180,6 +180,8 @@ public:
         return axis * angle;
     }
 
+    Matrix4 ToMatrix() const { return ToMatrix4(); }
+
     Matrix4 ToMatrix4() const {
         Matrix4 result;
         

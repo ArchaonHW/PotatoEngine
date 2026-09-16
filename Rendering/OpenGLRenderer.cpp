@@ -350,7 +350,7 @@ void Shader::SetUniformVec3(const std::string& name, const Vector3& value) {
 }
 
 void Shader::SetUniformMat4(const std::string& name, const Matrix4& matrix) {
-    glUniformMatrix4fv(glGetUniformLocation(programID, name.c_str()), 1, GL_FALSE, matrix.data);
+    glUniformMatrix4fv(glGetUniformLocation(programID, name.c_str()), 1, GL_FALSE, matrix.m);
 }
 
 bool Shader::CompileShader(uint32 type, const std::string& source, uint32& shaderID) {
@@ -456,6 +456,14 @@ Mesh::~Mesh() {
 void Mesh::SetVertices(const std::vector<Vertex>& verts) {
     vertices = verts;
     vertexArray.AddVertexBuffer(vertices.data(), vertices.size() * sizeof(Vertex), GL_STATIC_DRAW);
+
+    // Vertex 標準屬性佈局: position(3), normal(3), texCoord(2), tangent(3), bitangent(3)
+    const size_t stride = sizeof(Vertex);
+    vertexArray.SetVertexAttribute(0, 3, stride, offsetof(Vertex, position));
+    vertexArray.SetVertexAttribute(1, 3, stride, offsetof(Vertex, normal));
+    vertexArray.SetVertexAttribute(2, 2, stride, offsetof(Vertex, texCoord));
+    vertexArray.SetVertexAttribute(3, 3, stride, offsetof(Vertex, tangent));
+    vertexArray.SetVertexAttribute(4, 3, stride, offsetof(Vertex, bitangent));
 }
 
 void Mesh::SetIndices(const std::vector<uint32>& inds) {

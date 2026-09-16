@@ -31,11 +31,17 @@
 
 - **反除錯**：`CheckDebugger()`（IsDebuggerPresent / CheckRemoteDebuggerPresent / Linux TracerPid / macOS P_TRACED）
 - **計時異常偵測**：`CheckTimingAnomaly()` 偵測單步執行
-- **DLL 注入偵測**：`CheckLoadedModules()` 比對已載入模組白名單
+- **DLL 注入偵測**：`ScanModules()` / `CheckLoadedModules()` — 三重判定：
+  - 系統 DLL（`kernel32` 等）：必須位於系統目錄 **且** 通過 Authenticode 簽章驗證（WinVerifyTrust）
+  - 信任 DLL（`AddTrustedModule`）：必須位於受信任目錄（exe 目錄 / `AddTrustedDirectory`）
+  - 雜湊釘選（`AddTrustedModuleHash`）：額外比對檔案 SHA-256，可阻擋同路徑替換
 - **檔案完整性**：`VerifyFileIntegrity()`（SHA-256）驗證資源/執行檔未被竄改
 - **記憶體防竄改**：`GuardRegion()` / `VerifyRegion()`（CRC32 快照）
 - **背景監控**：`StartMonitoring()` 定期執行全部檢查
 - **敏感資料清除**：`SecureZeroMemory()` 防止編譯器最佳化移除清除操作
+
+對抗性驗證：`Examples/SecurityRedTeamTest.cpp` + `FakeCheatModule.cpp` 為紅隊測試
+（模擬注入、冒名 DLL、記憶體竄改、雜湊釘選繞過），目前 17 PASS / 0 BYPASS。
 
 使用範例：
 

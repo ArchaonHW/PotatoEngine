@@ -4,13 +4,18 @@
 #include <cstring>
 #include <cstdlib>
 #include <cctype>
+#include <cwctype>
 #include <fstream>
 #include <algorithm>
+#include <filesystem>
 
 #ifdef _WIN32
     #include <windows.h>
     #include <psapi.h>
+    #include <wintrust.h>
+    #include <softpub.h>
     #pragma comment(lib, "psapi.lib")
+    #pragma comment(lib, "wintrust.lib")
 #elif defined(__linux__)
     #include <fstream>
 #elif defined(__APPLE__)
@@ -119,6 +124,39 @@ void Sha256Final(Sha256Ctx& ctx, uint8_t out[32]) {
     }
 }
 
+// 字串轉小寫（修正 tolower 的 int->char 轉換警告）
+inline std::string ToLower(std::string s) {
+    std::transform(s.begin(), s.end(), s.begin(),
+        [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return s;
+}
+
+#ifdef _WIN32
+// 寬字串轉小寫
+inline std::wstring ToLowerW(std::wstring s) {
+    std::transform(s.begin(), s.end(), s.begin(),
+        [](wchar_t c) { return static_cast<wchar_t>(::towlower(c)); });
+    return s;
+}
+
+// UTF-8 <-> UTF-16 轉換
+inline std::wstring Utf8ToWide(const std::string& s) {
+    if (s.empty()) return {};
+    int len = ::MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
+    std::wstring w(len - 1, L'\0');
+    ::MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, w.data(), len);
+    return w;
+}
+
+inline std::string WideToUtf8(const std::wstring& w) {
+    if (w.empty()) return {};
+    int len = ::WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, nullptr, 0, nullptr, nullptr);
+    std::string s(len - 1, '\0');
+    ::WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, s.data(), len, nullptr, nullptr);
+    return s;
+}
+#endif
+
 } // anonymous namespace
 
 std::string ComputeSHA256(const void* data, size_t size) {
@@ -138,11 +176,9 @@ std::string ComputeSHA256(const void* data, size_t size) {
     return result;
 }
 
-std::string ComputeFileSHA256(const std::string& filePath) {
-    std::ifstream file(filePath, std::ios::binary);
-    if (!file.is_open()) {
-        return "";
-    }
+namespace {
+
+std::string HashStreamToHex(std::istream& file) {
     Sha256Ctx ctx;
     Sha256Init(ctx);
     char buf[8192];
@@ -161,6 +197,30 @@ std::string ComputeFileSHA256(const std::string& filePath) {
         result += hexChars[hash[i] & 0x0f];
     }
     return result;
+}
+
+#ifdef _WIN32
+// 寬路徑版本（fs::path 可正確處理非 ASCII 檔名）
+std::string ComputeFileSHA256W(const std::wstring& filePath) {
+    std::ifstream file(std::filesystem::path(filePath), std::ios::binary);
+    if (!file.is_open()) return "";
+    return HashStreamToHex(file);
+}
+#endif
+
+} // anonymous namespace
+
+std::string ComputeFileSHA256(const std::string& filePath) {
+#ifdef _WIN32
+    // UTF-8 -> UTF-16，正確處理非 ASCII 路徑（u8path 在 C++20 已棄用）
+    std::ifstream file(std::filesystem::path(Utf8ToWide(filePath)), std::ios::binary);
+#else
+    std::ifstream file(filePath, std::ios::binary);
+#endif
+    if (!file.is_open()) {
+        return "";
+    }
+    return HashStreamToHex(file);
 }
 
 // ============================================================================
@@ -220,15 +280,20 @@ bool SecurityManager::Initialize() {
     }
 
 #ifdef _WIN32
-    // Windows 預設信任模組（系統 DLL 白名單）
-    const char* defaultTrusted[] = {
+    // Windows 系統 DLL 白名單：除了檔名相符，還必須位於系統目錄
+    // 且通過 Authenticode 簽章驗證（防止冒名繞過）
+    const char* defaultSystem[] = {
         "kernel32.dll", "ntdll.dll", "user32.dll", "gdi32.dll",
         "advapi32.dll", "msvcrt.dll", "ole32.dll", "shell32.dll",
         "ws2_32.dll", "winmm.dll", "opengl32.dll", "glu32.dll",
         "imm32.dll", "version.dll", "shlwapi.dll", "comdlg32.dll",
         "comctl32.dll", "dwmapi.dll", "uxtheme.dll", "kernel.appcore.dll",
-        "msvcp140.dll", "msvcp140_1.dll", "msvcp140_2.dll",
-        "vcruntime140.dll", "vcruntime140_1.dll", "ucrtbase.dll",
+        "kernelbase.dll", "msvcp_win.dll", "gdi32full.dll", "win32u.dll",
+        "oleaut32.dll", "apphelp.dll", "ntmarta.dll", "cryptbase.dll",
+        "cryptsp.dll", "rsaenh.dll", "userenv.dll", "wintypes.dll",
+        "msctf.dll", "textinputframework.dll", "coremessaging.dll",
+        "twinapi.appcore.dll", "dxcore.dll", "d3d12.dll",
+        "wow64.dll", "wow64win.dll", "wow64cpu.dll",
         "bcryptprimitives.dll", "crypt32.dll", "bcrypt.dll",
         "sechost.dll", "rpcrt4.dll", "setupapi.dll", "cfgmgr32.dll",
         "wintrust.dll", "msasn1.dll", "shcore.dll", "combase.dll",
@@ -238,12 +303,50 @@ bool SecurityManager::Initialize() {
         "winrnr.dll", "wshbth.dll", "rasadhlp.dll", "fwpuclnt.dll",
         "wininet.dll", "urlmon.dll", "iertutil.dll", "sspicli.dll",
         "psapi.dll", "dbghelp.dll", "dxgi.dll", "d3d11.dll",
-        "d3dcompiler_47.dll", "xinput1_4.dll", "xinput9_1_0.dll",
-        "dsound.dll", "xaudio2_9.dll", "avrt.dll", "devobj.dll"
+        "xinput1_4.dll", "xinput9_1_0.dll", "dsound.dll",
+        "xaudio2_9.dll", "avrt.dll", "devobj.dll", "clbcatq.dll",
+        "imagehlp.dll", "wlanapi.dll", "mfplat.dll",
+        "cryptnet.dll", "cabinet.dll", "mssign32.dll", "wshext.dll",
+        "gpapi.dll", "fltlib.dll", "dhcpcsvc.dll", "dhcpcsvc6.dll"
     };
-    for (const char* name : defaultTrusted) {
+    for (const char* name : defaultSystem) {
+        systemModules.push_back(name);
+    }
+
+    // 執行階段 / 可轉散發 DLL：常見於 app-local 部署（遊戲目錄），
+    // 因此僅要求「名稱 + 受信任目錄」，可用 AddTrustedModuleHash 釘選強化
+    const char* defaultRuntime[] = {
+        "msvcp140.dll", "msvcp140_1.dll", "msvcp140_2.dll",
+        "vcruntime140.dll", "vcruntime140_1.dll", "ucrtbase.dll",
+        "concrt140.dll", "vccorlib140.dll", "d3dcompiler_47.dll"
+    };
+    for (const char* name : defaultRuntime) {
         trustedModules.push_back(name);
     }
+
+    // 預設受信任目錄：System32、SysWOW64、exe 所在目錄
+    wchar_t buf[MAX_PATH];
+    if (::GetSystemDirectoryW(buf, MAX_PATH)) {
+        systemDirs.push_back(WideToUtf8(NormalizeDirW(buf)));
+    }
+    if (::GetWindowsDirectoryW(buf, MAX_PATH)) {
+        systemDirs.push_back(WideToUtf8(NormalizeDirW(
+            std::wstring(buf) + L"\\SysWOW64")));
+    }
+    for (const auto& d : systemDirs) {
+        trustedDirs.push_back(d);
+    }
+    if (::GetModuleFileNameW(nullptr, buf, MAX_PATH)) {
+        std::wstring exeDir = NormalizeDirW(buf);
+        size_t sep = exeDir.find_last_of(L'\\');
+        if (sep != std::wstring::npos) {
+            trustedDirs.push_back(WideToUtf8(exeDir.substr(0, sep)));
+        }
+    }
+#elif defined(__linux__)
+    // Linux：系統庫目錄
+    systemDirs = { "/lib", "/lib64", "/usr/lib", "/usr/lib64", "/usr/local/lib" };
+    trustedDirs = systemDirs;
 #endif
     return true;
 }
@@ -342,72 +445,272 @@ bool SecurityManager::CheckTimingAnomaly() {
 
 void SecurityManager::AddTrustedModule(const std::string& moduleName) {
     std::lock_guard<std::mutex> lock(trustedMutex);
-    std::string lower = moduleName;
-    std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
-    trustedModules.push_back(lower);
+    trustedModules.push_back(ToLower(moduleName));
 }
 
-std::vector<std::string> SecurityManager::FindUntrustedModules() {
-    std::vector<std::string> untrusted;
+void SecurityManager::AddTrustedModuleHash(const std::string& moduleName,
+                                           const std::string& sha256Hex) {
+    std::lock_guard<std::mutex> lock(trustedMutex);
+    std::string name = ToLower(moduleName);
+    moduleHashes[name] = ToLower(sha256Hex);
+    if (std::find(trustedModules.begin(), trustedModules.end(), name) == trustedModules.end()) {
+        trustedModules.push_back(name);
+    }
+#ifdef _WIN32
+    // 釘選改變後快取的驗證結果已失效
+    std::lock_guard<std::mutex> vlock(verifyMutex);
+    hashVerifyCache.clear();
+#endif
+}
+
+void SecurityManager::AddTrustedDirectory(const std::string& dirPath) {
+    std::string dir = ToLower(dirPath);
+#ifdef _WIN32
+    std::replace(dir.begin(), dir.end(), '/', '\\');
+    while (!dir.empty() && dir.back() == '\\') dir.pop_back();
+#else
+    while (!dir.empty() && dir.back() == '/') dir.pop_back();
+#endif
+    if (dir.empty()) return;
+    std::lock_guard<std::mutex> lock(trustedMutex);
+    trustedDirs.push_back(dir);
+}
+
+// 目錄比對：dir 等於 base 或位於 base 之下（Windows 用 '\\'，Unix 用 '/'）
+static bool DirMatch(const std::string& dir, const std::string& base) {
+    if (dir == base) return true;
+    if (dir.size() <= base.size() || dir.compare(0, base.size(), base) != 0) return false;
+    char sep = dir[base.size()];
+#ifdef _WIN32
+    return sep == '\\' || sep == '/';
+#else
+    return sep == '/';
+#endif
+}
+
+bool SecurityManager::IsTrustedDir(const std::string& dirLower) const {
+    std::lock_guard<std::mutex> lock(trustedMutex);
+    for (const auto& d : trustedDirs) {
+        if (DirMatch(dirLower, d)) return true;
+    }
+    return false;
+}
+
+bool SecurityManager::IsSystemDir(const std::string& dirLower) const {
+    std::lock_guard<std::mutex> lock(trustedMutex);
+    for (const auto& d : systemDirs) {
+        if (DirMatch(dirLower, d)) return true;
+    }
+    return false;
+}
+
+#ifdef _WIN32
+std::wstring SecurityManager::NormalizeDirW(std::wstring dir) {
+    dir = ToLowerW(dir);
+    std::replace(dir.begin(), dir.end(), L'/', L'\\');
+    while (!dir.empty() && dir.back() == L'\\') dir.pop_back();
+    return dir;
+}
+
+// Authenticode 簽章驗證（WinVerifyTrust）。結果按路徑快取：
+// 第一次驗證後寫入快取，後續掃描不再重複呼叫（WinVerifyTrust 本身會載入
+// wintrust/crypt32 等模組，耗時數 ms ~ 數十 ms）
+bool SecurityManager::VerifyModuleSignature(const std::wstring& fullPath) {
+    std::wstring key = ToLowerW(fullPath);
+    {
+        std::lock_guard<std::mutex> lock(verifyMutex);
+        auto it = sigVerifyCache.find(key);
+        if (it != sigVerifyCache.end()) return it->second;
+    }
+
+    WINTRUST_FILE_INFO fileInfo{};
+    fileInfo.cbStruct = sizeof(fileInfo);
+    fileInfo.pcwszFilePath = fullPath.c_str();
+
+    WINTRUST_DATA data{};
+    data.cbStruct = sizeof(data);
+    data.dwUIChoice = WTD_UI_NONE;                       // 不跳 UI
+    data.fdwRevocationChecks = WTD_REVOKE_NONE;          // 離線環境不檢查撤銷
+    data.dwUnionChoice = WTD_CHOICE_FILE;
+    data.pFile = &fileInfo;
+    data.dwStateAction = WTD_STATEACTION_IGNORE;
+    data.dwProvFlags = WTD_CACHE_ONLY_URL_RETRIEVAL;     // 不上網抓 CRL/AIA
+
+    GUID action = WINTRUST_ACTION_GENERIC_VERIFY_V2;
+    LONG status = ::WinVerifyTrust(static_cast<HWND>(INVALID_HANDLE_VALUE), &action, &data);
+
+    bool ok = (status == ERROR_SUCCESS);
+    std::lock_guard<std::mutex> lock(verifyMutex);
+    sigVerifyCache[key] = ok;
+    return ok;
+}
+
+// 雙層判定：
+//  - 系統模組名（kernel32、dsound...）-> 必須在系統目錄 + Authenticode 簽章
+//  - 一般信任名（AddTrustedModule）   -> 必須在受信任目錄（+ 雜湊釘選若設定）
+//  - 其他                              -> 不受信任
+bool SecurityManager::IsTrustedModuleWin(const std::wstring& fullPath, std::string& reason) {
+    std::wstring lower = NormalizeDirW(fullPath);
+    size_t sep = lower.find_last_of(L'\\');
+    std::wstring wname = (sep != std::wstring::npos) ? lower.substr(sep + 1) : lower;
+    std::string name = WideToUtf8(wname);
+    std::string dir  = WideToUtf8(sep != std::wstring::npos ? lower.substr(0, sep) : L"");
+
+    bool isSystemName;
+    bool isUserName;
+    std::string pinnedHash;
+    {
+        std::lock_guard<std::mutex> lock(trustedMutex);
+        isSystemName = std::find(systemModules.begin(), systemModules.end(), name)
+                       != systemModules.end();
+        isUserName = std::find(trustedModules.begin(), trustedModules.end(), name)
+                     != trustedModules.end();
+        auto it = moduleHashes.find(name);
+        if (it != moduleHashes.end()) pinnedHash = it->second;
+    }
+
+    if (!isSystemName && !isUserName) {
+        reason = "name not in whitelist";
+        return false;
+    }
+
+    if (isSystemName) {
+        if (!IsSystemDir(dir)) {
+            reason = "system module outside system dir";
+            return false;
+        }
+        if (!VerifyModuleSignature(fullPath)) {
+            reason = "invalid/missing Authenticode signature";
+            return false;
+        }
+        return true;
+    }
+
+    if (!IsTrustedDir(dir)) {
+        reason = "module outside trusted dirs";
+        return false;
+    }
+
+    // 雜湊釘選（有設定才檢查，結果快取）
+    if (!pinnedHash.empty()) {
+        {
+            std::lock_guard<std::mutex> lock(verifyMutex);
+            auto it = hashVerifyCache.find(lower);
+            if (it != hashVerifyCache.end()) {
+                if (it->second) return true;
+                reason = "SHA-256 hash mismatch";
+                return false;
+            }
+        }
+        // MSVC: ifstream 接受寬字串路徑，可處理非 ASCII 檔名
+        std::ifstream file(fullPath, std::ios::binary);
+        std::string actual = file.is_open() ? HashStreamToHex(file) : "";
+        bool ok = !actual.empty() && actual == pinnedHash;
+        {
+            std::lock_guard<std::mutex> lock(verifyMutex);
+            hashVerifyCache[lower] = ok;
+        }
+        if (!ok) {
+            reason = "SHA-256 hash mismatch";
+            return false;
+        }
+    }
+    return true;
+}
+#endif
+
+std::vector<ModuleScanResult> SecurityManager::ScanModules() {
+    std::vector<ModuleScanResult> results;
 
 #ifdef _WIN32
     HANDLE hProcess = ::GetCurrentProcess();
     HMODULE modules[1024];
     DWORD needed = 0;
 
+    // 先快照模組路徑（不在持有鎖時呼叫 WinVerifyTrust，避免其載入 DLL 造成遞迴）
+    std::vector<std::wstring> paths;
     if (::EnumProcessModules(hProcess, modules, sizeof(modules), &needed)) {
         DWORD count = needed / sizeof(HMODULE);
         for (DWORD i = 0; i < count; i++) {
-            char moduleName[MAX_PATH];
-            if (::GetModuleFileNameExA(hProcess, modules[i], moduleName, MAX_PATH)) {
-                // 取檔名部分並轉小寫
-                std::string fullPath(moduleName);
-                size_t sep = fullPath.find_last_of("\\/");
-                std::string name = (sep != std::string::npos) ? fullPath.substr(sep + 1) : fullPath;
-                std::transform(name.begin(), name.end(), name.begin(), ::tolower);
-
-                std::lock_guard<std::mutex> lock(trustedMutex);
-                bool trusted = std::find(trustedModules.begin(), trustedModules.end(), name)
-                               != trustedModules.end();
-                if (!trusted) {
-                    untrusted.push_back(name);
-                }
+            wchar_t modulePath[MAX_PATH];
+            if (::GetModuleFileNameExW(hProcess, modules[i], modulePath, MAX_PATH)) {
+                paths.emplace_back(modulePath);
             }
         }
     }
+
+    for (const auto& p : paths) {
+        ModuleScanResult r;
+        r.path = WideToUtf8(p);
+        size_t sep = r.path.find_last_of("\\/");
+        r.name = ToLower(sep != std::string::npos ? r.path.substr(sep + 1) : r.path);
+        r.trusted = IsTrustedModuleWin(p, r.reason);
+        results.push_back(std::move(r));
+    }
 #elif defined(__linux__)
-    // Linux: 檢查 /proc/self/maps 中的共享庫
+    // Linux: 檢查 /proc/self/maps 中的共享庫（名稱 + 受信任目錄 + 雜湊釘選）
     std::ifstream maps("/proc/self/maps");
     std::string line;
     std::vector<std::string> seen;
     while (std::getline(maps, line)) {
+        size_t slash = line.find('/');
         size_t pos = line.find_last_of('/');
         if (pos != std::string::npos && line.find(".so") != std::string::npos) {
+            std::string fullPath = line.substr(slash);
+            fullPath = fullPath.substr(0, fullPath.find(' '));
             std::string lib = line.substr(pos + 1);
             lib = lib.substr(0, lib.find('\n'));
-            if (std::find(seen.begin(), seen.end(), lib) == seen.end()) {
-                seen.push_back(lib);
-                std::string lower = lib;
-                std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+            if (std::find(seen.begin(), seen.end(), lib) != seen.end()) continue;
+            seen.push_back(lib);
+
+            ModuleScanResult r;
+            r.path = fullPath;
+            r.name = ToLower(lib);
+            std::string dirLower = ToLower(fullPath.substr(0, fullPath.find_last_of('/')));
+
+            bool nameTrusted;
+            std::string pinnedHash;
+            {
                 std::lock_guard<std::mutex> lock(trustedMutex);
-                if (std::find(trustedModules.begin(), trustedModules.end(), lower) == trustedModules.end()) {
-                    untrusted.push_back(lib);
-                }
+                nameTrusted = std::find(trustedModules.begin(), trustedModules.end(), r.name)
+                              != trustedModules.end();
+                auto it = moduleHashes.find(r.name);
+                if (it != moduleHashes.end()) pinnedHash = it->second;
             }
+            if (!nameTrusted) {
+                r.reason = "name not in whitelist";
+            } else if (!IsTrustedDir(dirLower)) {
+                r.reason = "module outside trusted dirs";
+            } else if (!pinnedHash.empty() &&
+                       ComputeFileSHA256(fullPath) != pinnedHash) {
+                r.reason = "SHA-256 hash mismatch";
+            } else {
+                r.trusted = true;
+            }
+            results.push_back(std::move(r));
         }
     }
 #endif
+    return results;
+}
+
+std::vector<std::string> SecurityManager::FindUntrustedModules() {
+    std::vector<std::string> untrusted;
+    for (const auto& r : ScanModules()) {
+        if (!r.trusted) untrusted.push_back(r.name);
+    }
     return untrusted;
 }
 
 bool SecurityManager::CheckLoadedModules() {
-    auto untrusted = FindUntrustedModules();
-    if (!untrusted.empty()) {
-        std::string names;
-        for (const auto& n : untrusted) {
+    std::string names;
+    for (const auto& r : ScanModules()) {
+        if (!r.trusted) {
             if (!names.empty()) names += ", ";
-            names += n;
+            names += r.name + " (" + r.reason + ")";
         }
+    }
+    if (!names.empty()) {
         ReportViolation(ViolationType::UntrustedModule,
             "Untrusted modules loaded: " + names);
         return true;

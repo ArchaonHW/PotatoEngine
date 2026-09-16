@@ -1,6 +1,7 @@
 #include "Camera.h"
 #include "Logging/Logger.h"
 #include <cmath>
+#include <algorithm>
 
 namespace Potato {
 
@@ -153,16 +154,16 @@ void Camera::Update(float deltaTime) {
 
 void Camera::UpdateVectors() {
     // 根據旋轉計算方向向量
-    Matrix4 rotationMatrix = rotation.ToMatrix();
+    Matrix4 rotationMatrix = rotation.ToMatrix4();
     
     forward = Vector3(0.0f, 0.0f, -1.0f);
     right = Vector3(1.0f, 0.0f, 0.0f);
     up = Vector3(0.0f, 1.0f, 0.0f);
     
-    // 應用旋轉
-    forward = rotationMatrix * forward;
-    right = rotationMatrix * right;
-    up = rotationMatrix * up;
+    // 應用旋轉（方向向量，不含位移）
+    forward = rotationMatrix.TransformVector(forward);
+    right = rotationMatrix.TransformVector(right);
+    up = rotationMatrix.TransformVector(up);
     
     // 構建視圖矩陣
     viewMatrix = Matrix4::LookAt(position, position + forward, up);
