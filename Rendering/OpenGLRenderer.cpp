@@ -413,12 +413,16 @@ VertexArray::VertexArray()
 }
 
 VertexArray::~VertexArray() {
+    if (glDeleteBuffers == nullptr) return; // GL 未初始化/已銷毀
     if (ebo) glDeleteBuffers(1, &ebo);
     if (vbo) glDeleteBuffers(1, &vbo);
     if (vao) glDeleteVertexArrays(1, &vao);
 }
 
 void VertexArray::EnsureCreated() const {
+    // glad 函式指標未載入（無 GL context）時直接返回——
+    // 允許 headless 建構 Mesh/Model，繪製時由 Bind 再補建
+    if (glGenVertexArrays == nullptr) return;
     if (vao == 0) {
         glGenVertexArrays(1, &vao);
     }
@@ -428,36 +432,79 @@ void VertexArray::EnsureCreated() const {
     if (ebo == 0) {
         glGenBuffers(1, &ebo);
     }
+    // 重放 headless 期間暫存的 buffer/attribute
+    if (!buffersUploaded && vao != 0 && !pendingVertexData.empty()) {
+        glBindVertexArray(vao);
+        glBindBuffer(GL_ARRAY_BUFFER, vbo);
+        glBufferData(GL_ARRAY_BUFFER, pendingVertexData.size(),
+                     pendingVertexData.data(), pendingVertexUsage);
+        if (!pendingIndexData.empty()) {
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
+            glBufferData(GL_ELEMENT_ARRAY_BUFFER,
+                         pendingIndexData.size() * sizeof(uint32),
+                         pendingIndexData.data(), pendingIndexUsage);
+        }
+        for (const auto& a : pendingAttribs) {
+            glVertexAttribPointer(a.index, a.size, GL_FLOAT, GL_FALSE,
+                                  a.stride, reinterpret_cast<void*>(a.offset));
+            glEnableVertexAttribArray(a.index);
+        }
+        glBindVertexArray(0);
+        buffersUploaded = true;
+        pendingVertexData.clear();
+        pendingIndexData.clear();
+        pendingAttribs.clear();
+    }
 }
 
 void VertexArray::Bind() const {
     EnsureCreated();
+    if (vao == 0 || !buffersUploaded) return;
     glBindVertexArray(vao);
 }
 
 void VertexArray::Unbind() const {
+    if (glBindVertexArray == nullptr) return;
     glBindVertexArray(0);
 }
 
 void VertexArray::AddVertexBuffer(const void* data, size_t size, uint32 usage) {
     EnsureCreated();
+    if (vao == 0) {
+        // 無 GL context：暫存，等 EnsureCreated 重放
+        const auto* bytes = static_cast<const unsigned char*>(data);
+        pendingVertexData.assign(bytes, bytes + size);
+        pendingVertexUsage = usage;
+        buffersUploaded = false;
+        return;
+    }
     glBindVertexArray(vao);
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
     glBufferData(GL_ARRAY_BUFFER, size, data, usage);
+    buffersUploaded = true;
     glBindVertexArray(0);
 }
 
 void VertexArray::AddIndexBuffer(const uint32* indices, size_t count, uint32 usage) {
     EnsureCreated();
+    indexCount = static_cast<uint32>(count);
+    if (vao == 0) {
+        pendingIndexData.assign(indices, indices + count);
+        pendingIndexUsage = usage;
+        return;
+    }
     glBindVertexArray(vao);
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
     glBufferData(GL_ELEMENT_ARRAY_BUFFER, count * sizeof(uint32), indices, usage);
-    indexCount = static_cast<uint32>(count);
     glBindVertexArray(0);
 }
 
 void VertexArray::SetVertexAttribute(uint32 index, int size, int stride, size_t offset) {
     EnsureCreated();
+    if (vao == 0) {
+        pendingAttribs.push_back({index, size, stride, offset});
+        return;
+    }
     glBindVertexArray(vao);
     glVertexAttribPointer(index, size, GL_FLOAT, GL_FALSE, stride, reinterpret_cast<void*>(offset));
     glEnableVertexAttribArray(index);
@@ -503,6 +550,7 @@ void Mesh::Unbind() const {
 void Mesh::Draw() const {
     if (indices.empty() && vertices.empty()) return;
     vertexArray.Bind();
+    if (vertexArray.GetVAO() == 0) return; // headless：無 GL context 不繪製
     if (!indices.empty()) {
         glDrawElements(GL_TRIANGLES, static_cast<int>(indices.size()), GL_UNSIGNED_INT, 0);
     } else {
@@ -514,6 +562,7 @@ void Mesh::Draw() const {
 void Mesh::DrawInstanced(int instanceCount) const {
     if (instanceCount <= 0 || (indices.empty() && vertices.empty())) return;
     vertexArray.Bind();
+    if (vertexArray.GetVAO() == 0) return;
     if (!indices.empty()) {
         glDrawElementsInstanced(GL_TRIANGLES, static_cast<int>(indices.size()), GL_UNSIGNED_INT, 0, instanceCount);
     } else {
@@ -535,7 +584,7 @@ Texture::Texture()
 }
 
 Texture::~Texture() {
-    if (textureID) {
+    if (textureID && glDeleteTextures != nullptr) {
         glDeleteTextures(1, &textureID);
     }
 }
@@ -543,7 +592,14 @@ Texture::~Texture() {
 bool Texture::LoadFromFile(const std::string& path) {
     // 簡化實現：實際應該使用 stb_image 加載
     std::cout << "Loading texture from file: " << path << std::endl;
-    
+
+    if (glGenTextures == nullptr) {
+        // headless：無 GL context，只記錄尺寸（1x1 佔位）
+        width = height = 1;
+        channels = 3;
+        return true;
+    }
+
     // 創建紋理
     glGenTextures(1, &textureID);
     glBindTexture(GL_TEXTURE_2D, textureID);
@@ -565,30 +621,49 @@ bool Texture::LoadFromMemory(const unsigned char* data, int w, int h, int ch) {
     width = w;
     height = h;
     channels = ch;
-    
+
+    if (glGenTextures == nullptr) {
+        // headless：暫存像素，首次 Bind 時補上傳
+        const size_t sz = static_cast<size_t>(w) * h * ch;
+        pendingPixels.assign(data, data + sz);
+        return true;
+    }
+
     glGenTextures(1, &textureID);
     glBindTexture(GL_TEXTURE_2D, textureID);
-    
+
     GLenum format = GL_RGB;
     if (channels == 4) format = GL_RGBA;
     else if (channels == 1) format = GL_RED;
-    
+
     glTexImage2D(GL_TEXTURE_2D, 0, format, width, height, 0, format, GL_UNSIGNED_BYTE, data);
-    
+
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    
+
     return true;
 }
 
+void Texture::EnsureUploaded() const {
+    if (pendingPixels.empty() || glGenTextures == nullptr) return;
+    // 補上傳：複用 LoadFromMemory 的寫法（會清掉 pendingPixels）
+    std::vector<unsigned char> pixels;
+    pixels.swap(pendingPixels);
+    const_cast<Texture*>(this)->LoadFromMemory(pixels.data(), width, height,
+                                             channels);
+}
+
 void Texture::Bind(uint32 unit) const {
+    EnsureUploaded();
+    if (textureID == 0 || glActiveTexture == nullptr) return;
     glActiveTexture(GL_TEXTURE0 + unit);
     glBindTexture(GL_TEXTURE_2D, textureID);
 }
 
 void Texture::Unbind() const {
+    if (glBindTexture == nullptr) return;
     glBindTexture(GL_TEXTURE_2D, 0);
 }
 

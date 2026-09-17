@@ -198,6 +198,15 @@ public:
     // 求值結果（測試/除錯用）；skinIndex 越界回傳空陣列
     const std::vector<Matrix4>& GetJointPalette(int skinIndex) const;
     int GetJointCount(int skinIndex) const;
+    // node 的 world transform（EvaluatePose 輸出）；越界回傳 identity
+    Matrix4 GetNodeWorldTransform(int nodeIndex) const;
+
+    // ---- 姿勢編輯（立繪擺位等）----
+    // 依名稱子字串找 node（大小寫不敏感）；找不到回 -1
+    int FindNodeIndexByName(const std::string& namePart) const;
+    // 在 parent 空間疊加旋轉：local rotation = q * rotation，隨後重算 pose。
+    // 節點被 active 動畫 channel 命中時 channel 仍優先。
+    bool RotateNodeLocal(int nodeIndex, const Quaternion& q);
 
 private:
     void ProcessNode();

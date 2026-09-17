@@ -47,6 +47,12 @@ public:
     
     // 紋理片段著色器
     static const char* TextureFragmentShader();
+
+    // 蒙皮頂點著色器（attrib 5/6 = joints/weights，joint palette uniform）
+    static const char* SkinnedVertexShader();
+
+    // 蒙皮片段著色器（useTexture + baseColorFactor，配合內嵌貼圖）
+    static const char* SkinnedFragmentShader();
 };
 
 /**
@@ -113,6 +119,8 @@ public:
     // 統一變量數組設置
     void SetIntArray(const std::string& name, const int* values, int count);
     void SetFloatArray(const std::string& name, const float* values, int count);
+    // 蒙皮 joint palette 用：mat4 陣列（column-major，直接 memcpy m[16]）
+    void SetMat4Array(const std::string& name, const Matrix4* values, int count);
     
     // 獲取程序 ID
     uint32 GetProgramID() const { return programID; }

@@ -589,9 +589,12 @@ bool GltfConvert(const tinygltf::Model& g, ModelData& modelData,
                 for (size_t i = 0; i < n; ++i) {
                     int outNc = tinygltf::GetNumComponentsInType(
                         static_cast<uint32_t>(outAcc.type));
-                    smp.values.push_back(outNc >= 4
-                        ? GltfReadVec4(g, s.output, i)
-                        : Vector4(GltfReadVec3(g, s.output, i), 0.0f));
+                    if (outNc >= 4) {
+                        smp.values.push_back(GltfReadVec4(g, s.output, i));
+                    } else {
+                        Vector3 v3 = GltfReadVec3(g, s.output, i);
+                        smp.values.push_back(Vector4(v3.x, v3.y, v3.z, 0.0f));
+                    }
                 }
             }
             clip.samplers.push_back(std::move(smp));
@@ -712,7 +715,21 @@ bool Model::LoadFromFile(const std::string& path) {
 
 bool Model::LoadFromData(const ModelData& modelData) {
     name = modelData.name;
-    
+
+    // 重新載入時清掉舊狀態，避免 mesh/骨架資料累積
+    meshes.clear();
+    meshMaterialNames.clear();
+    skinnedMeshes.clear();
+    skinnedMeshMaterialNames.clear();
+    textures.clear();
+    animNodes.clear();
+    skinsData.clear();
+    animations.clear();
+    jointPalettes.clear();
+    nodeWorld.clear();
+    activeAnimation = -1;
+    animationTime = 0.0f;
+
     // 創建網格：有 JOINTS_0/WEIGHTS_0 的走 SkinnedMesh，其餘走一般 Mesh
     for (const auto& meshData : modelData.meshes) {
         if (!meshData.joints.empty()) {
@@ -933,6 +950,10 @@ Vector4 Model::SampleChannel(
         smp.interpolation == ModelData::AnimationClip::Interpolation::CubicSpline;
     const size_t keys = smp.times.size();
     if (keys == 0) return Vector4(0, 0, 0, 0);
+    // 畸形 glTF：output accessor 數量不足（linear 需 ≥keys、cubic 需 ≥3*keys）
+    if (smp.values.size() < (cubic ? keys * 3 : keys)) {
+        return Vector4(0, 0, 0, 0);
+    }
 
     // cubic spline 每個 key 三筆（in/value/out），取值索引時除以 3
     auto valueAt = [&](size_t key) -> const Vector4& {
@@ -1049,6 +1070,36 @@ const std::vector<Matrix4>& Model::GetJointPalette(int skinIndex) const {
 int Model::GetJointCount(int skinIndex) const {
     if (skinIndex < 0 || skinIndex >= (int)skinsData.size()) return 0;
     return (int)skinsData[skinIndex].joints.size();
+}
+
+Matrix4 Model::GetNodeWorldTransform(int nodeIndex) const {
+    if (nodeIndex < 0 || nodeIndex >= (int)nodeWorld.size()) {
+        return Matrix4::Identity();
+    }
+    return nodeWorld[nodeIndex];
+}
+
+int Model::FindNodeIndexByName(const std::string& namePart) const {
+    auto lower = [](std::string s) {
+        for (auto& c : s)
+            if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
+        return s;
+    };
+    const std::string needle = lower(namePart);
+    for (size_t i = 0; i < animNodes.size(); ++i) {
+        if (lower(animNodes[i].name).find(needle) != std::string::npos)
+            return (int)i;
+    }
+    return -1;
+}
+
+bool Model::RotateNodeLocal(int nodeIndex, const Quaternion& q) {
+    if (nodeIndex < 0 || nodeIndex >= (int)animNodes.size()) return false;
+    // parent 空間疊加：先套姿勢旋轉再乘 bind rotation
+    animNodes[nodeIndex].rotation = (q * animNodes[nodeIndex].rotation).Normalized();
+    animNodes[nodeIndex].hasMatrix = false; // 改用 TRS，matrix 不再代表 local
+    EvaluatePose();
+    return true;
 }
 
 // ============================================================================

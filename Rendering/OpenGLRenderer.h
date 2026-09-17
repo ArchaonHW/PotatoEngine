@@ -122,6 +122,41 @@ public:
     VertexArray();
     ~VertexArray();
     
+    // GL 物件所有權唯一:禁止拷貝(拷貝會讓 dtor 刪掉共享的 VAO/VBO),
+    // 提供 move 語義轉移 id
+    VertexArray(const VertexArray&) = delete;
+    VertexArray& operator=(const VertexArray&) = delete;
+    VertexArray(VertexArray&& o) noexcept
+        : buffersUploaded(o.buffersUploaded),
+          pendingVertexData(std::move(o.pendingVertexData)),
+          pendingIndexData(std::move(o.pendingIndexData)),
+          pendingAttribs(std::move(o.pendingAttribs)),
+          pendingVertexUsage(o.pendingVertexUsage),
+          pendingIndexUsage(o.pendingIndexUsage),
+          vao(o.vao), vbo(o.vbo), ebo(o.ebo),
+          vertexCount(o.vertexCount), indexCount(o.indexCount) {
+        o.vao = o.vbo = o.ebo = 0;
+        o.vertexCount = o.indexCount = 0;
+        o.buffersUploaded = false;
+    }
+    VertexArray& operator=(VertexArray&& o) noexcept {
+        if (this != &o) {
+            this->~VertexArray();
+            vao = o.vao; vbo = o.vbo; ebo = o.ebo;
+            vertexCount = o.vertexCount; indexCount = o.indexCount;
+            buffersUploaded = o.buffersUploaded;
+            pendingVertexData = std::move(o.pendingVertexData);
+            pendingIndexData = std::move(o.pendingIndexData);
+            pendingAttribs = std::move(o.pendingAttribs);
+            pendingVertexUsage = o.pendingVertexUsage;
+            pendingIndexUsage = o.pendingIndexUsage;
+            o.vao = o.vbo = o.ebo = 0;
+            o.vertexCount = o.indexCount = 0;
+            o.buffersUploaded = false;
+        }
+        return *this;
+    }
+    
     void Bind() const;
     void Unbind() const;
     
@@ -135,9 +170,23 @@ public:
     uint32 GetEBO() const { EnsureCreated(); return ebo; }
     
 private:
-    // 惰性建立 GL 物件：GL context 可能尚未初始化就建構 Mesh/Model
+    // 惰性建立 GL 物件：GL context 可能尚未初始化就建構 Mesh/Model；
+    // headless 期間收到的 buffer/attribute 先暫存，EnsureCreated 時重放上傳
     void EnsureCreated() const;
-    
+
+    struct PendingAttrib {
+        uint32 index;
+        int size;
+        int stride;
+        size_t offset;
+    };
+    mutable bool buffersUploaded = false;
+    mutable std::vector<unsigned char> pendingVertexData;
+    mutable std::vector<uint32> pendingIndexData;
+    mutable std::vector<PendingAttrib> pendingAttribs;
+    mutable uint32 pendingVertexUsage = 0;
+    mutable uint32 pendingIndexUsage = 0;
+
     mutable uint32 vao;
     mutable uint32 vbo;
     mutable uint32 ebo;
@@ -163,6 +212,11 @@ class Mesh {
 public:
     Mesh();
     ~Mesh();
+    
+    Mesh(const Mesh&) = delete;
+    Mesh& operator=(const Mesh&) = delete;
+    Mesh(Mesh&&) = default;
+    Mesh& operator=(Mesh&&) = default;
     
     void SetVertices(const std::vector<Vertex>& vertices);
     void SetIndices(const std::vector<uint32>& indices);
@@ -198,15 +252,19 @@ public:
     void SetWrapMode(WrapMode mode);
     void SetFilterMode(FilterMode mode);
     
-    uint32 GetTextureID() const { return textureID; }
+    uint32 GetTextureID() const { EnsureUploaded(); return textureID; }
     int GetWidth() const { return width; }
     int GetHeight() const { return height; }
-    
+
 private:
-    uint32 textureID;
+    // GL context 未就緒時暫存像素，首次 Bind 才上傳
+    void EnsureUploaded() const;
+
+    mutable uint32 textureID;
     int width;
     int height;
     int channels;
+    mutable std::vector<unsigned char> pendingPixels;
 };
 
 } // namespace Potato

@@ -219,6 +219,89 @@ const char* BuiltinShaders::TextureFragmentShader() {
     )";
 }
 
+const char* BuiltinShaders::SkinnedVertexShader() {
+    // joint palette 上限 128——超出部分以 bind pose 頂點繪製（不會崩潰）
+    return R"(
+        #version 330 core
+        layout (location = 0) in vec3 aPos;
+        layout (location = 1) in vec3 aNormal;
+        layout (location = 2) in vec2 aTexCoord;
+        layout (location = 5) in vec4 aJoints;
+        layout (location = 6) in vec4 aWeights;
+
+        out vec3 FragPos;
+        out vec3 Normal;
+        out vec2 TexCoord;
+
+        uniform mat4 model;
+        uniform mat4 view;
+        uniform mat4 projection;
+        uniform mat4 uJointMatrices[128];
+        uniform int uJointCount;
+        uniform bool uHasSkin;
+
+        void main() {
+            vec4 localPos = vec4(aPos, 1.0);
+            vec3 localNormal = aNormal;
+
+            if (uHasSkin) {
+                mat4 skin = mat4(0.0);
+                float wSum = 0.0;
+                for (int i = 0; i < 4; ++i) {
+                    int j = int(aJoints[i] + 0.5);
+                    float w = aWeights[i];
+                    if (w > 0.0 && j >= 0 && j < uJointCount && j < 128) {
+                        skin += w * uJointMatrices[j];
+                        wSum += w;
+                    }
+                }
+                if (wSum > 0.0) {
+                    localPos = skin * localPos;
+                    localNormal = mat3(skin) * aNormal;
+                }
+            }
+
+            vec4 worldPos = model * localPos;
+            FragPos = worldPos.xyz;
+            Normal = mat3(transpose(inverse(model))) * localNormal;
+            TexCoord = aTexCoord;
+            gl_Position = projection * view * worldPos;
+        }
+    )";
+}
+
+const char* BuiltinShaders::SkinnedFragmentShader() {
+    return R"(
+        #version 330 core
+        out vec4 FragColor;
+
+        in vec3 FragPos;
+        in vec3 Normal;
+        in vec2 TexCoord;
+
+        uniform sampler2D texture1;
+        uniform bool useTexture;
+        uniform vec4 baseColorFactor;
+        uniform vec3 lightPos;
+        uniform vec3 viewPos;
+        uniform vec3 lightColor;
+
+        void main() {
+            vec3 ambient = 0.2 * lightColor;
+            vec3 norm = normalize(Normal);
+            vec3 lightDir = normalize(lightPos - FragPos);
+            float diff = max(dot(norm, lightDir), 0.0);
+            vec3 diffuse = diff * lightColor;
+
+            vec4 base = useTexture ? texture(texture1, TexCoord)
+                                   : vec4(1.0);
+            base *= baseColorFactor;
+            vec3 result = (ambient + diffuse) * base.rgb;
+            FragColor = vec4(result, base.a);
+        }
+    )";
+}
+
 // ============================================================================
 // ShaderCompiler 實現
 // ============================================================================
@@ -411,6 +494,8 @@ bool AdvancedShader::LoadBuiltin(const std::string& shaderName) {
         return LoadFromSource(BuiltinShaders::ViewSpaceVertexShader(), BuiltinShaders::ViewSpaceFragmentShader());
     } else if (shaderName == "texture") {
         return LoadFromSource(BuiltinShaders::TextureVertexShader(), BuiltinShaders::TextureFragmentShader());
+    } else if (shaderName == "skinned") {
+        return LoadFromSource(BuiltinShaders::SkinnedVertexShader(), BuiltinShaders::SkinnedFragmentShader());
     }
     
     LOG_ERROR("Unknown builtin shader: " + shaderName);
@@ -467,6 +552,15 @@ void AdvancedShader::SetIntArray(const std::string& name, const int* values, int
 
 void AdvancedShader::SetFloatArray(const std::string& name, const float* values, int count) {
     glUniform1fv(uniformCache.GetUniformLocation(name), count, values);
+}
+
+void AdvancedShader::SetMat4Array(const std::string& name, const Matrix4* values, int count) {
+    // Matrix4 為 column-major m[16]，可直接作為連續 float 陣列上傳
+    if (glUniformMatrix4fv == nullptr || values == nullptr || count <= 0) {
+        return; // headless 或空 palette
+    }
+    glUniformMatrix4fv(uniformCache.GetUniformLocation(name), count,
+                       GL_FALSE, values[0].m);
 }
 
 bool AdvancedShader::Recompile() {
