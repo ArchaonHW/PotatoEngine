@@ -327,6 +327,7 @@ add_executable(DevAssistantSmoke Examples/DevAssistantSmoke.cpp)
 target_include_directories(DevAssistantSmoke PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(DevAssistantSmoke
     IntelligentDevelopmentSystem
+    IntelligentSuggestion
     KnowledgeGraph
     SelfReflection
     LLMIntegration
@@ -460,6 +461,10 @@ target_include_directories(QuantumFogDemo PRIVATE
     ${CMAKE_SOURCE_DIR}/external/imgui/backends
 )
 target_link_libraries(QuantumFogDemo glfw glad ${OPENGL_LIBRARIES} Gameplay)
+
+# AI Agent 介面無頭煙霧測試（IDECore+AIIntegration 自包含，無 GUI 依賴）
+add_executable(AIAgentSmoke Examples/AIAgentSmoke.cpp MingGoRTS_IDE/IDECore.cpp MingGoRTS_IDE/AIIntegration.cpp)
+target_include_directories(AIAgentSmoke PRIVATE ${CMAKE_SOURCE_DIR})
 
 # MingGoRTS IDE（AI Agent 整合 IDE - 命令行版本）
 add_executable(MingGoRTS_IDE_CLI MingGoRTS_IDE/MingGoRTS_IDE_Main.cpp MingGoRTS_IDE/IDECore.cpp MingGoRTS_IDE/AIIntegration.cpp)
@@ -680,6 +685,7 @@ set(POTATO_TESTS
     SecurityRedTeamTest
     AITestSuite
     DevAssistantSmoke
+    AIAgentSmoke
     DoctrineBattleDemo
     AutoPlannerDemo
     DuanqiaoDemo
