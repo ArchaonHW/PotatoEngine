@@ -267,6 +267,10 @@ target_include_directories(AIAgentSystem PUBLIC ${CMAKE_SOURCE_DIR}/AI)
 # AI 增強模塊 - LLM 集成
 add_library(LLMIntegration STATIC AI/LLMIntegration.cpp)
 target_include_directories(LLMIntegration PUBLIC ${CMAKE_SOURCE_DIR}/AI)
+# WinHTTP transport：MSVC 由 #pragma comment 處理，MinGW 需顯式連結
+if(WIN32 AND NOT MSVC)
+    target_link_libraries(LLMIntegration winhttp)
+endif()
 
 # AI 增強模塊 - RAG 系統
 add_library(RAGSystem STATIC AI/RAGSystem.cpp)
