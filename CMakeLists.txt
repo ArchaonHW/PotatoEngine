@@ -602,6 +602,11 @@ add_executable(ImageCodecTest Examples/ImageCodecTest.cpp)
 target_include_directories(ImageCodecTest PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(ImageCodecTest PotatoEngine)
 
+# 核心系統無頭煙霧測試：ECS / EventBus / ResourceCache
+add_executable(CoreSystemsTest Examples/CoreSystemsTest.cpp)
+target_include_directories(CoreSystemsTest PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(CoreSystemsTest PotatoEngine)
+
 # 深度學習繪圖：headless 測試（SR/降噪/上色/INR/地形/法線/LOD）
 add_executable(NeuralGraphicsTest Examples/NeuralGraphicsTest.cpp)
 target_include_directories(NeuralGraphicsTest PRIVATE ${CMAKE_SOURCE_DIR})
@@ -698,6 +703,7 @@ set(POTATO_TESTS
     AudioTest
     TimeTest
     ImageCodecTest
+    CoreSystemsTest
     NeuralGraphicsTest
     GLSmokeTest
     SecurityRedTeamTest
