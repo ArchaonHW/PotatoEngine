@@ -207,6 +207,7 @@ target_link_libraries(PotatoEngine
     glfw
     glad
     ${CMAKE_DL_LIBS}
+    NeuralNetwork # NeuralGraphics 深度學習繪圖依賴
 )
 
 # Windows: psapi.lib（Security 模組的模組枚舉用；MSVC 由 #pragma comment 處理，MinGW 需顯式連結）
@@ -363,6 +364,7 @@ add_library(Gameplay STATIC
     Gameplay/SageCommand.cpp
     Gameplay/QuantumFog.cpp
     Gameplay/BattlePicker.cpp
+    Gameplay/PlanningDeck.cpp
 )
 target_include_directories(Gameplay PUBLIC ${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/Gameplay)
 # BattleSceneSync 需要場景圖/渲染類型;PotatoEngine 不依賴 Gameplay,無循環
@@ -421,6 +423,11 @@ target_link_libraries(QuasiRandomTest Gameplay)
 add_executable(BattlePickerTest Examples/BattlePickerTest.cpp)
 target_include_directories(BattlePickerTest PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(BattlePickerTest Gameplay)
+
+# T-9 回合層牌組測試（headless：卡槽編輯/驗證/AI 模板/Commit）
+add_executable(PlanningDeckTest Examples/PlanningDeckTest.cpp)
+target_include_directories(PlanningDeckTest PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(PlanningDeckTest Gameplay)
 
 # 斷橋可玩 demo（E4-3：LMB 選取/RMB 下令走 CP 介入；A-4 膠囊體+選取環+血條）
 # 互動視窗程式——無顯示環境自行 [SKIP]，不進 POTATO_TESTS
@@ -595,6 +602,16 @@ add_executable(ImageCodecTest Examples/ImageCodecTest.cpp)
 target_include_directories(ImageCodecTest PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(ImageCodecTest PotatoEngine)
 
+# 深度學習繪圖：headless 測試（SR/降噪/上色/INR/地形/法線/LOD）
+add_executable(NeuralGraphicsTest Examples/NeuralGraphicsTest.cpp)
+target_include_directories(NeuralGraphicsTest PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(NeuralGraphicsTest PotatoEngine NeuralNetwork)
+
+# 深度學習繪圖離線 CLI：訓練產出 .pnn，推論讀寫 PNG
+add_executable(NeuralArtTool Examples/NeuralArtTool.cpp)
+target_include_directories(NeuralArtTool PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(NeuralArtTool PotatoEngine NeuralNetwork)
+
 # GL 煙霧測試：需要顯示環境,無顯示時自行 SKIP
 add_executable(GLSmokeTest Examples/GLSmokeTest.cpp)
 target_include_directories(GLSmokeTest PRIVATE ${CMAKE_SOURCE_DIR})
@@ -681,6 +698,7 @@ set(POTATO_TESTS
     AudioTest
     TimeTest
     ImageCodecTest
+    NeuralGraphicsTest
     GLSmokeTest
     SecurityRedTeamTest
     AITestSuite
@@ -694,6 +712,7 @@ set(POTATO_TESTS
     QuasiRandomTest
     QuantumFogBattleTest
     BattlePickerTest
+    PlanningDeckTest
     SynthDataDemo
 )
 foreach(test_name IN LISTS POTATO_TESTS)
