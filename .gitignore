@@ -119,3 +119,16 @@ duanqiao_roster.json
 *_replay.json
 *_roster.json
 audiotest_*.wav
+
+# VRM avatar binaries (downloaded from github.com/tary159951123/my-vrm-models*)
+# 正典目錄為 assets/avatars/（已入版控的三支模型）；assets/vrm/ 是重複副本，
+# 已移除並忽略以防再次誤存
+assets/avatars/
+assets/vrm/
+Testing/
+
+# SynthDataDemo 產生的訓練資料集（量大可再生，不入版控）
+output/synth_dataset/
+
+# PortraitRenderer 產生的立繪輸出（可再生）
+output/portraits/

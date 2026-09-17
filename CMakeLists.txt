@@ -555,6 +555,12 @@ add_executable(PortraitRenderer Examples/PortraitRenderer.cpp)
 target_include_directories(PortraitRenderer PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(PortraitRenderer PotatoEngine glad glfw)
 
+# 合成資料管線：離屏渲染 -> 標註資料集 -> NeuralNetwork 訓練驗證
+# （需 GL 環境；無顯示時自行 SKIP，屬測試）
+add_executable(SynthDataDemo Examples/SynthDataDemo.cpp)
+target_include_directories(SynthDataDemo PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(SynthDataDemo PotatoEngine NeuralNetwork glad glfw)
+
 # AI Agent GUI 示例 (暫時禁用)
 # add_executable(AIAgentGUIExample Examples/AIAgentGUIExample.cpp)
 # target_link_libraries(AIAgentGUIExample PotatoEngine)
