@@ -439,6 +439,11 @@ target_include_directories(DuanqiaoPlayable PRIVATE
 )
 target_link_libraries(DuanqiaoPlayable glfw glad ${OPENGL_LIBRARIES} Gameplay)
 
+# Q-1 敵情霧戰鬥整合測試（headless：觀測塌縮/時效回雲/接觸揭露/Scout）
+add_executable(QuantumFogBattleTest Examples/QuantumFogBattleTest.cpp)
+target_include_directories(QuantumFogBattleTest PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(QuantumFogBattleTest Gameplay)
+
 # 量子敵情霧可視化（ImGui：機率雲/觀測塌縮/情報時效）
 add_executable(QuantumFogDemo
     Examples/QuantumFogDemo.cpp
@@ -681,6 +686,7 @@ set(POTATO_TESTS
     SageCommandTest
     QuantumTest
     QuasiRandomTest
+    QuantumFogBattleTest
     BattlePickerTest
     SynthDataDemo
 )
