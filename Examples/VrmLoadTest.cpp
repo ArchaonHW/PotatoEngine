@@ -124,6 +124,66 @@ static std::string BuildAnimatedGlb() {
     return glb;
 }
 
+// ---- 蒙皮 GLB：單一 joint（node 0 自身）、identity IBM ----
+// 驗證 skin 解析、joint palette 計算、RotateNodeLocal 與重載不累積
+static std::string BuildSkinnedGlb() {
+    const char* json =
+        "{\"asset\":{\"version\":\"2.0\"},"
+        "\"scene\":0,\"scenes\":[{\"nodes\":[0]}],"
+        "\"nodes\":[{\"mesh\":0,\"skin\":0,\"name\":\"Bone0\"}],"
+        "\"meshes\":[{\"primitives\":[{\"attributes\":{\"POSITION\":0,"
+        "\"JOINTS_0\":2,\"WEIGHTS_0\":3},\"indices\":1,\"mode\":4}]}],"
+        "\"skins\":[{\"joints\":[0],\"inverseBindMatrices\":4}],"
+        "\"accessors\":["
+        "{\"bufferView\":0,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"},"
+        "{\"bufferView\":1,\"componentType\":5123,\"count\":3,\"type\":\"SCALAR\"},"
+        "{\"bufferView\":2,\"componentType\":5121,\"count\":3,\"type\":\"VEC4\"},"
+        "{\"bufferView\":3,\"componentType\":5126,\"count\":3,\"type\":\"VEC4\"},"
+        "{\"bufferView\":4,\"componentType\":5126,\"count\":1,\"type\":\"MAT4\"}],"
+        "\"bufferViews\":["
+        "{\"buffer\":0,\"byteOffset\":0,\"byteLength\":36},"
+        "{\"buffer\":0,\"byteOffset\":36,\"byteLength\":6},"
+        "{\"buffer\":0,\"byteOffset\":44,\"byteLength\":12},"
+        "{\"buffer\":0,\"byteOffset\":56,\"byteLength\":48},"
+        "{\"buffer\":0,\"byteOffset\":104,\"byteLength\":64}],"
+        "\"buffers\":[{\"byteLength\":168}]}";
+    const float pos[9] = {0,0,0, 1,0,0, 0,1,0};
+    const unsigned short idx[3] = {0, 1, 2};
+    const unsigned char joints[12] = {0,0,0,0, 0,0,0,0, 0,0,0,0};
+    const float weights[12] = {1,0,0,0, 1,0,0,0, 1,0,0,0};
+    const float ibm[16] = {1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
+
+    auto pad4 = [](size_t n) { return (4 - (n % 4)) % 4; };
+    std::string jsonChunk(json);
+    jsonChunk.append(pad4(jsonChunk.size()), ' ');
+    std::vector<unsigned char> bin;
+    bin.insert(bin.end(), (const unsigned char*)pos,
+               (const unsigned char*)pos + 36);
+    bin.insert(bin.end(), (const unsigned char*)idx,
+               (const unsigned char*)idx + 6);
+    bin.insert(bin.end(), pad4(bin.size()), 0);
+    bin.insert(bin.end(), joints, joints + 12);
+    bin.insert(bin.end(), (const unsigned char*)weights,
+               (const unsigned char*)weights + 48);
+    bin.insert(bin.end(), (const unsigned char*)ibm,
+               (const unsigned char*)ibm + 64);
+
+    const uint32 totalLen =
+        12 + 8 + (uint32)jsonChunk.size() + 8 + (uint32)bin.size();
+    std::string glb;
+    glb.reserve(totalLen);
+    glb.append("glTF", 4);
+    uint32 ver = 2, len = totalLen;
+    glb.append((const char*)&ver, 4).append((const char*)&len, 4);
+    uint32 jlen = (uint32)jsonChunk.size(), jtype = 0x4E4F534A;
+    glb.append((const char*)&jlen, 4).append((const char*)&jtype, 4);
+    glb.append(jsonChunk);
+    uint32 blen = (uint32)bin.size(), btype = 0x004E4942;
+    glb.append((const char*)&blen, 4).append((const char*)&btype, 4);
+    glb.append((const char*)bin.data(), bin.size());
+    return glb;
+}
+
 static bool FileExists(const char* path) {
     FILE* f = nullptr;
 #ifdef _WIN32
@@ -187,6 +247,48 @@ int main() {
             w = model.GetNodeWorldTransform(0);
             Check(std::fabs(w.m[13]) < 1e-6f,
                   "StopAnimation returns to bind pose");
+        }
+    }
+
+    // ---- 蒙皮：skin 解析 + joint palette + 姿勢編輯 + 重載不累積 ----
+    {
+        ModelData m;
+        std::string glb = BuildSkinnedGlb();
+        bool ok = GLTFLoader::LoadFromMemory(glb, m);
+        Check(ok && m.skins.size() == 1 && m.skins[0].joints.size() == 1 &&
+                  !m.meshes.empty() && !m.meshes[0].joints.empty(),
+              "skinned GLB parses (skin + JOINTS_0/WEIGHTS_0)");
+        if (ok && !m.skins.empty() &&
+            !m.skins[0].inverseBindMatrices.empty()) {
+            Check(std::fabs(m.skins[0].inverseBindMatrices[0].m[5] - 1.0f) <
+                      1e-6f,
+                  "inverse bind matrix decoded");
+
+            Model model;
+            Check(model.LoadFromData(m), "skinned Model::LoadFromData");
+            Check(model.HasSkinning(), "HasSkinning");
+            Check(model.GetJointCount(0) == 1, "joint count == 1");
+            const auto& palette = model.GetJointPalette(0);
+            Check(palette.size() == 1 &&
+                      std::fabs(palette[0].m[5] - 1.0f) < 1e-6f,
+                  "bind pose palette ≈ identity");
+
+            // 姿勢編輯：繞 X 軸轉 90° → palette 不再是 identity
+            Check(model.FindNodeIndexByName("bone") == 0,
+                  "FindNodeIndexByName hit");
+            Check(model.FindNodeIndexByName("") == -1 &&
+                      model.FindNodeIndexByName("zzz") == -1,
+                  "FindNodeIndexByName miss");
+            const float h = 0.70710678f; // sin/cos(45°)
+            Check(model.RotateNodeLocal(0, Quaternion(h, 0, 0, h)),
+                  "RotateNodeLocal");
+            Check(std::fabs(model.GetJointPalette(0)[0].m[5]) < 0.5f,
+                  "palette reflects rotated pose");
+
+            // 重載同一資料不累積
+            model.LoadFromData(m);
+            Check(model.GetJointCount(0) == 1 && model.HasSkinning(),
+                  "LoadFromData reload does not accumulate");
         }
     }
 

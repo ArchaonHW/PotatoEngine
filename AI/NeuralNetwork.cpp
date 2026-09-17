@@ -121,24 +121,28 @@ NeuralLayer::NeuralLayer(size_t inputSize, size_t outputSize, const std::string&
 
 std::vector<float> NeuralLayer::Forward(const std::vector<float>& input) {
     lastInput = input;
+    lastPreActivation.resize(outputSize);
     lastOutput.resize(outputSize);
-    
+
     for (size_t i = 0; i < outputSize; i++) {
         float sum = biases[i];
         for (size_t j = 0; j < inputSize; j++) {
             sum += weights[i][j] * input[j];
         }
+        lastPreActivation[i] = sum;
         lastOutput[i] = activation(sum);
     }
-    
+
     return lastOutput;
 }
 
 std::vector<float> NeuralLayer::Backward(const std::vector<float>& gradient, float learningRate) {
     std::vector<float> inputGradient(inputSize, 0.0f);
-    
+
     for (size_t i = 0; i < outputSize; i++) {
-        float delta = gradient[i] * activationDerivative(lastOutput[i]);
+        // 導數函數吃 pre-activation z——sigmoid/tanh 的導數定義在 z 上，
+        // 餵 lastOutput（已激活 y）會得到 σ(y)(1-σ(y)) 之類的錯誤梯度
+        float delta = gradient[i] * activationDerivative(lastPreActivation[i]);
         
         // Update weights
         for (size_t j = 0; j < inputSize; j++) {
@@ -151,6 +155,11 @@ std::vector<float> NeuralLayer::Backward(const std::vector<float>& gradient, flo
     }
     
     return inputGradient;
+}
+
+void NeuralLayer::SetSeed(unsigned int seed) {
+    rng.seed(seed);
+    InitializeWeights();
 }
 
 void NeuralLayer::SetWeights(const std::vector<std::vector<float>>& newWeights) {
@@ -178,7 +187,8 @@ void NeuralLayer::InitializeWeights(float scale) {
 
 NeuralNetwork::NeuralNetwork()
     : built(false)
-    , lossFunction("mse") {
+    , lossFunction("mse")
+    , rng(std::random_device{}()) {
     InitializeLossFunction();
 }
 
@@ -194,16 +204,24 @@ void NeuralNetwork::Build() {
     if (layerSizes.size() < 2) {
         throw std::runtime_error("Network must have at least 2 layers (input and output)");
     }
-    
+
     for (size_t i = 0; i < layerSizes.size() - 1; i++) {
         size_t inputSize = layerSizes[i];
         size_t outputSize = layerSizes[i + 1];
         std::string activation = layerActivations[i];
-        
-        layers.push_back(std::make_unique<NeuralLayer>(inputSize, outputSize, activation));
+
+        auto layer = std::make_unique<NeuralLayer>(inputSize, outputSize, activation);
+        // rng 每層各取一個 seed——Build(seed) 下各層初始化可重現且彼此獨立
+        layer->SetSeed(rng());
+        layers.push_back(std::move(layer));
     }
-    
+
     built = true;
+}
+
+void NeuralNetwork::Build(unsigned int seed) {
+    rng.seed(seed);
+    Build();
 }
 
 std::vector<float> NeuralNetwork::Forward(const std::vector<float>& input) {
@@ -259,7 +277,7 @@ void NeuralNetwork::Train(const std::vector<std::vector<float>>& inputs,
         // Shuffle indices
         std::vector<size_t> indices(datasetSize);
         for (size_t i = 0; i < datasetSize; i++) indices[i] = i;
-        std::shuffle(indices.begin(), indices.end(), std::mt19937(std::random_device{}()));
+        std::shuffle(indices.begin(), indices.end(), rng);
         
         // Mini-batch training
         for (size_t i = 0; i < datasetSize; i += batchSize) {

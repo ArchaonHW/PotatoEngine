@@ -107,13 +107,17 @@ public:
     
     // Random initialization
     void InitializeWeights(float scale = 0.01f);
-    
+
+    // 以固定 seed 重建權重——呼叫後本層初始化可重現
+    void SetSeed(unsigned int seed);
+
 private:
     size_t inputSize;
     size_t outputSize;
     std::vector<std::vector<float>> weights;
     std::vector<float> biases;
     std::vector<float> lastInput;
+    std::vector<float> lastPreActivation;  // 激活前的加權和 z（Backward 導數需要 z 而非 y）
     std::vector<float> lastOutput;
     std::string activationType;
     
@@ -133,6 +137,8 @@ public:
     // Architecture
     void AddLayer(size_t size, const std::string& activation = "relu");
     void Build();
+    // 以固定 seed 建構——各層權重與 Train shuffle 皆可重現
+    void Build(unsigned int seed);
     
     // Forward pass
     std::vector<float> Forward(const std::vector<float>& input);
@@ -177,6 +183,7 @@ private:
     std::vector<std::string> layerActivations;
     bool built;
     std::string lossFunction;
+    std::mt19937 rng;  // Build(seed)/Train shuffle 共用
     
     // Loss function and gradient
     std::function<float(const std::vector<float>&, const std::vector<float>&)> lossFn;

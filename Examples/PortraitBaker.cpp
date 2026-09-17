@@ -19,6 +19,7 @@
 #include "Rendering/ImageCodec.h"
 
 #include <imgui.h>
+#include <imgui_internal.h>   // ImFontAtlasBuildLegacyPreloadAllGlyphRanges
 
 #include <algorithm>
 #include <cmath>
@@ -282,25 +283,33 @@ uint32_t NextCodepoint(const char*& s) {
 
 class TextRenderer {
 public:
-    bool Load(const char* fontPath, float sizePx) {
+    // sizes：預先建立的字號集合（每個 size 一個 ImFontBaked）。
+    // 1.92+ glyph 惰性載入依賴 frame 迴圈；此處無 frame，改用
+    // ImFontAtlasBuildLegacyPreloadAllGlyphRanges 一次烘好全部字形。
+    bool Load(const char* fontPath, std::initializer_list<float> sizes) {
         atlas_ = std::make_unique<ImFontAtlas>();
         font_ = atlas_->AddFontFromFileTTF(
-            fontPath, sizePx, nullptr,
+            fontPath, 0.0f, nullptr,
             atlas_->GetGlyphRangesChineseFull());
         if (!font_) return false;
-        atlas_->Build();
-        // ImGui 1.92+：字形資料改掛在 ImFontBaked（依字號烘焙）
-        baked_ = font_->GetFontBaked(font_->LegacySize);
-        return baked_ != nullptr;
+        ImFontAtlasBuildLegacyPreloadAllGlyphRanges(atlas_.get());
+        for (float s : sizes) {
+            ImFontBaked* b = font_->GetFontBaked(s);
+            if (b) bakes_[s] = b;
+        }
+        atlas_->GetTexDataAsRGBA32(&tex_, &tw_, &th_);
+        return tex_ != nullptr && !bakes_.empty();
     }
-    bool Ready() const { return baked_ != nullptr; }
+    bool Ready() const { return !bakes_.empty(); }
 
-    float TextWidth(const std::string& utf8) const {
+    float TextWidth(const std::string& utf8, float size) const {
+        ImFontBaked* baked = Baked(size);
+        if (!baked) return 0.0f;
         float w = 0.0f;
         const char* p = utf8.c_str();
         while (*p) {
             uint32_t cp = NextCodepoint(p);
-            const ImFontGlyph* g = baked_->FindGlyph((ImWchar)cp);
+            const ImFontGlyph* g = baked->FindGlyphNoFallback((ImWchar)cp);
             w += g ? g->AdvanceX : 0.0f;
         }
         return w;
@@ -308,49 +317,37 @@ public:
 
     // 水平置中繪製；y 為字形頂端
     void DrawCentered(Canvas& cv, float cx, float y, const std::string& utf8,
-                      RGBA color, float spacing = 0.0f) const {
-        if (!baked_) return;
-        float w = TextWidth(utf8);
-        size_t n = std::strlen(utf8.c_str());  // spacing 以「字元數」計
+                      float size, RGBA color, float spacing = 0.0f) const {
+        ImFontBaked* baked = Baked(size);
+        if (!baked || !tex_) return;
+        float w = TextWidth(utf8, size);
         int chars = 0;
         { const char* q = utf8.c_str(); while (*q) { NextCodepoint(q); ++chars; } }
         w += spacing * (chars - 1);
         float penX = cx - w * 0.5f;
         const char* p = utf8.c_str();
-        (void)n;
-        // 1.92+ 字形採惰性載入：先把本字串全部載入，避免繪製途中 atlas
-        // 貼圖重建導致已取的像素指標失效
-        { const char* q = utf8.c_str();
-          while (*q) baked_->FindGlyph((ImWchar)NextCodepoint(q)); }
-        unsigned char* tex = nullptr;
-        int tw = 0, th = 0;
-        atlas_->GetTexDataAsRGBA32(&tex, &tw, &th);
-        static bool dumped = false;
-        if (!dumped && *p) {
-            dumped = true;
-            const char* q = utf8.c_str();
-            uint32_t cp0 = NextCodepoint(q);
-            const ImFontGlyph* g0 = baked_->FindGlyph((ImWchar)cp0);
-            printf("[dbg] cp=%u X=[%.1f..%.1f] Y=[%.1f..%.1f] U=[%.4f..%.4f] V=[%.4f..%.4f] adv=%.1f tex=%dx%d bakedSize=%.1f density=%.2f\n",
-                   cp0, g0->X0, g0->X1, g0->Y0, g0->Y1,
-                   g0->U0, g0->U1, g0->V0, g0->V1, g0->AdvanceX, tw, th,
-                   baked_->Size, baked_->RasterizerDensity);
-        }
         while (*p) {
             uint32_t cp = NextCodepoint(p);
-            const ImFontGlyph* g = baked_->FindGlyph((ImWchar)cp);
-            if (!g) continue;
+            const ImFontGlyph* g = baked->FindGlyphNoFallback((ImWchar)cp);
+            if (!g || !g->Visible) { if (g) penX += g->AdvanceX + spacing; continue; }
             int gx0 = static_cast<int>(penX + g->X0);
             int gy0 = static_cast<int>(y + g->Y0);
             int gw = static_cast<int>(g->X1 - g->X0);
             int gh = static_cast<int>(g->Y1 - g->Y0);
-            int u0 = static_cast<int>(g->U0 * tw);
-            int v0 = static_cast<int>(g->V0 * th);
+            if (gw <= 0 || gh <= 0) {
+                penX += g->AdvanceX + spacing;
+                continue;
+            }
+            // oversample_h=2（≤36px 字號）時貼圖寬為版面寬兩倍：
+            // 以 quad→UV 比例做最近鄰採樣，不可 1:1 texel 對映
+            const float du = (g->U1 - g->U0) / static_cast<float>(gw);
+            const float dv = (g->V1 - g->V0) / static_cast<float>(gh);
             for (int gy = 0; gy < gh; ++gy) {
+                int tv = static_cast<int>((g->V0 + (gy + 0.5f) * dv) * th_);
                 for (int gx = 0; gx < gw; ++gx) {
-                    int tu = u0 + gx, tv = v0 + gy;
-                    if (tu < 0 || tv < 0 || tu >= tw || tv >= th) continue;
-                    uint8_t a = tex[(tv * tw + tu) * 4 + 3];
+                    int tu = static_cast<int>((g->U0 + (gx + 0.5f) * du) * tw_);
+                    if (tu < 0 || tv < 0 || tu >= tw_ || tv >= th_) continue;
+                    uint8_t a = tex_[(tv * tw_ + tu) * 4 + 3];
                     if (a == 0) continue;
                     cv.Blend(gx0 + gx, gy0 + gy,
                              RGBA::C(color.r, color.g, color.b, a));
@@ -361,9 +358,16 @@ public:
     }
 
 private:
+    ImFontBaked* Baked(float size) const {
+        auto it = bakes_.find(size);
+        return it != bakes_.end() ? it->second : nullptr;
+    }
+
     std::unique_ptr<ImFontAtlas> atlas_;
     ImFont* font_ = nullptr;
-    ImFontBaked* baked_ = nullptr;
+    std::unordered_map<float, ImFontBaked*> bakes_;
+    unsigned char* tex_ = nullptr;
+    int tw_ = 0, th_ = 0;
 };
 
 // ============================================================
@@ -625,12 +629,9 @@ void RenderCard(Canvas& img, const JsonValue& card,
     for (int i = 0; i < 5; ++i) {
         int v = stats[keys[i]].AsInt(0);
         if (smallFont && smallFont->Ready()) {
-            // 標籤文字（左對齊）：直接畫在 x=48
-            float tw = smallFont->TextWidth(names[i]);
-            (void)tw;
-            // 用 DrawCentered 需要中心點；改以 penX 手排——簡化：置中於 48+文字寬半
-            smallFont->DrawCentered(img, 48 + smallFont->TextWidth(names[i]) * 0.5f,
-                                    y, names[i], RGBA::C(200, 196, 190));
+            smallFont->DrawCentered(
+                img, 48 + smallFont->TextWidth(names[i]) * 0.5f,
+                y, names[i], RGBA::C(200, 196, 190));
         }
         img.StrokeRect(116, y + 4, 116 + 340, y + 22,
                        RGBA::C(90, 86, 96), 1);
@@ -638,8 +639,9 @@ void RenderCard(Canvas& img, const JsonValue& card,
         if (numFont && numFont->Ready()) {
             char buf[8];
             std::snprintf(buf, sizeof(buf), "%d", v);
-            numFont->DrawCentered(img, 466 + numFont->TextWidth(buf) * 0.5f,
-                                  y, buf, RGBA::C(230, 226, 220));
+            numFont->DrawCentered(
+                img, 466 + numFont->TextWidth(buf) * 0.5f,
+                y, buf, RGBA::C(230, 226, 220));
         }
         y += 30;
     }
@@ -679,7 +681,7 @@ int main(int argc, char** argv) {
         if (std::strcmp(argv[i], "--figure-only") == 0) figureOnly = true;
     }
 
-    // 字型（三種尺寸，對齊 Python 版 font() 用法）
+    // 字型（四種字號，對齊 Python 版 font() 用法）
     const char* kFontBold = "C:/Windows/Fonts/msjhbd.ttc";
     const char* kFontReg = "C:/Windows/Fonts/msjh.ttc";
     TextRenderer titleFont, labelFont, smallFont, numFont;
