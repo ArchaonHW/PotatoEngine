@@ -5,10 +5,14 @@
 //   2. 正交相機俯視 3x3 格子，種子化 RNG 把著色立方體放進某格
 //      （含格內位置 / Y 軸旋轉 / 顏色 jitter）→ label = 格子編號 0-8
 //   3. glReadPixels 抓幀 → output/synth_dataset/ 寫出
-//      img_XXXX.png + labels.csv + dataset.json
+//      img_XXXX.png + img_XXXX_depth.png + labels.csv + dataset.json
+//      （C-1：depth renderbuffer 讀回，正交投影下深度為線性，
+//       PNG 灰階 = (1-depth)*255——近亮遠暗、背景為黑）
 //   4. 每幀縮樣到 16x16 灰階（256 維輸入），餵進 AI::NeuralNetwork
 //      （256→48→9, sigmoid 輸出, MSE），144 train / 36 test
 //   5. 測試準確率 ≥ 0.80 → [PASS]
+//   6. 深度圖回歸驗證：16x16 深度 → (posX, posZ) 連續回歸
+//      （linear 輸出層），平均誤差 < 閾值 → [PASS]
 //
 // 無顯示環境：[SKIP] 並 exit 0（GLSmokeTest 慣例，CI/headless 不失敗）
 
@@ -152,7 +156,43 @@ struct Sample {
     float yawDeg = 0.0f;
     float tint = 1.0f;
     std::vector<unsigned char> rgba;   // 64*64*4，已翻轉為頂端列優先
+    std::vector<float> depth;          // 64*64，glDepth [0,1]，同列序
 };
+
+// 深度 float 圖 → 灰階 RGBA（近亮遠暗，背景=黑）
+void DepthToGray(const std::vector<float>& depth,
+                 std::vector<unsigned char>& outRGBA) {
+    const size_t n = depth.size();
+    outRGBA.resize(n * 4);
+    for (size_t i = 0; i < n; ++i) {
+        float g = 1.0f - depth[i];      // depth=1（far/背景）→ 黑
+        g = g < 0.0f ? 0.0f : (g > 1.0f ? 1.0f : g);
+        const unsigned char v = static_cast<unsigned char>(g * 255.0f);
+        outRGBA[i * 4 + 0] = v;
+        outRGBA[i * 4 + 1] = v;
+        outRGBA[i * 4 + 2] = v;
+        outRGBA[i * 4 + 3] = 255;
+    }
+}
+
+// 深度 float 圖 → 16x16 特徵（4x4 區塊平均「反轉深度」=1-d：
+// 背景 0、物體正訊號——輸入調節與亮度特徵一致，避免全 1 輸入
+// 使 relu 層壞死）
+std::vector<float> DepthToFeatures(const std::vector<float>& depth) {
+    std::vector<float> feat(kInputDim);
+    const int block = kImageSize / kFeatSize;
+    for (int fy = 0; fy < kFeatSize; ++fy) {
+        for (int fx = 0; fx < kFeatSize; ++fx) {
+            float sum = 0.0f;
+            for (int by = 0; by < block; ++by)
+                for (int bx = 0; bx < block; ++bx)
+                    sum += 1.0f - depth[static_cast<size_t>(fy * block + by) *
+                                        kImageSize + fx * block + bx];
+            feat[fy * kFeatSize + fx] = sum / (block * block);
+        }
+    }
+    return feat;
+}
 
 // RGBA → 16x16 灰階特徵（4x4 區塊平均亮度，正規化 [0,1]）
 std::vector<float> FrameToFeatures(const std::vector<unsigned char>& rgba) {
@@ -262,7 +302,7 @@ int main() {
             glDeleteRenderbuffers(1, &depthRb);
             break;
         }
-        csv << "filename,label,cell_col,cell_row,pos_x,pos_z,yaw_deg\n";
+        csv << "filename,depth_file,label,cell_col,cell_row,pos_x,pos_z,yaw_deg\n";
 
         bool renderFailed = false;
         const size_t rowBytes = static_cast<size_t>(kImageSize) * 4;
@@ -302,7 +342,24 @@ int main() {
                             rowBytes);
             }
 
-            // 寫 PNG + CSV
+            // 深度讀回（C-1）：GL_DEPTH_COMPONENT float [0,1]，同列序翻轉
+            s.depth.resize(static_cast<size_t>(kImageSize) * kImageSize);
+            {
+                std::vector<float> draw(s.depth.size());
+                glReadPixels(0, 0, kImageSize, kImageSize, GL_DEPTH_COMPONENT,
+                             GL_FLOAT, draw.data());
+                for (int y = 0; y < kImageSize; ++y) {
+                    std::memcpy(s.depth.data() +
+                                    static_cast<size_t>(y) * kImageSize,
+                                draw.data() +
+                                    static_cast<size_t>(kImageSize - 1 - y) *
+                                        kImageSize,
+                                static_cast<size_t>(kImageSize) *
+                                    sizeof(float));
+                }
+            }
+
+            // 寫 RGB PNG + 深度 PNG + CSV
             char name[32];
             std::snprintf(name, sizeof(name), "img_%04d.png", i);
             std::string full = std::string(kOutDir) + "/" + name;
@@ -314,8 +371,20 @@ int main() {
                 renderFailed = true;
                 break;
             }
-            csv << name << ',' << s.label << ',' << s.cellCol << ','
-                << s.cellRow << ',' << s.posX << ',' << s.posZ << ','
+            char dname[40];
+            std::snprintf(dname, sizeof(dname), "img_%04d_depth.png", i);
+            std::vector<unsigned char> depthRGBA;
+            DepthToGray(s.depth, depthRGBA);
+            if (!ImageCodec::WritePNGFile(std::string(kOutDir) + "/" + dname,
+                                          kImageSize, kImageSize,
+                                          depthRGBA.data(), &err)) {
+                printf("  [FAIL] 深度 PNG 寫出失敗 %s: %s\n", dname,
+                       err.c_str());
+                renderFailed = true;
+                break;
+            }
+            csv << name << ',' << dname << ',' << s.label << ',' << s.cellCol
+                << ',' << s.cellRow << ',' << s.posX << ',' << s.posZ << ','
                 << s.yawDeg << '\n';
         }
         csv.close();
@@ -345,7 +414,13 @@ int main() {
                   "\"cell_8\"],\n"
                << "  \"label_format\": \"cell_index = row * 3 + col\",\n"
                << "  \"feature_extract\": \"16x16 grayscale block-average\",\n"
-               << "  \"labels_file\": \"labels.csv\"\n"
+               << "  \"labels_file\": \"labels.csv\",\n"
+               << "  \"depth\": {\n"
+               << "    \"file_pattern\": \"img_XXXX_depth.png\",\n"
+               << "    \"format\": \"ortho linear depth, gray = (1-d)*255\",\n"
+               << "    \"near\": 0.1, \"far\": 20.0,\n"
+               << "    \"note\": \"near bright / far+background black\"\n"
+               << "  }\n"
                << "}\n";
         }
         printf("  [OK] 資料集寫出：%d 筆 -> %s/\n", kNumSamples, kOutDir);
@@ -437,6 +512,91 @@ int main() {
             break;
         }
         printf("  [PASS] 渲染 -> 資料 -> 學習 端到端通路驗證成功\n");
+
+        // ---- C-1：深度圖回歸驗證 ----
+        // 16x16 深度特徵 → (posX, posZ) 連續回歸（linear 輸出）。
+        // 座標範圍 [-1.28, 1.28]，正規化到 [0,1]。
+        {
+            std::vector<std::vector<float>> dTrainX, dTrainY,
+                                            dTestX, dTestY;
+            const float kNorm = 2.56f; // posX/Z ∈ [-1.28,1.28] → [0,1]
+            for (int c = 0; c < kNumClasses; ++c) {
+                std::vector<int> idx;
+                for (int i = 0; i < kNumSamples; ++i)
+                    if (samples[i].label == c) idx.push_back(i);
+                std::shuffle(idx.begin(), idx.end(), splitRng);
+                for (size_t k = 0; k < idx.size(); ++k) {
+                    const Sample& s = samples[idx[k]];
+                    std::vector<float> y = {
+                        (s.posX + 1.28f) / kNorm,
+                        (s.posZ + 1.28f) / kNorm};
+                    if (static_cast<int>(k) < kTrainPerClass) {
+                        dTrainX.push_back(DepthToFeatures(s.depth));
+                        dTrainY.push_back(y);
+                    } else {
+                        dTestX.push_back(DepthToFeatures(s.depth));
+                        dTestY.push_back(y);
+                    }
+                }
+            }
+
+            AI::NeuralNetwork dnet;
+            dnet.AddLayer(kInputDim, "relu");   // 與分類器同構：
+            dnet.AddLayer(48, "sigmoid");       // 256→48 sigmoid→2
+            // 輸出層必須 linear——預設 relu 會在加權和 <0 時梯度歸零，
+            // 網路塌縮成預測常數（loss 躺平）
+            dnet.AddLayer(2, "linear");
+            dnet.Build(kSeed ^ 0x51ab3f9du);
+            dnet.SetLossFunction("mse");
+            {
+                std::mt19937 dInit(kSeed ^ 0x27d4eb2fu);
+                for (const auto& layer : dnet.GetLayers()) {
+                    const size_t in = layer->GetInputSize();
+                    const size_t out = layer->GetOutputSize();
+                    const float bound = std::sqrt(6.0f / (in + out));
+                    std::uniform_real_distribution<float> wdist(-bound, bound);
+                    std::vector<std::vector<float>> w(
+                        out, std::vector<float>(in));
+                    for (auto& row : w)
+                        for (auto& v : row) v = wdist(dInit);
+                    layer->SetWeights(w);
+                    layer->SetBiases(std::vector<float>(out, 0.0f));
+                }
+            }
+
+            std::mt19937 dTrainRng(kSeed ^ 0x165667b1u);
+            const int dEpochs = 200;
+            const float dLr = 0.1f;
+            for (int ep = 0; ep < dEpochs; ++ep) {
+                std::vector<size_t> order(dTrainX.size());
+                std::iota(order.begin(), order.end(), 0);
+                std::shuffle(order.begin(), order.end(), dTrainRng);
+                float loss = 0.0f;
+                for (size_t idx : order)
+                    loss += dnet.TrainStep(dTrainX[idx], dTrainY[idx], dLr);
+                if (ep % 50 == 0 || ep == dEpochs - 1)
+                    printf("  depth epoch %3d  loss %.5f\n", ep,
+                           loss / dTrainX.size());
+            }
+
+            // 評估：世界座標平均誤差（格寬 1.0）
+            double errSum = 0.0;
+            for (size_t i = 0; i < dTestX.size(); ++i) {
+                const auto pred = dnet.Predict(dTestX[i]);
+                errSum += std::fabs(pred[0] - dTestY[i][0]) * kNorm +
+                          std::fabs(pred[1] - dTestY[i][1]) * kNorm;
+            }
+            const double meanErr = errSum / (dTestX.size() * 2);
+            printf("  深度回歸平均誤差：%.4f（格寬 1.0，門檻 0.15）\n",
+                   meanErr);
+            if (meanErr < 0.15) {
+                printf("  [PASS] 深度圖可回歸空間位置（C-1 驗證）\n");
+            } else {
+                printf("  [FAIL] 深度回歸誤差過大\n");
+                break;
+            }
+        }
+
         exitCode = 0;
     } while (false);
 
