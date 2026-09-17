@@ -305,6 +305,43 @@ const char* BuiltinShaders::SkinnedFragmentShader() {
     )";
 }
 
+const char* BuiltinShaders::MToonFragmentShader() {
+    // VRM MToon 簡化版：lit × mix(shadeColor, lightColor, ramp(NdotL))
+    return R"(
+        #version 330 core
+        out vec4 FragColor;
+
+        in vec3 FragPos;
+        in vec3 Normal;
+        in vec2 TexCoord;
+
+        uniform sampler2D texture1;
+        uniform bool useTexture;
+        uniform vec4 baseColorFactor;
+        uniform vec3 shadeColor;   // MToon _ShadeColor
+        uniform float shadeToony;  // MToon _ShadeToony（越大越硬邊）
+        uniform vec3 lightPos;
+        uniform vec3 lightColor;
+
+        void main() {
+            vec3 norm = normalize(Normal);
+            vec3 lightDir = normalize(lightPos - FragPos);
+            float nl = dot(norm, lightDir) * 0.5 + 0.5;
+
+            // toon ramp：shadeToony 控制明暗交界硬度
+            float edge = clamp(1.0 - shadeToony, 0.001, 1.0) * 0.5;
+            float ramp = smoothstep(0.5 - edge, 0.5 + edge, nl);
+
+            vec4 base = useTexture ? texture(texture1, TexCoord)
+                                   : vec4(1.0);
+            base *= baseColorFactor;
+            vec3 lit = base.rgb * lightColor;
+            vec3 shade = base.rgb * shadeColor;
+            FragColor = vec4(mix(shade, lit, ramp), base.a);
+        }
+    )";
+}
+
 // ============================================================================
 // ShaderCompiler 實現
 // ============================================================================
@@ -499,6 +536,9 @@ bool AdvancedShader::LoadBuiltin(const std::string& shaderName) {
         return LoadFromSource(BuiltinShaders::TextureVertexShader(), BuiltinShaders::TextureFragmentShader());
     } else if (shaderName == "skinned") {
         return LoadFromSource(BuiltinShaders::SkinnedVertexShader(), BuiltinShaders::SkinnedFragmentShader());
+    } else if (shaderName == "mtoon") {
+        // MToon 共用蒙皮頂點 shader（avatar 皆為蒙皮網格）
+        return LoadFromSource(BuiltinShaders::SkinnedVertexShader(), BuiltinShaders::MToonFragmentShader());
     }
     
     LOG_ERROR("Unknown builtin shader: " + shaderName);

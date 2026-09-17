@@ -53,6 +53,9 @@ public:
 
     // 蒙皮片段著色器（useTexture + baseColorFactor，配合內嵌貼圖）
     static const char* SkinnedFragmentShader();
+
+    // VRM MToon 片段著色器（toon ramp；頂點端共用 SkinnedVertexShader）
+    static const char* MToonFragmentShader();
 };
 
 /**
