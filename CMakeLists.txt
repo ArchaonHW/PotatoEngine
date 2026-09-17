@@ -456,6 +456,11 @@ add_executable(QuantumFogBattleTest Examples/QuantumFogBattleTest.cpp)
 target_include_directories(QuantumFogBattleTest PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(QuantumFogBattleTest Gameplay)
 
+# Q-8 疊加態效能基準（無頭、入 ctest）
+add_executable(QuantumBench Examples/QuantumBench.cpp)
+target_include_directories(QuantumBench PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(QuantumBench Gameplay)
+
 # 量子敵情霧可視化（ImGui：機率雲/觀測塌縮/情報時效）
 add_executable(QuantumFogDemo
     Examples/QuantumFogDemo.cpp
@@ -721,6 +726,7 @@ set(POTATO_TESTS
     QuantumTest
     QuasiRandomTest
     QuantumFogBattleTest
+    QuantumBench
     BattlePickerTest
     PlanningDeckTest
     SynthDataDemo
