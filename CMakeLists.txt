@@ -361,6 +361,7 @@ add_library(Gameplay STATIC
     Gameplay/Roster.cpp
     Gameplay/SageCommand.cpp
     Gameplay/QuantumFog.cpp
+    Gameplay/BattlePicker.cpp
 )
 target_include_directories(Gameplay PUBLIC ${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/Gameplay)
 # BattleSceneSync 需要場景圖/渲染類型;PotatoEngine 不依賴 Gameplay,無循環
@@ -409,6 +410,11 @@ target_link_libraries(SageCommandDemo glfw glad ${OPENGL_LIBRARIES} Gameplay)
 add_executable(QuantumTest Examples/QuantumTest.cpp)
 target_include_directories(QuantumTest PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(QuantumTest Quantum Gameplay)
+
+# RTS 點選層測試（headless：螢幕→射線→地面/小隊包圍球）
+add_executable(BattlePickerTest Examples/BattlePickerTest.cpp)
+target_include_directories(BattlePickerTest PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(BattlePickerTest Gameplay)
 
 # 量子敵情霧可視化（ImGui：機率雲/觀測塌縮/情報時效）
 add_executable(QuantumFogDemo
@@ -624,6 +630,7 @@ set(POTATO_TESTS
     DuanqiaoDemo
     SageCommandTest
     QuantumTest
+    BattlePickerTest
     SynthDataDemo
 )
 foreach(test_name IN LISTS POTATO_TESTS)
