@@ -184,6 +184,87 @@ static std::string BuildSkinnedGlb() {
     return glb;
 }
 
+// ---- VRM 擴充 GLB：蒙皮 + morph target + humanoid/expression/spring/MToon ----
+static std::string BuildVrmGlb() {
+    const char* json =
+        "{\"asset\":{\"version\":\"2.0\"},"
+        "\"scene\":0,\"scenes\":[{\"nodes\":[0]}],"
+        "\"nodes\":[{\"mesh\":0,\"skin\":0,\"name\":\"Hips\"}],"
+        "\"meshes\":[{\"primitives\":[{\"attributes\":{\"POSITION\":0,"
+        "\"JOINTS_0\":2,\"WEIGHTS_0\":3},\"indices\":1,\"mode\":4,"
+        "\"material\":0,\"targets\":[{\"POSITION\":5}]}]}],"
+        "\"materials\":[{\"name\":\"FaceMat\",\"pbrMetallicRoughness\":{}}],"
+        "\"skins\":[{\"joints\":[0],\"inverseBindMatrices\":4}],"
+        "\"accessors\":["
+        "{\"bufferView\":0,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"},"
+        "{\"bufferView\":1,\"componentType\":5123,\"count\":3,\"type\":\"SCALAR\"},"
+        "{\"bufferView\":2,\"componentType\":5121,\"count\":3,\"type\":\"VEC4\"},"
+        "{\"bufferView\":3,\"componentType\":5126,\"count\":3,\"type\":\"VEC4\"},"
+        "{\"bufferView\":4,\"componentType\":5126,\"count\":1,\"type\":\"MAT4\"},"
+        "{\"bufferView\":5,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"}],"
+        "\"bufferViews\":["
+        "{\"buffer\":0,\"byteOffset\":0,\"byteLength\":36},"
+        "{\"buffer\":0,\"byteOffset\":36,\"byteLength\":6},"
+        "{\"buffer\":0,\"byteOffset\":44,\"byteLength\":12},"
+        "{\"buffer\":0,\"byteOffset\":56,\"byteLength\":48},"
+        "{\"buffer\":0,\"byteOffset\":104,\"byteLength\":64},"
+        "{\"buffer\":0,\"byteOffset\":168,\"byteLength\":36}],"
+        "\"buffers\":[{\"byteLength\":204}],"
+        "\"extensions\":{\"VRM\":{"
+        "\"humanoid\":{\"humanBones\":[{\"bone\":\"hips\",\"node\":0,"
+        "\"useDefaultValues\":true}]},"
+        "\"blendShapeMaster\":{\"blendShapeGroups\":[{\"name\":\"Blink\","
+        "\"presetName\":\"blink\",\"isBinary\":false,"
+        "\"binds\":[{\"mesh\":0,\"index\":0,\"weight\":100}]}]},"
+        "\"secondaryAnimation\":{"
+        "\"colliderGroups\":[{\"node\":0,\"colliders\":[{\"offset\":"
+        "{\"x\":0,\"y\":0,\"z\":0},\"radius\":0.1}]}],"
+        "\"boneGroups\":[{\"stiffiness\":1.0,\"gravityPower\":0.1,"
+        "\"gravityDir\":{\"x\":1,\"y\":0,\"z\":0},\"dragForce\":0.4,"
+        "\"hitRadius\":0.02,\"bones\":[0],\"colliderGroups\":[0]}]},"
+        "\"materialProperties\":[{\"name\":\"FaceMat\","
+        "\"shader\":\"VRM/MToon\",\"floatProperties\":{\"_ShadeToony\":0.9},"
+        "\"vectorProperties\":{\"_ShadeColor\":[0.5,0.4,0.6,1]}}]}}}";
+    const float pos[9] = {0,0,0, 1,0,0, 0,1,0};
+    const unsigned short idx[3] = {0, 1, 2};
+    const unsigned char joints[12] = {0,0,0,0, 0,0,0,0, 0,0,0,0};
+    const float weights[12] = {1,0,0,0, 1,0,0,0, 1,0,0,0};
+    const float ibm[16] = {1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
+    const float morph[9] = {0,0.5f,0, 0,0.5f,0, 0,0.5f,0};
+
+    auto pad4 = [](size_t n) { return (4 - (n % 4)) % 4; };
+    std::string jsonChunk(json);
+    jsonChunk.append(pad4(jsonChunk.size()), ' ');
+    std::vector<unsigned char> bin;
+    bin.insert(bin.end(), (const unsigned char*)pos,
+               (const unsigned char*)pos + 36);
+    bin.insert(bin.end(), (const unsigned char*)idx,
+               (const unsigned char*)idx + 6);
+    bin.insert(bin.end(), pad4(bin.size()), 0);
+    bin.insert(bin.end(), joints, joints + 12);
+    bin.insert(bin.end(), (const unsigned char*)weights,
+               (const unsigned char*)weights + 48);
+    bin.insert(bin.end(), (const unsigned char*)ibm,
+               (const unsigned char*)ibm + 64);
+    bin.insert(bin.end(), (const unsigned char*)morph,
+               (const unsigned char*)morph + 36);
+
+    const uint32 totalLen =
+        12 + 8 + (uint32)jsonChunk.size() + 8 + (uint32)bin.size();
+    std::string glb;
+    glb.reserve(totalLen);
+    glb.append("glTF", 4);
+    uint32 ver = 2, len = totalLen;
+    glb.append((const char*)&ver, 4).append((const char*)&len, 4);
+    uint32 jlen = (uint32)jsonChunk.size(), jtype = 0x4E4F534A;
+    glb.append((const char*)&jlen, 4).append((const char*)&jtype, 4);
+    glb.append(jsonChunk);
+    uint32 blen = (uint32)bin.size(), btype = 0x004E4942;
+    glb.append((const char*)&blen, 4).append((const char*)&btype, 4);
+    glb.append((const char*)bin.data(), bin.size());
+    return glb;
+}
+
 static bool FileExists(const char* path) {
     FILE* f = nullptr;
 #ifdef _WIN32
@@ -289,6 +370,55 @@ int main() {
             model.LoadFromData(m);
             Check(model.GetJointCount(0) == 1 && model.HasSkinning(),
                   "LoadFromData reload does not accumulate");
+        }
+    }
+
+    // ---- VRM 擴充：humanoid / expression / spring bone / MToon ----
+    {
+        ModelData m;
+        std::string glb = BuildVrmGlb();
+        bool ok = GLTFLoader::LoadFromMemory(glb, m);
+        Check(ok && m.hasVrmExtension, "VRM GLB parses + extension detected");
+        if (ok) {
+            Check(m.vrm.humanoidBones.count("hips") == 1 &&
+                      m.vrm.humanoidBones["hips"] == 0,
+                  "humanoid bone map (hips→node0)");
+            Check(m.vrm.expressions.size() == 1 &&
+                      m.vrm.expressions[0].binds.size() == 1,
+                  "blendShape expression parsed");
+            Check(!m.meshes.empty() &&
+                      m.meshes[0].morphTargets.size() == 1 &&
+                      std::fabs(m.meshes[0].morphTargets[0]
+                                    .positionDeltas[1].y - 0.5f) < 1e-6f,
+                  "morph target delta decoded");
+            Check(m.vrm.boneGroups.size() == 1 &&
+                      m.vrm.colliderGroups.size() == 1,
+                  "spring bone + collider groups parsed");
+            auto mit = m.materials.find("FaceMat");
+            Check(mit != m.materials.end() && mit->second.mtoon &&
+                      std::fabs(mit->second.shadeToony - 0.9f) < 1e-6f,
+                  "MToon material parsed");
+
+            Model model;
+            Check(model.LoadFromData(m) && model.IsVrm(), "Model IsVrm");
+            Check(model.GetHumanoidBone("hips") == 0 &&
+                      model.GetHumanoidBone("head") == -1,
+                  "GetHumanoidBone");
+            Check(model.GetExpressionCount() == 1 &&
+                      model.GetExpressionName(0) == "Blink",
+                  "expression name");
+            Check(model.SetExpression("blink", 1.0f) &&
+                      model.SetExpression("Blink", 0.5f),
+                  "SetExpression by preset/name");
+            Check(!model.SetExpression("nonexistent", 1.0f),
+                  "SetExpression unknown name fails");
+            model.ClearExpressions();
+
+            // spring bone：重力沿 +x → node 0 應被轉動（palette 偏離 identity）
+            model.UpdateAnimation(0.016f);
+            const auto& p = model.GetJointPalette(0);
+            Check(p.size() == 1 && std::fabs(p[0].m[1]) > 1e-3f,
+                  "spring bone rotated the node");
         }
     }
 
