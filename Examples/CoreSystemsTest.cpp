@@ -36,15 +36,19 @@ public:
     RecordingSystem(std::vector<int>* orderLog, int id, int priority)
         : log(orderLog), sysID(id), sysPriority(priority) {}
 
+    void Initialize() override { initCount++; }
     void Update(float deltaTime) override {
         log->push_back(sysID);
         lastDeltaTime = deltaTime;
         updateCount++;
     }
+    void Shutdown() override { shutdownCount++; }
     int GetPriority() const override { return sysPriority; }
     const char* GetName() const override { return "RecordingSystem"; }
 
+    int initCount = 0;
     int updateCount = 0;
+    int shutdownCount = 0;
     float lastDeltaTime = 0.0f;
 
 private:
@@ -109,30 +113,37 @@ int main() {
         Check(ecs.GetEntityCount() == 0, "銷毀後存活數歸零");
         Check(!ecs.IsEntityValid(e1) && !ecs.IsEntityValid(e2), "銷毀後實體失效");
 
-        // LIFO：最後銷毀的 e2(ID=2) 先被回收
+        // 契約僅保證「已銷毀 ID 可重用」：e3/e4 應落在 {1,2} 且不與存活實體衝突
         Entity e3 = ecs.CreateEntity();
-        Check(e3.GetID() == 2, "ID 回收採 LIFO（後銷毀先重用）");
         Entity e4 = ecs.CreateEntity();
-        Check(e4.GetID() == 1, "LIFO 回收第二順位");
+        Check(e3.GetID() >= 1 && e3.GetID() <= 2, "回收實體重用已銷毀 ID（e3 屬於 {1,2}）");
+        Check(e4.GetID() >= 1 && e4.GetID() <= 2, "回收實體重用已銷毀 ID（e4 屬於 {1,2}）");
+        Check(e3.GetID() != e4.GetID(), "回收 ID 互不衝突");
+        Check(ecs.IsEntityValid(e3) && ecs.IsEntityValid(e4), "回收實體皆為有效");
         Entity e5 = ecs.CreateEntity();
-        Check(e5.GetID() == 3, "回收用盡後繼續遞增");
+        Check(e5.GetID() == 3, "回收用盡後配發新 ID 3");
         Check(ecs.GetEntityCount() == 3, "回收後存活數正確");
 
         // [2] ECS 組件：新增/查詢/寫入/移除/缺組件拋例外
+        // 整段包 try/catch：若前置檢查失敗，意外拋出記為 FAIL 而非中止測試程式
         printf("[2] ECS 組件操作\n");
         TestPosition pos;
         pos.x = 7.0f; pos.y = 8.0f; pos.z = 9.0f;
-        ecs.AddComponent(e3, pos);
-        Check(ecs.HasComponent<TestPosition>(e3), "AddComponent 後 HasComponent 為真");
-        Check(!ecs.HasComponent<TestVelocity>(e3), "未加的組件 HasComponent 為假");
+        try {
+            ecs.AddComponent(e3, pos);
+            Check(ecs.HasComponent<TestPosition>(e3), "AddComponent 後 HasComponent 為真");
+            Check(!ecs.HasComponent<TestVelocity>(e3), "未加的組件 HasComponent 為假");
 
-        TestPosition& ref = ecs.GetComponent<TestPosition>(e3);
-        Check(ref.x == 7.0f && ref.y == 8.0f && ref.z == 9.0f, "GetComponent 讀回寫入值");
-        ref.x = 42.0f;
-        Check(ecs.GetComponent<TestPosition>(e3).x == 42.0f, "GetComponent 回傳參照可寫入");
+            TestPosition& ref = ecs.GetComponent<TestPosition>(e3);
+            Check(ref.x == 7.0f && ref.y == 8.0f && ref.z == 9.0f, "GetComponent 讀回寫入值");
+            ref.x = 42.0f;
+            Check(ecs.GetComponent<TestPosition>(e3).x == 42.0f, "GetComponent 回傳參照可寫入");
 
-        ecs.RemoveComponent<TestPosition>(e3);
-        Check(!ecs.HasComponent<TestPosition>(e3), "RemoveComponent 後 HasComponent 為假");
+            ecs.RemoveComponent<TestPosition>(e3);
+            Check(!ecs.HasComponent<TestPosition>(e3), "RemoveComponent 後 HasComponent 為假");
+        } catch (const std::out_of_range&) {
+            Check(false, "組件操作意外拋出 std::out_of_range");
+        }
 
         bool threw = false;
         try {
@@ -143,9 +154,13 @@ int main() {
         Check(threw, "GetComponent 缺組件拋 std::out_of_range");
 
         // DestroyEntity 連帶移除該實體所有組件
-        ecs.AddComponent(e3, pos);
-        ecs.DestroyEntity(e3);
-        Check(!ecs.HasComponent<TestPosition>(e3), "DestroyEntity 連帶移除組件");
+        try {
+            ecs.AddComponent(e3, pos);
+            ecs.DestroyEntity(e3);
+            Check(!ecs.HasComponent<TestPosition>(e3), "DestroyEntity 連帶移除組件");
+        } catch (const std::out_of_range&) {
+            Check(false, "DestroyEntity 組件清理意外拋出 std::out_of_range");
+        }
 
         // [3] ECS 系統：Initialize 前 Update 為 no-op；之後依優先級升冪執行
         printf("[3] ECS 系統優先級\n");
@@ -160,14 +175,27 @@ int main() {
         Check(order.empty(), "Initialize 前 Update 為 no-op");
 
         ecs.Initialize();
+        Check(sysHigh->initCount == 1 && sysLow->initCount == 1,
+              "Initialize 觸發所有系統的 Initialize");
         ecs.Update(0.5f);
         Check(order.size() == 2, "Update 執行所有註冊系統");
         Check(order.size() == 2 && order[0] == 1 && order[1] == 100,
               "系統依優先級升冪執行");
         Check(sysLow->lastDeltaTime == 0.5f && sysHigh->lastDeltaTime == 0.5f,
               "Update 正確傳遞 deltaTime");
+        Check(sysLow->updateCount == 1 && sysHigh->updateCount == 1,
+              "updateCount 記錄 Update 次數");
+
+        // RemoveSystem：移除的系統收到 Shutdown 且不再 Update
+        ecs.RemoveSystem(sysHigh);
+        Check(ecs.GetSystemCount() == 1, "RemoveSystem 後系統數遞減");
+        Check(sysHigh->shutdownCount == 1, "RemoveSystem 觸發該系統 Shutdown");
+        ecs.Update(0.5f);
+        Check(sysHigh->updateCount == 1 && sysLow->updateCount == 2,
+              "被移除的系統不再 Update");
 
         ecs.Shutdown();
+        Check(sysLow->shutdownCount == 1, "Shutdown 觸發剩餘系統的 Shutdown");
     }
 
     // [4] EventBus 訂閱與同步派發
