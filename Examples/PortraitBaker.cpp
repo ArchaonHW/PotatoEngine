@@ -376,7 +376,10 @@ RGBA UniformColor(const std::string& faction) {
         {"國民政府", RGBA::C(96, 88, 62)},  {"中央軍", RGBA::C(96, 88, 62)},
         {"東北軍",   RGBA::C(70, 78, 62)},  {"桂系",   RGBA::C(82, 90, 70)},
         {"西北軍",   RGBA::C(76, 76, 84)},  {"晉綏軍", RGBA::C(88, 84, 76)},
-        {"遠征軍",   RGBA::C(104, 96, 68)},
+        {"遠征軍",   RGBA::C(104, 96, 68)}, {"直系",   RGBA::C(72, 80, 92)},
+        {"皖系",     RGBA::C(84, 80, 88)},  {"滇系",   RGBA::C(68, 82, 64)},
+        {"川系",     RGBA::C(94, 80, 62)},  {"青馬",   RGBA::C(60, 62, 66)},
+        {"粵系",     RGBA::C(80, 88, 66)},  {"日軍",   RGBA::C(86, 78, 58)},
     };
     for (const auto& kv : table)
         if (faction == kv.first) return kv.second;
@@ -482,12 +485,13 @@ void DrawPortrait(Canvas& img, const JsonValue& card,
         // 帽舌
         float brim_y = head_top + r * 0.10f;
         img.FillEllipse(cx, brim_y + r * 0.08f, hw + 14, r * 0.08f, kCapBand);
-        // 帽徽（白日章：白圈+藍心）
+        // 帽徽：國軍白日章（白圈+藍心）；日軍日章（白圈+紅心）
         float bd = r * 0.09f;
         float badge_y = crown_top + r * 0.10f + bd;
+        bool ija = (card["faction"].AsString() == "日軍");
         img.FillEllipse(cx, badge_y, bd, bd, RGBA::C(228, 226, 220));
         img.FillEllipse(cx, badge_y, bd * 0.55f, bd * 0.55f,
-                        RGBA::C(70, 90, 150));
+                        ija ? RGBA::C(178, 44, 40) : RGBA::C(70, 90, 150));
     } else {
         // 光頭：剃髮青影（上半 chord）
         float t0 = head_top - 4, t1 = cy - r * 0.05f;
@@ -603,8 +607,10 @@ void RenderCard(Canvas& img, const JsonValue& card,
                                 RGBA::C(240, 236, 228), 6);
     }
     if (labelFont && labelFont->Ready()) {
-        std::string sub = "字 " + card["courtesyName"].AsString() +
-                          " · " + card["epithet"].AsString();
+        // 無字（如日軍將領）省略「字」前綴，只印稱號
+        std::string courtesy = card["courtesyName"].AsString();
+        std::string sub = (courtesy.empty() ? "" : "字 " + courtesy + " · ") +
+                          card["epithet"].AsString();
         labelFont->DrawCentered(img, kCardW / 2.0f, 486, sub, frame);
         labelFont->DrawCentered(img, kCardW / 2.0f, 518,
                                 card["faction"].AsString(),

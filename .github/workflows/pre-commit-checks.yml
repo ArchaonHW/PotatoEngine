@@ -63,3 +63,9 @@ jobs:
       run: |
         cd build
         cmake --build . --config Release
+
+    # POTATO_TESTS 全為無頭測試（GL 依賴的測試自行 skip），必須在 CI 執行
+    - name: Run tests
+      run: |
+        cd build
+        ctest --output-on-failure

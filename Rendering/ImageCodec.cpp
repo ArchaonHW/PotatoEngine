@@ -1,6 +1,7 @@
 #include "Rendering/ImageCodec.h"
 #include "Logging/Logger.h"
 
+#include <array>
 #include <cstring>
 #include <fstream>
 
@@ -127,12 +128,14 @@ bool BuildFixedTables(Huffman& lit, Huffman& dist) {
 }
 
 // 解一個 deflate block 的 literal/length 序列
+// maxOut：輸出上限——超過即中止，防解壓炸彈在 size 檢查前耗盡記憶體
 bool InflateCodes(BitReader& br, const Huffman& lit, const Huffman& dist,
-                  std::vector<uint8>& out) {
+                  std::vector<uint8>& out, size_t maxOut) {
     for (;;) {
         int sym = lit.Decode(br);
         if (sym < 0) return false;
         if (sym < 256) {
+            if (out.size() >= maxOut) return false;
             out.push_back(static_cast<uint8>(sym));
             continue;
         }
@@ -145,6 +148,7 @@ bool InflateCodes(BitReader& br, const Huffman& lit, const Huffman& dist,
         if (dsym < 0 || dsym >= 30) return false;
         size_t distance = static_cast<size_t>(kDistBase[dsym]) + br.GetBits(kDistExtra[dsym]);
         if (distance == 0 || distance > out.size()) return false;
+        if (out.size() + length > maxOut) return false;
 
         // 重疊複製需逐位元組
         size_t src = out.size() - distance;
@@ -154,7 +158,8 @@ bool InflateCodes(BitReader& br, const Huffman& lit, const Huffman& dist,
 }
 
 // 解析 raw deflate 串流（不含 zlib header）
-bool InflateRaw(const uint8* data, size_t size, std::vector<uint8>& out) {
+bool InflateRaw(const uint8* data, size_t size, std::vector<uint8>& out,
+                size_t maxOut) {
     BitReader br;
     br.data = data;
     br.size = size;
@@ -175,12 +180,13 @@ bool InflateRaw(const uint8* data, size_t size, std::vector<uint8>& out) {
             for (uint32 i = 0; i < len; ++i) {
                 uint8 v;
                 if (!br.ReadByte(v)) return false;
+                if (out.size() >= maxOut) return false;
                 out.push_back(v);
             }
         } else if (btype == 1) {
             Huffman lit, dist;
             if (!BuildFixedTables(lit, dist)) return false;
-            if (!InflateCodes(br, lit, dist, out)) return false;
+            if (!InflateCodes(br, lit, dist, out, maxOut)) return false;
         } else if (btype == 2) {
             int hlit = static_cast<int>(br.GetBits(5)) + 257;
             int hdist = static_cast<int>(br.GetBits(5)) + 1;
@@ -223,7 +229,7 @@ bool InflateRaw(const uint8* data, size_t size, std::vector<uint8>& out) {
             Huffman lit, dist;
             if (!lit.Build(lens.data(), hlit)) return false;
             if (!dist.Build(lens.data() + hlit, hdist)) return false;
-            if (!InflateCodes(br, lit, dist, out)) return false;
+            if (!InflateCodes(br, lit, dist, out, maxOut)) return false;
         } else {
             return false;  // btype==3 保留
         }
@@ -235,7 +241,7 @@ bool InflateRaw(const uint8* data, size_t size, std::vector<uint8>& out) {
 
 // zlib 包裝：CMF/FLG + deflate + adler32
 bool InflateZlib(const uint8* data, size_t size, std::vector<uint8>& out,
-                 std::string* err) {
+                 std::string* err, size_t maxOut) {
     if (size < 6) {
         if (err) *err = "zlib stream too short";
         return false;
@@ -249,7 +255,7 @@ bool InflateZlib(const uint8* data, size_t size, std::vector<uint8>& out,
         if (err) *err = "preset dictionary not supported";
         return false;
     }
-    if (!InflateRaw(data + 2, size - 2, out)) {
+    if (!InflateRaw(data + 2, size - 2, out, maxOut)) {
         if (err) *err = "deflate inflate failed";
         return false;
     }
@@ -261,17 +267,18 @@ bool InflateZlib(const uint8* data, size_t size, std::vector<uint8>& out,
 // ---------------------------------------------------------------------------
 
 uint32 Crc32(const uint8* data, size_t size, uint32 crc = 0xFFFFFFFFu) {
-    static uint32 table[256];
-    static bool init = false;
-    if (!init) {
+    // magic static：C++11 起函式內 static 初始化是執行緒安全的，
+    // 取代舊的 table+init flag 手寫惰性初始化（有 data race）
+    static const std::array<uint32, 256> table = [] {
+        std::array<uint32, 256> t{};
         for (uint32 i = 0; i < 256; ++i) {
             uint32 c = i;
             for (int k = 0; k < 8; ++k)
                 c = (c & 1) ? (0xEDB88320u ^ (c >> 1)) : (c >> 1);
-            table[i] = c;
+            t[i] = c;
         }
-        init = true;
-    }
+        return t;
+    }();
     for (size_t i = 0; i < size; ++i)
         crc = table[(crc ^ data[i]) & 0xFF] ^ (crc >> 8);
     return crc;
@@ -402,8 +409,7 @@ bool DecodePNG(const uint8* data, size_t size,
                 paletteAlpha.assign(payload, payload + len);
             } else if (len >= 2) {
                 if (colorType == 0) {
-                    trnsGray = ReadBE32(payload) >> 16;  // tRNS 是 16-bit 值
-                    trnsGray = (ReadBE32(payload) >> 16);  // 取高 16 位的前 2 bytes
+                    trnsGray = (payload[0] << 8) | payload[1];  // tRNS 是 16-bit 值
                 }
                 if (len >= 6 && colorType == 2) {
                     trnsR = (payload[0] << 8) | payload[1];
@@ -427,12 +433,13 @@ bool DecodePNG(const uint8* data, size_t size,
     if (channels == 0) return fail("unsupported color type");
     if (colorType == 3 && palette.empty()) return fail("palette image without PLTE");
 
-    std::vector<uint8> raw;
-    if (!InflateZlib(idat.data(), idat.size(), raw, err))
-        return false;
-
     size_t lineSz = static_cast<size_t>(w) * channels;
     size_t expect = (lineSz + 1) * static_cast<size_t>(h);
+
+    std::vector<uint8> raw;
+    if (!InflateZlib(idat.data(), idat.size(), raw, err, expect))
+        return false;
+
     if (raw.size() != expect) return fail("PNG decompressed size mismatch");
 
     if (!Unfilter(raw.data(), w, h, channels, err))
@@ -458,7 +465,9 @@ bool DecodePNG(const uint8* data, size_t size,
                 }
                 case 2:
                     d[0] = s[0]; d[1] = s[1]; d[2] = s[2];
-                    d[3] = (s[0] == (trnsR & 0xFF) && s[1] == (trnsG & 0xFF) &&
+                    // trnsR==0x10000 = 無 tRNS chunk；與灰階路徑同型只比對低 byte
+                    d[3] = (trnsR <= 0xFF &&
+                            s[0] == (trnsR & 0xFF) && s[1] == (trnsG & 0xFF) &&
                             s[2] == (trnsB & 0xFF)) ? 0 : 255;
                     break;
                 case 3: {
@@ -534,7 +543,7 @@ uint32 Adler32(const uint8* data, size_t size) {
 
 bool EncodePNG(int w, int h, const uint8* rgba,
                std::vector<uint8>& outPNG, std::string* err) {
-    if (w <= 0 || h <= 0 || !rgba) {
+    if (w <= 0 || h <= 0 || w > 16384 || h > 16384 || !rgba) {
         if (err) *err = "invalid image parameters";
         return false;
     }

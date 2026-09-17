@@ -179,25 +179,25 @@ bool ParseArgs(int argc, char** argv, Args& args) {
     args.output = argv[i + 1];
     for (i += 2; i < argc; ++i) {
         const char* a = argv[i];
-        auto next = [&](const char* flag) -> const char* {
+        auto next = [&]() -> const char* {
             return (i + 1 < argc) ? argv[++i] : nullptr;
         };
         if (std::strcmp(a, "--region") == 0) {
-            const char* v = next(a); if (!v) return false;
+            const char* v = next(); if (!v) return false;
             args.region = v;
         } else if (std::strcmp(a, "--regions") == 0) {
-            const char* v = next(a); if (!v) return false;
+            const char* v = next(); if (!v) return false;
             args.regions = SplitStr(v, ',');
         } else if (std::strcmp(a, "--yaw") == 0) {
-            const char* v = next(a); if (!v) return false;
+            const char* v = next(); if (!v) return false;
             args.yawDeg = static_cast<float>(std::atof(v));
         } else if (std::strcmp(a, "--yaws") == 0) {
-            const char* v = next(a); if (!v) return false;
+            const char* v = next(); if (!v) return false;
             args.yaws.clear();
             for (const auto& tok : SplitStr(v, ','))
                 args.yaws.push_back(static_cast<float>(std::atof(tok.c_str())));
         } else if (std::strcmp(a, "--size") == 0) {
-            const char* v = next(a); if (!v) return false;
+            const char* v = next(); if (!v) return false;
             int wh[2];
             if (!ParseInts(v, 'x', wh, 2) ||
                 wh[0] <= 0 || wh[1] <= 0 || wh[0] > 8192 || wh[1] > 8192) {
@@ -206,16 +206,16 @@ bool ParseArgs(int argc, char** argv, Args& args) {
             }
             args.width = wh[0]; args.height = wh[1];
         } else if (std::strcmp(a, "--bg") == 0) {
-            const char* v = next(a); if (!v) return false;
+            const char* v = next(); if (!v) return false;
             int rgba[4];
             if (!ParseInts(v, ',', rgba, 4)) { printf("無效的 --bg\n"); return false; }
             for (int k = 0; k < 4; ++k) args.bg[k] = rgba[k] / 255.0f;
         } else if (std::strcmp(a, "--pose") == 0) {
-            const char* v = next(a); if (!v) return false;
+            const char* v = next(); if (!v) return false;
             args.pose = (std::strcmp(v, "none") == 0) ? PoseMode::None
                                                       : PoseMode::Relax;
         } else if (std::strcmp(a, "--labels") == 0) {
-            const char* v = next(a); if (!v) return false;
+            const char* v = next(); if (!v) return false;
             args.labelsPath = v;
         } else {
             printf("未知參數: %s\n", a);
@@ -243,7 +243,7 @@ bool HasAny(const std::string& n, std::initializer_list<const char*> subs) {
 
 // 在 model 的節點名稱裡找出指定側/部位的骨頭 index。
 // 支援 VRM0(J_Bip_L_UpperArm)、VRM1(leftUpperArm)、Mixamo(LeftArm)。
-int FindBone(Model& model, const ModelData& md, bool left,
+int FindBone(const ModelData& md, bool left,
              std::initializer_list<const char*> parts,
              std::initializer_list<const char*> excludes = {}) {
     static const char* kLeft[] = {"_l_", "left", "_l.", "lft"};
@@ -273,13 +273,13 @@ void ApplyRelaxPose(Model& model, const ModelData& md) {
     const float kDeg = 3.14159265f / 180.0f;
     int applied = 0;
     for (const Rule& r : rules) {
-        int upper = FindBone(model, md, r.left,
+        int upper = FindBone(md, r.left,
                              {"upperarm", "upper_arm", "arm"},
                              {"forearm", "lowerarm", "lower_arm", "hand",
                               "fore", "elbow"});
-        int fore = FindBone(model, md, r.left,
+        int fore = FindBone(md, r.left,
                             {"forearm", "lowerarm", "lower_arm", "elbow"});
-        int shoulder = FindBone(model, md, r.left, {"shoulder", "clavicle"});
+        int shoulder = FindBone(md, r.left, {"shoulder", "clavicle"});
         if (upper >= 0) {
             model.RotateNodeLocal(upper, Quaternion::FromAxisAngle(
                 Vector3(0, 0, 1), r.upperZ * kDeg));
@@ -302,7 +302,7 @@ void ApplyRelaxPose(Model& model, const ModelData& md) {
 
 // ---- AABB：姿後頂點（CPU 蒙皮），band-limited ----------------------------
 
-Vector3 SkinPoint(const ModelData& md, const MeshData& mesh,
+Vector3 SkinPoint(const MeshData& mesh,
                   size_t vi, const Model& model) {
     const Vector3& p = mesh.vertices[vi].position;
     if (mesh.joints.empty() || vi >= mesh.joints.size() ||
@@ -355,7 +355,7 @@ void ComputeFraming(const ModelData& md, const Model& model,
     float by0 = 1e30f, by1 = -1e30f;
     for (const auto& mesh : md.meshes) {
         for (size_t vi = 0; vi < mesh.vertices.size(); ++vi) {
-            Vector3 p = SkinPoint(md, mesh, vi, model);
+            Vector3 p = SkinPoint(mesh, vi, model);
             if (p.y < y0 || p.y > y1) continue;
             bx0 = (std::min)(bx0, p.x); bx1 = (std::max)(bx1, p.x);
             bz0 = (std::min)(bz0, p.z); bz1 = (std::max)(bz1, p.z);
@@ -521,11 +521,17 @@ int main(int argc, char** argv) {
     }
 
     int exitCode = 1;
+    if (args.batch) {
+        std::error_code ec;
+        std::filesystem::create_directories(args.output, ec);
+    }
     std::ofstream labels;
     if (!args.labelsPath.empty()) {
         labels.open(args.labelsPath);
         if (labels)
             labels << "filename,model,region,yaw,width,height\n";
+        else
+            printf("[警告] 無法開啟標註檔 %s\n", args.labelsPath.c_str());
     }
 
     do {

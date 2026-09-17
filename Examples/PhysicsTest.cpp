@@ -359,9 +359,41 @@ int main() {
         a->SetCollisionCallback([world, b](const CollisionData&) {
             world->DestroyBody(b); // 在回調內銷毀對方
         });
+        bool bCallbackFired = false;
+        b->SetCollisionCallback([&](const CollisionData&) { bCallbackFired = true; });
         world->Step(1.0f / 60.0f);
         world->Step(1.0f / 60.0f); // 再一步確認無殘留野指標
         Check(true, "回調內 DestroyBody 後續 Step 不 crash");
+        Check(!bCallbackFired, "B 被銷毀後其回調不再觸發");
+    }
+
+    // [15b] 回調內 DestroyBody 銷毀自己：B 的回調仍收到 A 的 ID
+    {
+        PhysicsManager& mgr = PhysicsManager::GetInstance();
+        PhysicsWorld* world = mgr.CreateWorld("cb_destroy_self");
+        world->Initialize();
+        world->SetGravity(Vector3::Zero());
+
+        PhysicsBody* a = world->CreateBody();
+        a->SetCollisionShape(CollisionShape::Sphere);
+        a->SetCollisionShapeDimensions(Vector3(0.5f, 0.5f, 0.5f));
+        a->SetPosition(Vector3::Zero());
+        a->SetGravityEnabled(false);
+
+        PhysicsBody* b = world->CreateBody();
+        b->SetCollisionShape(CollisionShape::Sphere);
+        b->SetCollisionShapeDimensions(Vector3(0.5f, 0.5f, 0.5f));
+        b->SetPosition(Vector3(0.6f, 0.0f, 0.0f));
+        b->SetGravityEnabled(false);
+
+        const int aID = a->GetBodyID();
+        a->SetCollisionCallback([world, a](const CollisionData&) {
+            world->DestroyBody(a); // 在回調內銷毀自己
+        });
+        int bGotOther = -1;
+        b->SetCollisionCallback([&](const CollisionData& c) { bGotOther = c.otherBodyID; });
+        world->Step(1.0f / 60.0f);
+        Check(bGotOther == aID, "A 自毀後 B 回調收到 otherBodyID=A", (float)bGotOther, (float)aID);
     }
 
     // [16] kinematic 布林旗標與 bodyType 語義一致：Dynamic+SetKinematic(true) 不受力

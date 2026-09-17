@@ -551,6 +551,10 @@ add_executable(TimeTest Examples/TimeTest.cpp)
 target_include_directories(TimeTest PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(TimeTest PotatoEngine)
 
+add_executable(ImageCodecTest Examples/ImageCodecTest.cpp)
+target_include_directories(ImageCodecTest PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(ImageCodecTest PotatoEngine)
+
 # GL 煙霧測試：需要顯示環境,無顯示時自行 SKIP
 add_executable(GLSmokeTest Examples/GLSmokeTest.cpp)
 target_include_directories(GLSmokeTest PRIVATE ${CMAKE_SOURCE_DIR})
@@ -635,6 +639,7 @@ set(POTATO_TESTS
     InputTest
     AudioTest
     TimeTest
+    ImageCodecTest
     GLSmokeTest
     SecurityRedTeamTest
     AITestSuite

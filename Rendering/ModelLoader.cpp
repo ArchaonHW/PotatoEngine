@@ -162,6 +162,8 @@ bool OBJLoader::ParseOBJ(const std::string& content, ModelData& modelData) {
 
 bool OBJLoader::ParseMTL(const std::string& content, std::unordered_map<std::string, MaterialData>& materials) {
     // 簡化實現：跳過材質解析
+    (void)content;
+    (void)materials;
     return true;
 }
 
@@ -225,6 +227,10 @@ void OBJLoader::OptimizeMeshes(ModelData& modelData) {
 // ============================================================================
 
 namespace {
+
+// VRM 0.x 擴充解析（定義在後）
+void GltfParseVrmExtension(const tinygltf::Model& g, ModelData& modelData,
+                           const std::vector<int>& gltfToModel);
 
 // 讀取 accessor 的原始指標與元素資訊；失敗回傳 nullptr
 const unsigned char* GltfAccessorData(const tinygltf::Model& g, int accessorIdx,
@@ -339,14 +345,22 @@ Matrix4 GltfNodeLocalMatrix(const tinygltf::Node& node, ModelData::NodeData& out
 void GltfConvertPrimitive(const tinygltf::Model& g,
                           const tinygltf::Primitive& prim,
                           const Matrix4& world, bool skinned,
-                          int skinIndex, ModelData& modelData) {
+                          int skinIndex, int sourceMesh, int sourcePrim,
+                          ModelData& modelData) {
     auto posIt = prim.attributes.find("POSITION");
     if (posIt == prim.attributes.end()) return; // 無位置資料的面片直接略過
 
     MeshData mesh;
     mesh.skinIndex = skinIndex;
+    mesh.sourceMesh = sourceMesh;
+    mesh.sourcePrim = sourcePrim;
     const int posAccIdx = posIt->second;
-    const size_t vertCount = g.accessors[posAccIdx].count;
+    // 經 GltfAccessorData 取得邊界驗證過的 count——直接用 accessor.count
+    // 在畸形檔（巨大 count + 小 buffer）會 resize 失敗炸記憶體
+    size_t vertCount; int posNc; int posCt; size_t posStride;
+    if (!GltfAccessorData(g, posAccIdx, vertCount, posNc, posCt, posStride)) {
+        return; // accessor 越界或引用無效
+    }
     mesh.vertices.resize(vertCount);
 
     const bool bake = !skinned; // glTF 規範：skinned mesh 忽略節點 transform
@@ -405,6 +419,28 @@ void GltfConvertPrimitive(const tinygltf::Model& g,
         }
     }
 
+    // morph targets（glTF targets[]）：POSITION/NORMAL delta
+    for (const auto& target : prim.targets) {
+        MeshData::MorphTarget mt;
+        auto tp = target.find("POSITION");
+        if (tp != target.end()) {
+            mt.positionDeltas.reserve(vertCount);
+            for (size_t i = 0; i < vertCount; ++i) {
+                mt.positionDeltas.push_back(GltfReadVec3(g, tp->second, i));
+            }
+        }
+        auto tn = target.find("NORMAL");
+        if (tn != target.end()) {
+            mt.normalDeltas.reserve(vertCount);
+            for (size_t i = 0; i < vertCount; ++i) {
+                mt.normalDeltas.push_back(GltfReadVec3(g, tn->second, i));
+            }
+        }
+        if (!mt.positionDeltas.empty() || !mt.normalDeltas.empty()) {
+            mesh.morphTargets.push_back(std::move(mt));
+        }
+    }
+
     // indices（無索引面片採順序索引）
     if (prim.indices >= 0) {
         size_t count; int nc, ct; size_t stride;
@@ -413,8 +449,11 @@ void GltfConvertPrimitive(const tinygltf::Model& g,
         if (base) {
             mesh.indices.reserve(count);
             for (size_t i = 0; i < count; ++i) {
-                mesh.indices.push_back(
-                    (uint32)GltfComponentToFloat(base + i * stride, ct, false));
+                uint32 ix = (uint32)GltfComponentToFloat(base + i * stride, ct, false);
+                // 畸形索引（>= vertCount）會讓 glDrawElements 讀越界 → 丟棄
+                if (ix < vertCount) {
+                    mesh.indices.push_back(ix);
+                }
             }
         }
     } else {
@@ -466,9 +505,11 @@ void GltfConvertPrimitive(const tinygltf::Model& g,
 
 void GltfWalkNode(const tinygltf::Model& g, int nodeIdx, int parentIdx,
                   const Matrix4& parentWorld, ModelData& modelData,
-                  std::vector<char>& visited, std::vector<int>& gltfToModel) {
-    // 節點環保護：glTF 規格無環，但畸形/惡意檔案可能有——visited 防無窮遞迴
-    if (visited[nodeIdx]) return;
+                  std::vector<char>& visited, std::vector<int>& gltfToModel,
+                  int depth = 0) {
+    // 節點環保護：glTF 規格無環，但畸形/惡意檔案可能有——visited 防無窮遞迴；
+    // 深度上限防極深線性鏈造成 stack overflow
+    if (depth > 256 || visited[nodeIdx]) return;
     visited[nodeIdx] = 1;
     const tinygltf::Node& node = g.nodes[nodeIdx];
     ModelData::NodeData nd;
@@ -480,14 +521,16 @@ void GltfWalkNode(const tinygltf::Model& g, int nodeIdx, int parentIdx,
     nd.mesh = (int)modelData.meshes.size();
     if (node.mesh >= 0 && node.mesh < (int)g.meshes.size()) {
         const tinygltf::Mesh& gm = g.meshes[node.mesh];
-        for (const auto& prim : gm.primitives) {
+        for (size_t pi = 0; pi < gm.primitives.size(); ++pi) {
+            const tinygltf::Primitive& prim = gm.primitives[pi];
             if (prim.mode != TINYGLTF_MODE_TRIANGLES) continue;
             // JOINTS_0 與 WEIGHTS_0 必須成對存在才算蒙皮——缺 WEIGHTS_0
             // 時退回靜態烘焙（否則頂點留在 mesh space 又走不到 skinned 路徑）
             const bool skinned =
                 prim.attributes.find("JOINTS_0") != prim.attributes.end() &&
                 prim.attributes.find("WEIGHTS_0") != prim.attributes.end();
-            GltfConvertPrimitive(g, prim, world, skinned, node.skin, modelData);
+            GltfConvertPrimitive(g, prim, world, skinned, node.skin,
+                                 node.mesh, (int)pi, modelData);
         }
     }
     nd.meshCount = (int)modelData.meshes.size() - nd.mesh;
@@ -499,7 +542,7 @@ void GltfWalkNode(const tinygltf::Model& g, int nodeIdx, int parentIdx,
     for (int child : node.children) {
         if (child >= 0 && child < (int)g.nodes.size()) {
             GltfWalkNode(g, child, selfIdx, world, modelData, visited,
-                         gltfToModel);
+                         gltfToModel, depth + 1);
         }
     }
 }
@@ -516,6 +559,7 @@ bool GltfConvert(const tinygltf::Model& g, ModelData& modelData,
     std::vector<int> gltfToModel(g.nodes.size(), -1);
     int sceneIdx = g.defaultScene >= 0 ? g.defaultScene
                                        : (g.scenes.empty() ? -1 : 0);
+    if (sceneIdx >= (int)g.scenes.size()) sceneIdx = -1; // 畸形 defaultScene 防越界
     if (sceneIdx >= 0) {
         for (int root : g.scenes[sceneIdx].nodes) {
             if (root >= 0 && root < (int)g.nodes.size()) {
@@ -551,7 +595,8 @@ bool GltfConvert(const tinygltf::Model& g, ModelData& modelData,
             size_t count; int nc, ct; size_t stride;
             const unsigned char* base = GltfAccessorData(
                 g, gs.inverseBindMatrices, count, nc, ct, stride);
-            if (base && ct == TINYGLTF_COMPONENT_TYPE_FLOAT) {
+            if (base && ct == TINYGLTF_COMPONENT_TYPE_FLOAT && nc == 16) {
+                // IBM 必須是 MAT4（16 float）；VEC4 等會讓 stride 解讀錯位
                 sd.inverseBindMatrices.reserve(count);
                 for (size_t i = 0; i < count; ++i) {
                     Matrix4 m(reinterpret_cast<const float*>(base + i * stride));
@@ -589,15 +634,30 @@ bool GltfConvert(const tinygltf::Model& g, ModelData& modelData,
             if (s.output >= 0 && s.output < (int)g.accessors.size()) {
                 const auto& outAcc = g.accessors[s.output];
                 size_t n = outAcc.count;
-                smp.values.reserve(n);
-                for (size_t i = 0; i < n; ++i) {
-                    int outNc = tinygltf::GetNumComponentsInType(
-                        static_cast<uint32_t>(outAcc.type));
-                    if (outNc >= 4) {
-                        smp.values.push_back(GltfReadVec4(g, s.output, i));
-                    } else {
-                        Vector3 v3 = GltfReadVec3(g, s.output, i);
-                        smp.values.push_back(Vector4(v3.x, v3.y, v3.z, 0.0f));
+                int outNc = tinygltf::GetNumComponentsInType(
+                    static_cast<uint32_t>(outAcc.type));
+                if (outNc == 1) {
+                    // SCALAR 輸出：morph weights 通道——扁平存（每 key 數個權重）
+                    smp.scalarValues.reserve(n);
+                    size_t sc; int snc, sct; size_t sstride;
+                    const unsigned char* outBase =
+                        GltfAccessorData(g, s.output, sc, snc, sct, sstride);
+                    if (outBase) {
+                        for (size_t i = 0; i < n && i < sc; ++i) {
+                            smp.scalarValues.push_back(GltfComponentToFloat(
+                                outBase + i * sstride, sct, outAcc.normalized));
+                        }
+                    }
+                } else {
+                    smp.values.reserve(n);
+                    for (size_t i = 0; i < n; ++i) {
+                        if (outNc >= 4) {
+                            smp.values.push_back(GltfReadVec4(g, s.output, i));
+                        } else {
+                            Vector3 v3 = GltfReadVec3(g, s.output, i);
+                            smp.values.push_back(
+                                Vector4(v3.x, v3.y, v3.z, 0.0f));
+                        }
                     }
                 }
             }
@@ -620,14 +680,28 @@ bool GltfConvert(const tinygltf::Model& g, ModelData& modelData,
                 if (smp.values.size() >= smp.times.size() * mul) {
                     v2.resize(smp.times.size() * mul);
                 }
+                // scalarValues（weights）：每 key N 個，N = count/keys
+                const size_t sPerKey =
+                    (!smp.scalarValues.empty() && !smp.times.empty())
+                        ? smp.scalarValues.size() / smp.times.size() : 0;
+                std::vector<float> sv2;
+                if (sPerKey > 0 &&
+                    smp.scalarValues.size() >= smp.times.size() * sPerKey) {
+                    sv2.resize(smp.scalarValues.size());
+                }
                 for (size_t i = 0; i < order.size(); ++i) {
                     t2[i] = smp.times[order[i]];
                     for (size_t c = 0; c < mul && !v2.empty(); ++c) {
                         v2[i * mul + c] = smp.values[order[i] * mul + c];
                     }
+                    for (size_t c = 0; c < sPerKey && !sv2.empty(); ++c) {
+                        sv2[i * sPerKey + c] =
+                            smp.scalarValues[order[i] * sPerKey + c];
+                    }
                 }
                 smp.times.swap(t2);
                 if (!v2.empty()) smp.values.swap(v2);
+                if (!sv2.empty()) smp.scalarValues.swap(sv2);
             }
             clip.samplers.push_back(std::move(smp));
         }
@@ -649,6 +723,9 @@ bool GltfConvert(const tinygltf::Model& g, ModelData& modelData,
         modelData.animations.push_back(std::move(clip));
     }
 
+    // VRM 0.x 擴充（humanoid/blendshape/spring bone/MToon）
+    GltfParseVrmExtension(g, modelData, gltfToModel);
+
     if (modelData.meshes.empty()) {
         LOG_ERROR("glTF/VRM contains no triangle primitives: " + name);
         return false;
@@ -656,14 +733,224 @@ bool GltfConvert(const tinygltf::Model& g, ModelData& modelData,
     return true;
 }
 
+// ---- VRM 0.x 擴充解析（tinygltf::Value 樹）----
+
+const tinygltf::Value* VrmFind(const tinygltf::Value& obj, const char* key) {
+    if (!obj.IsObject()) return nullptr;
+    const auto& o = obj.Get<tinygltf::Value::Object>();
+    auto it = o.find(key);
+    return it != o.end() ? &it->second : nullptr;
+}
+
+double VrmNum(const tinygltf::Value* v, double def = 0.0) {
+    return (v && v->IsNumber()) ? v->GetNumberAsDouble() : def;
+}
+
+int VrmInt(const tinygltf::Value* v, int def = -1) {
+    return (v && v->IsNumber()) ? v->GetNumberAsInt() : def;
+}
+
+std::string VrmStr(const tinygltf::Value* v) {
+    return (v && v->IsString()) ? v->Get<std::string>() : std::string();
+}
+
+Vector3 VrmVec3(const tinygltf::Value* v, const Vector3& def) {
+    if (!v || !v->IsObject()) return def;
+    return Vector3((float)VrmNum(VrmFind(*v, "x"), def.x),
+                   (float)VrmNum(VrmFind(*v, "y"), def.y),
+                   (float)VrmNum(VrmFind(*v, "z"), def.z));
+}
+
+// vectorProperties 的顏色是 4 元素 array
+Vector3 VrmColor3(const tinygltf::Value* arr, const Vector3& def) {
+    if (!arr || !arr->IsArray() || arr->Size() < 3) return def;
+    return Vector3((float)arr->Get(0).GetNumberAsDouble(),
+                   (float)arr->Get(1).GetNumberAsDouble(),
+                   (float)arr->Get(2).GetNumberAsDouble());
+}
+
+void GltfParseVrmExtension(const tinygltf::Model& g, ModelData& modelData,
+                           const std::vector<int>& gltfToModel) {
+    auto vit = g.extensions.find("VRM");
+    if (vit == g.extensions.end() || !vit->second.IsObject()) return;
+    const tinygltf::Value& vrm = vit->second;
+    ModelData::VrmData& out = modelData.vrm;
+
+    auto remapNode = [&](int gltfIdx) {
+        return (gltfIdx >= 0 && gltfIdx < (int)gltfToModel.size())
+                   ? gltfToModel[gltfIdx] : -1;
+    };
+
+    // humanoid.humanBones[]：{bone:"hips", node:N, useDefaultValues:true}
+    if (const tinygltf::Value* humanoid = VrmFind(vrm, "humanoid")) {
+        if (const tinygltf::Value* bones = VrmFind(*humanoid, "humanBones")) {
+            if (bones->IsArray()) {
+                for (size_t i = 0; i < bones->Size(); ++i) {
+                    const tinygltf::Value& b = bones->Get(i);
+                    std::string boneName = VrmStr(VrmFind(b, "bone"));
+                    int ni = remapNode(VrmInt(VrmFind(b, "node")));
+                    if (!boneName.empty() && ni >= 0) {
+                        out.humanoidBones[boneName] = ni;
+                    }
+                }
+            }
+        }
+    }
+
+    // blendShapeMaster.blendShapeGroups[] → expressions
+    if (const tinygltf::Value* bsm = VrmFind(vrm, "blendShapeMaster")) {
+        if (const tinygltf::Value* groups =
+                VrmFind(*bsm, "blendShapeGroups")) {
+            if (groups->IsArray()) {
+                for (size_t i = 0; i < groups->Size(); ++i) {
+                    const tinygltf::Value& grp = groups->Get(i);
+                    ModelData::VrmData::Expression expr;
+                    expr.name = VrmStr(VrmFind(grp, "name"));
+                    expr.presetName = VrmStr(VrmFind(grp, "presetName"));
+                    if (const tinygltf::Value* binds = VrmFind(grp, "binds")) {
+                        if (binds->IsArray()) {
+                            for (size_t j = 0; j < binds->Size(); ++j) {
+                                const tinygltf::Value& bd = binds->Get(j);
+                                ModelData::VrmData::Expression::Bind b;
+                                b.sourceMesh = VrmInt(VrmFind(bd, "mesh"));
+                                b.targetIndex = VrmInt(VrmFind(bd, "index"));
+                                b.weight = (float)VrmNum(
+                                    VrmFind(bd, "weight"), 0.0);
+                                expr.binds.push_back(b);
+                            }
+                        }
+                    }
+                    out.expressions.push_back(std::move(expr));
+                }
+            }
+        }
+    }
+
+    // secondaryAnimation：colliderGroups + boneGroups（spring bone）
+    if (const tinygltf::Value* sec = VrmFind(vrm, "secondaryAnimation")) {
+        if (const tinygltf::Value* cgs = VrmFind(*sec, "colliderGroups")) {
+            if (cgs->IsArray()) {
+                for (size_t i = 0; i < cgs->Size(); ++i) {
+                    const tinygltf::Value& cg = cgs->Get(i);
+                    ModelData::VrmData::ColliderGroup grp;
+                    grp.node = remapNode(VrmInt(VrmFind(cg, "node")));
+                    if (const tinygltf::Value* cols =
+                            VrmFind(cg, "colliders")) {
+                        if (cols->IsArray()) {
+                            for (size_t j = 0; j < cols->Size(); ++j) {
+                                const tinygltf::Value& c = cols->Get(j);
+                                ModelData::VrmData::Collider col;
+                                col.offset =
+                                    VrmVec3(VrmFind(c, "offset"), Vector3());
+                                col.radius = (float)VrmNum(
+                                    VrmFind(c, "radius"), 0.0);
+                                grp.colliders.push_back(col);
+                            }
+                        }
+                    }
+                    out.colliderGroups.push_back(std::move(grp));
+                }
+            }
+        }
+        if (const tinygltf::Value* bgs = VrmFind(*sec, "boneGroups")) {
+            if (bgs->IsArray()) {
+                for (size_t i = 0; i < bgs->Size(); ++i) {
+                    const tinygltf::Value& bg = bgs->Get(i);
+                    ModelData::VrmData::BoneGroup grp;
+                    grp.stiffness = (float)VrmNum(
+                        VrmFind(bg, "stiffiness"), 1.0); // VRM 0.x 拼法
+                    grp.gravityPower = (float)VrmNum(
+                        VrmFind(bg, "gravityPower"), 0.0);
+                    grp.gravityDir = VrmVec3(VrmFind(bg, "gravityDir"),
+                                             Vector3(0, -1, 0));
+                    grp.dragForce =
+                        (float)VrmNum(VrmFind(bg, "dragForce"), 0.4f);
+                    grp.hitRadius =
+                        (float)VrmNum(VrmFind(bg, "hitRadius"), 0.0f);
+                    if (const tinygltf::Value* bones = VrmFind(bg, "bones")) {
+                        if (bones->IsArray()) {
+                            for (size_t j = 0; j < bones->Size(); ++j) {
+                                int ni = remapNode(bones->Get(j).GetNumberAsInt());
+                                if (ni >= 0) grp.bones.push_back(ni);
+                            }
+                        }
+                    }
+                    if (const tinygltf::Value* cgs2 =
+                            VrmFind(bg, "colliderGroups")) {
+                        if (cgs2->IsArray()) {
+                            for (size_t j = 0; j < cgs2->Size(); ++j) {
+                                if (cgs2->Get(j).IsNumber()) {
+                                    grp.colliderGroups.push_back(
+                                        cgs2->Get(j).GetNumberAsInt());
+                                }
+                            }
+                        }
+                    }
+                    out.boneGroups.push_back(std::move(grp));
+                }
+            }
+        }
+    }
+
+    // materialProperties[] → MToon 參數（依 name 對應 glTF material）
+    if (const tinygltf::Value* mps = VrmFind(vrm, "materialProperties")) {
+        if (mps->IsArray()) {
+            for (size_t i = 0; i < mps->Size(); ++i) {
+                const tinygltf::Value& mp = mps->Get(i);
+                std::string shader = VrmStr(VrmFind(mp, "shader"));
+                if (shader.find("MToon") == std::string::npos) continue;
+                // 依 name 對應；找不到就依序對應 materials[i]
+                std::string mpName = VrmStr(VrmFind(mp, "name"));
+                std::string matName = mpName;
+                if (matName.empty() && i < g.materials.size()) {
+                    matName = g.materials[i].name.empty()
+                                  ? "gltf_mat_" + std::to_string(i)
+                                  : g.materials[i].name;
+                }
+                auto mit = modelData.materials.find(matName);
+                if (mit == modelData.materials.end() &&
+                    i < g.materials.size()) {
+                    std::string alt = g.materials[i].name.empty()
+                                          ? "gltf_mat_" + std::to_string(i)
+                                          : g.materials[i].name;
+                    mit = modelData.materials.find(alt);
+                }
+                if (mit == modelData.materials.end()) continue;
+                MaterialData& md = mit->second;
+                md.mtoon = true;
+                if (const tinygltf::Value* fp =
+                        VrmFind(mp, "floatProperties")) {
+                    md.shadeToony =
+                        (float)VrmNum(VrmFind(*fp, "_ShadeToony"), 0.9);
+                    if (const tinygltf::Value* ow =
+                            VrmFind(*fp, "_OutlineWidth")) {
+                        md.outlineWidth = (float)ow->GetNumberAsDouble();
+                    }
+                }
+                if (const tinygltf::Value* vp =
+                        VrmFind(mp, "vectorProperties")) {
+                    md.shadeColor = VrmColor3(VrmFind(*vp, "_ShadeColor"),
+                                              Vector3(0, 0, 0));
+                    md.outlineColor = VrmColor3(VrmFind(*vp, "_OutlineColor"),
+                                                Vector3(0, 0, 0));
+                }
+            }
+        }
+    }
+}
+
+
+
 } // namespace
 
 bool GLTFLoader::LoadFromFile(const std::string& path, ModelData& modelData) {
     tinygltf::TinyGLTF loader;
     tinygltf::Model gltf;
     std::string err, warn;
-    const bool ascii = path.size() >= 5 &&
-        path.compare(path.size() - 5, 5, ".gltf") == 0;
+    // 大小寫不敏感副檔名比對：.GLTF 也走 ASCII 路徑
+    std::string ext = path.size() >= 5 ? path.substr(path.size() - 5) : "";
+    for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
+    const bool ascii = ext == ".gltf";
     const bool ok = ascii
         ? loader.LoadASCIIFromFile(&gltf, &err, &warn, path)
         : loader.LoadBinaryFromFile(&gltf, &err, &warn, path);
@@ -762,12 +1049,26 @@ bool Model::LoadFromData(const ModelData& modelData) {
     nodeWorld.clear();
     activeAnimation = -1;
     animationTime = 0.0f;
+    hasVrm = false;
+    humanoidBones.clear();
+    vrmExpressions.clear();
+    vrmColliderGroups.clear();
+    vrmBoneGroups.clear();
+    meshDataToMorph.clear();
+    sourceMeshToMd.clear();
+    morphRuntimes.clear();
+    springStates.clear();
 
     // 創建網格：有 JOINTS_0/WEIGHTS_0 的走 SkinnedMesh，其餘走一般 Mesh
-    for (const auto& meshData : modelData.meshes) {
+    // meshDataOut[mi] = 產出的 mesh（供 morph runtime 回寫頂點）
+    std::vector<Mesh*> staticOut(modelData.meshes.size(), nullptr);
+    std::vector<SkinnedMesh*> skinnedOut(modelData.meshes.size(), nullptr);
+    std::vector<std::vector<SkinnedVertex>> skinnedVerts(modelData.meshes.size());
+    for (size_t mi = 0; mi < modelData.meshes.size(); ++mi) {
+        const MeshData& meshData = modelData.meshes[mi];
         if (!meshData.joints.empty()) {
             auto mesh = MakeUnique<SkinnedMesh>();
-            std::vector<SkinnedVertex> vertices;
+            std::vector<SkinnedVertex>& vertices = skinnedVerts[mi];
             vertices.reserve(meshData.vertices.size());
             for (size_t i = 0; i < meshData.vertices.size(); ++i) {
                 const ModelVertex& mv = meshData.vertices[i];
@@ -791,6 +1092,7 @@ bool Model::LoadFromData(const ModelData& modelData) {
             mesh->SetIndices(meshData.indices);
             mesh->SetSkinIndex(meshData.skinIndex);
             skinnedMeshMaterialNames.push_back(meshData.materialName);
+            skinnedOut[mi] = mesh.get();
             skinnedMeshes.push_back(std::move(mesh));
             continue;
         }
@@ -813,6 +1115,7 @@ bool Model::LoadFromData(const ModelData& modelData) {
         mesh->SetIndices(meshData.indices);
 
         meshMaterialNames.push_back(meshData.materialName);
+        staticOut[mi] = mesh.get();
         meshes.push_back(std::move(mesh));
     }
 
@@ -828,6 +1131,73 @@ bool Model::LoadFromData(const ModelData& modelData) {
                                     Matrix4::Identity());
         }
         EvaluatePose(); // bind pose 預設
+    }
+
+    // ---- VRM / morph / spring bone 執行期資料 ----
+    hasVrm = modelData.hasVrmExtension;
+    humanoidBones = modelData.vrm.humanoidBones;
+    vrmExpressions = modelData.vrm.expressions;
+    vrmColliderGroups = modelData.vrm.colliderGroups;
+    vrmBoneGroups = modelData.vrm.boneGroups;
+
+    // glTF mesh 索引 → meshData 索引（一個 glTF mesh 可拆多 primitive）
+    for (size_t mi = 0; mi < modelData.meshes.size(); ++mi) {
+        if (modelData.meshes[mi].sourceMesh >= 0) {
+            sourceMeshToMd[modelData.meshes[mi].sourceMesh].push_back((int)mi);
+        }
+    }
+
+    // morph target 執行期：保存原始頂點 + 每 target 權重
+    meshDataToMorph.assign(modelData.meshes.size(), -1);
+    for (size_t mi = 0; mi < modelData.meshes.size(); ++mi) {
+        const MeshData& md = modelData.meshes[mi];
+        if (md.morphTargets.empty()) continue;
+        MorphRuntime rt;
+        rt.meshDataIndex = (int)mi;
+        rt.staticMesh = staticOut[mi];
+        rt.skinnedMesh = skinnedOut[mi];
+        rt.targets = md.morphTargets;
+        rt.weights.assign(rt.targets.size(), 0.0f);
+        rt.exprWeights.assign(rt.targets.size(), 0.0f);
+        // base：保留完整頂點（skinned 含 joints/weights）
+        rt.base.reserve(md.vertices.size());
+        if (rt.skinnedMesh) {
+            rt.base = skinnedVerts[mi];
+        } else {
+            for (const ModelVertex& mv : md.vertices) {
+                SkinnedVertex v;
+                v.position = mv.position;
+                v.normal = mv.normal;
+                v.texCoord = mv.texCoord;
+                v.tangent = mv.tangent;
+                v.bitangent = mv.bitangent;
+                rt.base.push_back(v);
+            }
+        }
+        meshDataToMorph[mi] = (int)morphRuntimes.size();
+        morphRuntimes.push_back(std::move(rt));
+    }
+
+    // spring bone 初始狀態：bone 末端 = 第一個 child 的 local 平移
+    // （無 child 時用 hitRadius 或 5cm 預設長度）
+    for (size_t gi = 0; gi < vrmBoneGroups.size(); ++gi) {
+        for (int bn : vrmBoneGroups[gi].bones) {
+            if (bn < 0 || bn >= (int)animNodes.size()) continue;
+            SpringState st;
+            st.node = bn;
+            st.groupIndex = (int)gi;
+            Vector3 tailLocal(0.0f, 0.05f, 0.0f); // 預設 5cm
+            // 優先取第一個 child 的平移當 bone 方向
+            for (size_t ci = 0; ci < animNodes.size(); ++ci) {
+                if (animNodes[ci].parent == bn) {
+                    tailLocal = animNodes[ci].translation;
+                    break;
+                }
+            }
+            st.restLen = std::max(tailLocal.Length(), 0.001f);
+            st.tailLocal = tailLocal.Normalized() * st.restLen;
+            springStates.push_back(st);
+        }
     }
 
     // 內嵌貼圖（glTF/VRM）→ GPU texture；檔案路徑貼圖維持原行為
@@ -860,7 +1230,14 @@ void Model::BindMeshMaterial(size_t meshIndex, const std::string& matName,
     // 初始為 0，不設會讓整個模型變黑/透明
     Vector3 baseColor(1.0f, 1.0f, 1.0f);
     auto mit = materialDefs.find(matName);
-    if (mit != materialDefs.end()) baseColor = mit->second.diffuse;
+    if (mit != materialDefs.end()) {
+        baseColor = mit->second.diffuse;
+        if (mit->second.mtoon) {
+            // MToon 陰影參數（builtin "mtoon" shader 使用）
+            shader.SetVec3("shadeColor", mit->second.shadeColor);
+            shader.SetFloat("shadeToony", mit->second.shadeToony);
+        }
+    }
     shader.SetVec4("baseColorFactor", baseColor.x, baseColor.y, baseColor.z,
                    1.0f);
 
@@ -1005,6 +1382,7 @@ void Model::UpdateAnimation(float dt) {
         }
     }
     EvaluatePose();
+    UpdateSpringBones(dt); // VRM spring bone（無則 no-op）
 }
 
 // 在 sampler 的 keyframe 時間軸上取樣；回傳值語意依 channel path 而定
@@ -1098,6 +1476,25 @@ void Model::EvaluatePose() {
         if (clip) {
             for (const auto& ch : clip->channels) {
                 if (ch.node != (int)i) continue;
+                if (ch.path == ModelData::AnimationClip::Path::Weights) {
+                    // morph 權重：寫入該 node 掛的 mesh 的 morph runtime
+                    std::vector<float> wv;
+                    SampleWeightsChannel(*clip, ch, animationTime, wv);
+                    const ModelData::NodeData& wnd = animNodes[i];
+                    for (int m = wnd.mesh;
+                         m >= 0 && m < wnd.mesh + wnd.meshCount &&
+                         m < (int)meshDataToMorph.size(); ++m) {
+                        int mi = meshDataToMorph[m];
+                        if (mi < 0) continue;
+                        MorphRuntime& rt = morphRuntimes[mi];
+                        for (size_t j = 0;
+                             j < rt.weights.size() && j < wv.size(); ++j) {
+                            rt.weights[j] = wv[j];
+                        }
+                        rt.dirty = true;
+                    }
+                    continue;
+                }
                 Vector4 v = SampleChannel(*clip, ch, animationTime);
                 switch (ch.path) {
                 case ModelData::AnimationClip::Path::Translation:
@@ -1107,7 +1504,7 @@ void Model::EvaluatePose() {
                 case ModelData::AnimationClip::Path::Scale:
                     s = Vector3(v.x, v.y, v.z); useMatrix = false; break;
                 case ModelData::AnimationClip::Path::Weights:
-                    break; // morph target 權重——Phase 3
+                    break; // 已在上方處理
                 }
             }
         }
@@ -1142,6 +1539,8 @@ void Model::EvaluatePose() {
             palette[j] = world * ibm;
         }
     }
+
+    ApplyMorphs(); // morph 權重有變動時回寫頂點
 }
 
 const std::vector<Matrix4>& Model::GetJointPalette(int skinIndex) const {
@@ -1160,6 +1559,242 @@ Matrix4 Model::GetNodeWorldTransform(int nodeIndex) const {
         return Matrix4::Identity();
     }
     return nodeWorld[nodeIndex];
+}
+
+// ============================================================================
+// VRM：humanoid / 表情 morph / spring bone
+// ============================================================================
+
+int Model::GetHumanoidBone(const std::string& vrmBoneName) const {
+    auto it = humanoidBones.find(vrmBoneName);
+    return it != humanoidBones.end() ? it->second : -1;
+}
+
+bool Model::RotateHumanoidBone(const std::string& vrmBoneName,
+                               const Quaternion& q) {
+    int ni = GetHumanoidBone(vrmBoneName);
+    return ni >= 0 && RotateNodeLocal(ni, q);
+}
+
+const std::string& Model::GetExpressionName(int index) const {
+    static const std::string empty;
+    if (index < 0 || index >= (int)vrmExpressions.size()) return empty;
+    const auto& e = vrmExpressions[index];
+    return !e.name.empty() ? e.name : e.presetName;
+}
+
+bool Model::SetExpression(const std::string& exprName, float weight) {
+    if (exprName.empty()) return false;
+    auto lower = [](std::string s) {
+        for (auto& c : s) if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
+        return s;
+    };
+    const std::string needle = lower(exprName);
+    for (const auto& e : vrmExpressions) {
+        if (lower(e.name) != needle && lower(e.presetName) != needle) {
+            continue;
+        }
+        for (const auto& b : e.binds) {
+            // VRM bind 參照 glTF mesh 索引，套到該 mesh 全部 primitive
+            auto sit = sourceMeshToMd.find(b.sourceMesh);
+            if (sit == sourceMeshToMd.end()) continue;
+            // VRM 0.x bind weight 為 0~100 百分比；<=1.5 視為已是 0~1
+            const float bindW =
+                b.weight > 1.5f ? b.weight * 0.01f : b.weight;
+            for (int mdIdx : sit->second) {
+                int mi = (mdIdx >= 0 && mdIdx < (int)meshDataToMorph.size())
+                             ? meshDataToMorph[mdIdx] : -1;
+                if (mi < 0) continue;
+                MorphRuntime& rt = morphRuntimes[mi];
+                if (b.targetIndex >= 0 &&
+                    b.targetIndex < (int)rt.exprWeights.size()) {
+                    rt.exprWeights[b.targetIndex] = weight * bindW;
+                    rt.dirty = true;
+                }
+            }
+        }
+        ApplyMorphs();
+        return true;
+    }
+    return false;
+}
+
+void Model::ClearExpressions() {
+    for (auto& rt : morphRuntimes) {
+        if (std::any_of(rt.exprWeights.begin(), rt.exprWeights.end(),
+                        [](float w) { return w != 0.0f; })) {
+            std::fill(rt.exprWeights.begin(), rt.exprWeights.end(), 0.0f);
+            rt.dirty = true;
+        }
+    }
+    ApplyMorphs();
+}
+
+void Model::ApplyMorphs() {
+    for (auto& rt : morphRuntimes) {
+        if (!rt.dirty) continue;
+        rt.dirty = false;
+        std::vector<SkinnedVertex> out = rt.base;
+        for (size_t t = 0; t < rt.targets.size(); ++t) {
+            const float w =
+                (t < rt.weights.size() ? rt.weights[t] : 0.0f) +
+                (t < rt.exprWeights.size() ? rt.exprWeights[t] : 0.0f);
+            if (w == 0.0f) continue;
+            const auto& mt = rt.targets[t];
+            for (size_t i = 0; i < out.size(); ++i) {
+                if (i < mt.positionDeltas.size()) {
+                    out[i].position += mt.positionDeltas[i] * w;
+                }
+                if (i < mt.normalDeltas.size()) {
+                    out[i].normal += mt.normalDeltas[i] * w;
+                }
+            }
+        }
+        if (rt.skinnedMesh) {
+            rt.skinnedMesh->SetVertices(out);
+        } else if (rt.staticMesh) {
+            std::vector<Vertex> sv;
+            sv.reserve(out.size());
+            for (const auto& v : out) {
+                Vertex d;
+                d.position = v.position;
+                d.normal = v.normal;
+                d.texCoord = v.texCoord;
+                d.tangent = v.tangent;
+                d.bitangent = v.bitangent;
+                sv.push_back(d);
+            }
+            rt.staticMesh->SetVertices(sv);
+        }
+    }
+}
+
+void Model::SampleWeightsChannel(
+    const ModelData::AnimationClip& clip,
+    const ModelData::AnimationClip::Channel& channel, float time,
+    std::vector<float>& out) const {
+    out.clear();
+    if (channel.sampler < 0 ||
+        channel.sampler >= (int)clip.samplers.size()) return;
+    const auto& smp = clip.samplers[channel.sampler];
+    const size_t keys = smp.times.size();
+    if (keys == 0 || smp.scalarValues.empty()) return;
+    const size_t perKey = smp.scalarValues.size() / keys;
+    if (perKey == 0) return;
+    out.resize(perKey, 0.0f);
+
+    auto readKey = [&](size_t k, std::vector<float>& dst) {
+        for (size_t j = 0; j < perKey; ++j) {
+            dst[j] = smp.scalarValues[k * perKey + j];
+        }
+    };
+    if (time <= smp.times.front() || keys == 1) { readKey(0, out); return; }
+    if (time >= smp.times.back()) { readKey(keys - 1, out); return; }
+    size_t k = 0;
+    while (k + 1 < keys && smp.times[k + 1] < time) ++k;
+    const float t0 = smp.times[k], t1 = smp.times[k + 1];
+    const float f = (time - t0) / std::max(t1 - t0, 1e-8f);
+    if (smp.interpolation == ModelData::AnimationClip::Interpolation::Step) {
+        readKey(k, out);
+        return;
+    }
+    for (size_t j = 0; j < perKey; ++j) {
+        const float a = smp.scalarValues[k * perKey + j];
+        const float b = smp.scalarValues[(k + 1) * perKey + j];
+        out[j] = a + (b - a) * f;
+    }
+}
+
+// 兩向量間的最小旋轉（平行→identity；反向→任取垂直軸轉 180°）
+static Quaternion QuatBetweenVectors(const Vector3& a, const Vector3& b) {
+    const Vector3 na = a.Normalized();
+    const Vector3 nb = b.Normalized();
+    const float d = std::max(-1.0f, std::min(1.0f, na.Dot(nb)));
+    if (d > 0.9999f) return Quaternion::Identity();
+    if (d < -0.9999f) {
+        Vector3 axis = na.Cross(Vector3(1, 0, 0));
+        if (axis.LengthSquared() < 1e-6f) {
+            axis = na.Cross(Vector3(0, 1, 0));
+        }
+        return Quaternion::FromAxisAngle(axis.Normalized(), 3.14159265f);
+    }
+    return Quaternion::FromAxisAngle(na.Cross(nb).Normalized(),
+                                     std::acos(d));
+}
+
+void Model::UpdateSpringBones(float dt) {
+    if (springStates.empty() || animNodes.empty()) return;
+    if (!std::isfinite(dt) || dt <= 0.0f) return;
+    if (nodeWorld.size() != animNodes.size()) EvaluatePose();
+
+    for (auto& st : springStates) {
+        const int ni = st.node;
+        const auto& grp = vrmBoneGroups[st.groupIndex];
+        const Matrix4& world = nodeWorld[ni];
+        const int parent = animNodes[ni].parent;
+        const Matrix4 parentWorld =
+            (parent >= 0 && parent < (int)nodeWorld.size())
+                ? nodeWorld[parent] : Matrix4::Identity();
+        const Matrix4 parentInv = parentWorld.Inverse();
+
+        const Vector3 head(world.m[12], world.m[13], world.m[14]);
+        const Vector3 tailCur = world.TransformPoint(st.tailLocal);
+        if (!st.initialized) {
+            st.tail = st.prevTail = tailCur;
+            st.initialized = true;
+        }
+
+        // verlet：慣性 + stiffness 回拉 + 重力
+        const Vector3 velocity = (st.tail - st.prevTail) * (1.0f - grp.dragForce);
+        const Vector3 restDirW = world.TransformVector(st.tailLocal).Normalized();
+        Vector3 next = tailCur + velocity
+                       + restDirW * (grp.stiffness * dt)
+                       + grp.gravityDir * (grp.gravityPower * dt);
+
+        // 長度約束：|next-head| = restLen
+        Vector3 dir = next - head;
+        const float len = dir.Length();
+        if (len < 1e-6f) continue;
+        next = head + dir * (st.restLen / len);
+
+        // collider 球推出（collider 掛在各自 node 的 world 位置）
+        for (int cgi : grp.colliderGroups) {
+            if (cgi < 0 || cgi >= (int)vrmColliderGroups.size()) continue;
+            const auto& cg = vrmColliderGroups[cgi];
+            if (cg.node < 0 || cg.node >= (int)nodeWorld.size()) continue;
+            const Matrix4& cWorld = nodeWorld[cg.node];
+            for (const auto& col : cg.colliders) {
+                const Vector3 c = cWorld.TransformPoint(col.offset);
+                const float r = col.radius + grp.hitRadius;
+                Vector3 d = next - c;
+                const float dl = d.Length();
+                if (dl < r && dl > 1e-6f) {
+                    next = c + d * (r / dl);
+                }
+            }
+        }
+
+        st.prevTail = st.tail;
+        st.tail = next;
+
+        // 旋轉 node 使 tail 指向新位置（在 parent 空間求 delta）
+        const Vector3 curDir = (tailCur - head).Normalized();
+        const Vector3 newDir = (next - head).Normalized();
+        const Quaternion q = QuatBetweenVectors(
+            parentInv.TransformVector(curDir),
+            parentInv.TransformVector(newDir));
+
+        auto& nd = animNodes[ni];
+        if (nd.hasMatrix) {
+            const Vector3 t(nd.matrix.m[12], nd.matrix.m[13], nd.matrix.m[14]);
+            nd.matrix = Matrix4::Translation(t) * q.ToMatrix() *
+                        Matrix4::Translation(-t.x, -t.y, -t.z) * nd.matrix;
+        } else {
+            nd.rotation = (q * nd.rotation).Normalized();
+        }
+    }
+
+    EvaluatePose(); // 重算 world transform 與 joint palette
 }
 
 int Model::FindNodeIndexByName(const std::string& namePart) const {

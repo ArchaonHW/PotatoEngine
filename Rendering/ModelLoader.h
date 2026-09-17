@@ -40,6 +40,16 @@ struct MeshData {
     std::vector<Vector4> weights;
     // 所屬 glTF skin（對應 ModelData::skins 索引）；-1 = 無蒙皮
     int skinIndex = -1;
+
+    // morph target（glTF primitive.targets）：POSITION/NORMAL 的 delta
+    struct MorphTarget {
+        std::vector<Vector3> positionDeltas;
+        std::vector<Vector3> normalDeltas;
+    };
+    std::vector<MorphTarget> morphTargets;
+    // 對應 glTF meshes[]/primitives[] 索引（VRM blendshape bind 以 mesh 索引參照）
+    int sourceMesh = -1;
+    int sourcePrim = -1;
 };
 
 /**
@@ -64,6 +74,13 @@ struct MaterialData {
     std::string alphaMode = "OPAQUE";
     float alphaCutoff = 0.5f;
     bool doubleSided = false;
+
+    // VRM MToon 材質參數（VRM 0.x materialProperties；mtoon=true 才有效）
+    bool mtoon = false;
+    Vector3 shadeColor;      // _ShadeColor：陰影色（乘在 base 上）
+    float shadeToony = 0.9f; // _ShadeToony：ramp 硬度 0..1
+    float outlineWidth = 0.0f;
+    Vector3 outlineColor;
 };
 
 /**
@@ -105,6 +122,9 @@ struct ModelData {
             // translation/scale 用 xyz、rotation 用 xyzw；
             // CubicSpline 時每個 keyframe 佔三筆：inTangent/value/outTangent
             std::vector<Vector4> values;
+            // weights 通道專用：扁平 scalar（每 key N 個 target 權重，
+            // 依序排列；key 數 = times.size()）
+            std::vector<float> scalarValues;
             Interpolation interpolation = Interpolation::Linear;
         };
         struct Channel {
@@ -122,6 +142,46 @@ struct ModelData {
     std::vector<SkinData> skins;
     std::vector<AnimationClip> animations;
     bool hasVrmExtension = false;
+
+    // ---- VRM 0.x 擴充（extensions.VRM）----
+    struct VrmData {
+        // humanoid.humanBones：VRM 標準骨名（"hips"/"leftUpperArm"...）→ node 索引
+        std::unordered_map<std::string, int> humanoidBones;
+        // blendShapeMaster.blendShapeGroups → 表情
+        struct Expression {
+            std::string name;       // VRM name
+            std::string presetName; // joy/angry/sorrow/fun/a/i/u/e/o/blink/...
+            struct Bind {
+                int sourceMesh = -1;  // glTF mesh 索引（非 ModelData::meshes 索引）
+                int targetIndex = -1; // primitive.targets 索引
+                float weight = 0.0f;  // VRM 0.x 為 0~100 百分比
+            };
+            std::vector<Bind> binds;
+        };
+        std::vector<Expression> expressions;
+        // secondaryAnimation.colliderGroups
+        struct Collider {
+            Vector3 offset;
+            float radius = 0.0f;
+        };
+        struct ColliderGroup {
+            int node = -1; // 碰撞體掛在此 node（modelData.nodes 索引）
+            std::vector<Collider> colliders;
+        };
+        // secondaryAnimation.boneGroups
+        struct BoneGroup {
+            std::vector<int> bones;   // spring bone root node 索引
+            float stiffness = 1.0f;
+            float gravityPower = 0.0f;
+            Vector3 gravityDir = Vector3(0.0f, -1.0f, 0.0f);
+            float dragForce = 0.4f;
+            float hitRadius = 0.0f;
+            std::vector<int> colliderGroups; // colliderGroups 索引
+        };
+        std::vector<ColliderGroup> colliderGroups;
+        std::vector<BoneGroup> boneGroups;
+    };
+    VrmData vrm;
 };
 
 /**
@@ -208,6 +268,20 @@ public:
     // 節點被 active 動畫 channel 命中時 channel 仍優先。
     bool RotateNodeLocal(int nodeIndex, const Quaternion& q);
 
+    // ---- VRM 擴充（OBJ/純 glTF 皆為 no-op）----
+    bool IsVrm() const { return hasVrm; }
+    // VRM humanoid 骨名（"hips"/"leftUpperArm"...）→ node 索引；找不到回 -1
+    int GetHumanoidBone(const std::string& vrmBoneName) const;
+    // 以 humanoid 骨名做 RotateNodeLocal
+    bool RotateHumanoidBone(const std::string& vrmBoneName, const Quaternion& q);
+    // 表情（blendShape）：名稱可比對 VRM name 或 presetName（大小寫不敏感）
+    int GetExpressionCount() const { return (int)vrmExpressions.size(); }
+    const std::string& GetExpressionName(int index) const;
+    bool SetExpression(const std::string& exprName, float weight);
+    void ClearExpressions();
+    // VRM spring bone 物理（verlet + collider）；UpdateAnimation 會自動呼叫
+    void UpdateSpringBones(float dt);
+
 private:
     void ProcessNode();
     void BindMeshMaterial(size_t meshIndex, const std::string& matName,
@@ -215,7 +289,25 @@ private:
     Vector4 SampleChannel(const ModelData::AnimationClip& clip,
                           const ModelData::AnimationClip::Channel& channel,
                           float time) const;
-    
+    // Weights channel 取樣：回傳每個 morph target 的權重（扁平 scalar 軌）
+    void SampleWeightsChannel(const ModelData::AnimationClip& clip,
+                              const ModelData::AnimationClip::Channel& channel,
+                              float time, std::vector<float>& out) const;
+    // 依目前 morphWeights 重算有 morph 的 mesh 頂點並回寫 GPU/pending
+    void ApplyMorphs();
+
+    // 每個有 morph target 的 MeshData 的執行期狀態
+    struct MorphRuntime {
+        int meshDataIndex = -1;
+        Mesh* staticMesh = nullptr;
+        SkinnedMesh* skinnedMesh = nullptr;
+        std::vector<SkinnedVertex> base;    // 原始頂點（含 skin attribs）
+        std::vector<MeshData::MorphTarget> targets;
+        std::vector<float> weights;         // 動畫 Weights channel 寫入
+        std::vector<float> exprWeights;     // SetExpression 寫入（兩者相加）
+        bool dirty = false;
+    };
+
 private:
     std::string name;
     std::vector<UniquePtr<Mesh>> meshes;
@@ -233,6 +325,29 @@ private:
     std::vector<std::vector<Matrix4>> jointPalettes;   // per skin
     int activeAnimation = -1;
     float animationTime = 0.0f;
+
+    // ---- VRM 執行期 ----
+    bool hasVrm = false;
+    std::unordered_map<std::string, int> humanoidBones;
+    std::vector<ModelData::VrmData::Expression> vrmExpressions;
+    std::vector<ModelData::VrmData::ColliderGroup> vrmColliderGroups;
+    std::vector<ModelData::VrmData::BoneGroup> vrmBoneGroups;
+    // meshData 索引 → morphRuntimes 索引（-1 = 無 morph）
+    std::vector<int> meshDataToMorph;
+    // glTF mesh 索引 → meshData 索引列表（VRM bind 以 glTF mesh 參照）
+    std::unordered_map<int, std::vector<int>> sourceMeshToMd;
+    std::vector<MorphRuntime> morphRuntimes;
+    // spring bone verlet 狀態（每個 bone node 一筆）
+    struct SpringState {
+        int node = -1;
+        int groupIndex = -1;   // vrmBoneGroups 索引
+        Vector3 tailLocal;   // bone 末端在 node local 空間的偏移
+        float restLen = 0.0f;
+        Vector3 tail;        // 目前 world 位置
+        Vector3 prevTail;
+        bool initialized = false;
+    };
+    std::vector<SpringState> springStates;
     
     Vector3 position;
     Quaternion rotation;
