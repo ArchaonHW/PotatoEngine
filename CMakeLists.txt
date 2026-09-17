@@ -567,6 +567,20 @@ add_executable(SynthDataDemo Examples/SynthDataDemo.cpp)
 target_include_directories(SynthDataDemo PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(SynthDataDemo PotatoEngine NeuralNetwork glad glfw)
 
+# 2D 分層立繪產生器（純 CPU 光栅；ImGui 只用 font atlas 點陣化，無 GL）
+add_executable(PortraitBaker
+    Examples/PortraitBaker.cpp
+    external/imgui/imgui.cpp
+    external/imgui/imgui_draw.cpp
+    external/imgui/imgui_tables.cpp
+    external/imgui/imgui_widgets.cpp
+)
+target_include_directories(PortraitBaker PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/external/imgui
+)
+target_link_libraries(PortraitBaker PotatoEngine)
+
 # AI Agent GUI 示例 (暫時禁用)
 # add_executable(AIAgentGUIExample Examples/AIAgentGUIExample.cpp)
 # target_link_libraries(AIAgentGUIExample PotatoEngine)
