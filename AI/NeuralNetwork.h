@@ -104,6 +104,9 @@ public:
     // Setters
     void SetWeights(const std::vector<std::vector<float>>& newWeights);
     void SetBiases(const std::vector<float>& newBiases);
+
+    // 激活類型字串（"relu"/"sigmoid"/"tanh"/"leaky_relu"/"linear"）
+    const std::string& GetActivationType() const { return activationType; }
     
     // Random initialization
     void InitializeWeights(float scale = 0.01f);

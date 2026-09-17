@@ -110,6 +110,10 @@ NeuralLayer::NeuralLayer(size_t inputSize, size_t outputSize, const std::string&
     } else if (activation == "leaky_relu") {
         this->activation = [](float x) { return Activation::LeakyReLU(x); };
         activationDerivative = [](float x) { return Activation::LeakyReLUDerivative(x); };
+    } else if (activation == "linear" || activation == "none") {
+        // 恆等輸出——回歸型網路（高度/法線/RGB 連續值）需要無壓縮輸出層
+        this->activation = [](float x) { return x; };
+        activationDerivative = [](float) { return 1.0f; };
     } else {
         this->activation = Activation::ReLU;
         activationDerivative = Activation::ReLUDerivative;
@@ -228,6 +232,10 @@ std::vector<float> NeuralNetwork::Forward(const std::vector<float>& input) {
     if (!built) {
         throw std::runtime_error("Network must be built before forward pass");
     }
+    // 輸入維度不符會越界讀 input——載入外部權重檔時尤其容易踩到
+    if (!layers.empty() && input.size() != layers.front()->GetInputSize()) {
+        throw std::runtime_error("Input size does not match network input layer");
+    }
     
     std::vector<float> current = input;
     
@@ -324,12 +332,21 @@ float NeuralNetwork::Evaluate(const std::vector<std::vector<float>>& inputs,
 std::string NeuralNetwork::Serialize() const {
     std::stringstream ss;
     
+    // 格式版本標頭：v1 起含激活類型行；無標頭的舊檔按 legacy 解析
+    ss << "PNNv1\n";
     ss << built << "\n";
     ss << lossFunction << "\n";
     ss << layerSizes.size() << "\n";
     
     for (size_t size : layerSizes) {
         ss << size << " ";
+    }
+    ss << "\n";
+    
+    // 每層的激活類型——Deserialize 需要還原，否則全部落成 relu
+    // 會讓 sigmoid/tanh/linear 輸出層在載入後行為改變
+    for (size_t i = 0; i < layers.size(); i++) {
+        ss << layers[i]->GetActivationType() << " ";
     }
     ss << "\n";
     
@@ -359,29 +376,53 @@ std::string NeuralNetwork::Serialize() const {
 bool NeuralNetwork::Deserialize(const std::string& data) {
     std::stringstream ss(data);
     
-    ss >> built;
+    std::string tok;
+    ss >> tok;
+    const bool v1 = (tok == "PNNv1");
+    if (!v1) {
+        // legacy 格式：第一個 token 就是 built（0/1）
+        built = (tok == "1" || tok == "true");
+    } else {
+        ss >> built;
+    }
     ss >> lossFunction;
     
-    size_t numLayers;
+    size_t numLayers = 0;
     ss >> numLayers;
+    if (!ss || numLayers > 4096) return false;
     
     layerSizes.resize(numLayers);
     for (size_t i = 0; i < numLayers; i++) {
         ss >> layerSizes[i];
     }
+    if (!ss) return false;
+    
+    // 激活類型（每個轉換層一個）；legacy 檔沒有這行——退回 relu
+    std::vector<std::string> activations(numLayers > 0 ? numLayers - 1 : 0, "relu");
+    if (v1) {
+        for (size_t i = 0; i < activations.size(); i++) {
+            std::string act;
+            if (!(ss >> act)) return false;
+            activations[i] = act;
+        }
+    }
     
     // Rebuild network
     layers.clear();
-    for (size_t i = 0; i < layerSizes.size() - 1; i++) {
+    for (size_t i = 0; i + 1 < layerSizes.size(); i++) {
         size_t inputSize = layerSizes[i];
         size_t outputSize = layerSizes[i + 1];
-        layers.push_back(std::make_unique<NeuralLayer>(inputSize, outputSize, "relu"));
+        layers.push_back(std::make_unique<NeuralLayer>(
+            inputSize, outputSize, activations[i]));
     }
     
     // Load weights
     for (size_t i = 0; i < layers.size(); i++) {
         size_t inputSize, outputSize;
         ss >> inputSize >> outputSize;
+        if (!ss) return false;
+        if (inputSize != layers[i]->GetInputSize() ||
+            outputSize != layers[i]->GetOutputSize()) return false;
         
         std::vector<std::vector<float>> weights(outputSize, std::vector<float>(inputSize));
         for (size_t j = 0; j < outputSize; j++) {
@@ -394,11 +435,13 @@ bool NeuralNetwork::Deserialize(const std::string& data) {
         for (size_t j = 0; j < outputSize; j++) {
             ss >> biases[j];
         }
+        if (!ss) return false;
         
         layers[i]->SetWeights(weights);
         layers[i]->SetBiases(biases);
     }
     
+    built = true;
     InitializeLossFunction();
     return true;
 }
