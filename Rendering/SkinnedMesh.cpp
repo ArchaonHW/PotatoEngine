@@ -46,7 +46,7 @@ void SkinnedMesh::Unbind() const {
 void SkinnedMesh::Draw() const {
     if (indices.empty() && vertices.empty()) return;
     vertexArray.Bind();
-    if (vertexArray.GetVAO() == 0) return; // headless：無 GL context 不繪製
+    if (!vertexArray.IsUploaded()) return; // headless/未上傳：不繪製
     if (!indices.empty()) {
         glDrawElements(GL_TRIANGLES, static_cast<int>(indices.size()),
                        GL_UNSIGNED_INT, 0);
@@ -59,7 +59,7 @@ void SkinnedMesh::Draw() const {
 void SkinnedMesh::DrawInstanced(int instanceCount) const {
     if (instanceCount <= 0 || (indices.empty() && vertices.empty())) return;
     vertexArray.Bind();
-    if (vertexArray.GetVAO() == 0) return;
+    if (!vertexArray.IsUploaded()) return;
     if (!indices.empty()) {
         glDrawElementsInstanced(GL_TRIANGLES, static_cast<int>(indices.size()),
                                 GL_UNSIGNED_INT, 0, instanceCount);

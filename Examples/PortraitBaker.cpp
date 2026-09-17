@@ -325,6 +325,16 @@ public:
         unsigned char* tex = nullptr;
         int tw = 0, th = 0;
         atlas_->GetTexDataAsRGBA32(&tex, &tw, &th);
+        static bool dumped = false;
+        if (!dumped && *p) {
+            dumped = true;
+            const char* q = utf8.c_str();
+            uint32_t cp0 = NextCodepoint(q);
+            const ImFontGlyph* g0 = baked_->FindGlyph((ImWchar)cp0);
+            printf("[dbg] cp=%u X=[%.1f..%.1f] Y=[%.1f..%.1f] U=[%.4f..%.4f] V=[%.4f..%.4f] adv=%.1f tex=%dx%d\n",
+                   cp0, g0->X0, g0->X1, g0->Y0, g0->Y1,
+                   g0->U0, g0->U1, g0->V0, g0->V1, g0->AdvanceX, tw, th);
+        }
         while (*p) {
             uint32_t cp = NextCodepoint(p);
             const ImFontGlyph* g = baked_->FindGlyph((ImWchar)cp);
