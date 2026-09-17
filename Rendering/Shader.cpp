@@ -523,10 +523,16 @@ bool AdvancedShader::LoadFromFile(const std::string& vertexPath, const std::stri
 }
 
 bool AdvancedShader::LoadFromFile(const std::string& vertexPath, const std::string& fragmentPath, const std::string& geometryPath) {
-    (void)geometryPath;
-    // 簡化實現
-    LOG_WARNING("Geometry shader loading from file not implemented yet");
-    return LoadFromFile(vertexPath, fragmentPath);
+    std::ifstream vFile(vertexPath), fFile(fragmentPath), gFile(geometryPath);
+    if (!vFile.is_open() || !fFile.is_open() || !gFile.is_open()) {
+        LOG_ERROR("Failed to open shader files: " + vertexPath + ", " + fragmentPath + ", " + geometryPath);
+        return false;
+    }
+    std::stringstream vStream, fStream, gStream;
+    vStream << vFile.rdbuf();
+    fStream << fFile.rdbuf();
+    gStream << gFile.rdbuf();
+    return LoadFromSource(vStream.str(), fStream.str(), gStream.str());
 }
 
 bool AdvancedShader::LoadBuiltin(const std::string& shaderName) {
