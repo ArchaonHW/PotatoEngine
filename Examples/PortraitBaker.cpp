@@ -283,33 +283,29 @@ uint32_t NextCodepoint(const char*& s) {
 
 class TextRenderer {
 public:
-    // sizes：預先建立的字號集合（每個 size 一個 ImFontBaked）。
-    // 1.92+ glyph 惰性載入依賴 frame 迴圈；此處無 frame，改用
-    // ImFontAtlasBuildLegacyPreloadAllGlyphRanges 一次烘好全部字形。
-    bool Load(const char* fontPath, std::initializer_list<float> sizes) {
+    // 每個 TextRenderer 固定一字號。1.92+ glyph 惰性載入依賴 frame
+    // 迴圈；此處無 frame，改用 ImFontAtlasBuildLegacyPreloadAllGlyphRanges
+    // 一次烘好全部字形。
+    bool Load(const char* fontPath, float size) {
         atlas_ = std::make_unique<ImFontAtlas>();
         font_ = atlas_->AddFontFromFileTTF(
-            fontPath, 0.0f, nullptr,
+            fontPath, size, nullptr,
             atlas_->GetGlyphRangesChineseFull());
         if (!font_) return false;
         ImFontAtlasBuildLegacyPreloadAllGlyphRanges(atlas_.get());
-        for (float s : sizes) {
-            ImFontBaked* b = font_->GetFontBaked(s);
-            if (b) bakes_[s] = b;
-        }
+        baked_ = font_->GetFontBaked(size);
         atlas_->GetTexDataAsRGBA32(&tex_, &tw_, &th_);
-        return tex_ != nullptr && !bakes_.empty();
+        return tex_ != nullptr && baked_ != nullptr;
     }
-    bool Ready() const { return !bakes_.empty(); }
+    bool Ready() const { return baked_ != nullptr; }
 
-    float TextWidth(const std::string& utf8, float size) const {
-        ImFontBaked* baked = Baked(size);
-        if (!baked) return 0.0f;
+    float TextWidth(const std::string& utf8) const {
+        if (!baked_) return 0.0f;
         float w = 0.0f;
         const char* p = utf8.c_str();
         while (*p) {
             uint32_t cp = NextCodepoint(p);
-            const ImFontGlyph* g = baked->FindGlyphNoFallback((ImWchar)cp);
+            const ImFontGlyph* g = baked_->FindGlyphNoFallback((ImWchar)cp);
             w += g ? g->AdvanceX : 0.0f;
         }
         return w;
@@ -317,10 +313,10 @@ public:
 
     // 水平置中繪製；y 為字形頂端
     void DrawCentered(Canvas& cv, float cx, float y, const std::string& utf8,
-                      float size, RGBA color, float spacing = 0.0f) const {
-        ImFontBaked* baked = Baked(size);
+                      RGBA color, float spacing = 0.0f) const {
+        ImFontBaked* baked = baked_;
         if (!baked || !tex_) return;
-        float w = TextWidth(utf8, size);
+        float w = TextWidth(utf8);
         int chars = 0;
         { const char* q = utf8.c_str(); while (*q) { NextCodepoint(q); ++chars; } }
         w += spacing * (chars - 1);
@@ -358,14 +354,9 @@ public:
     }
 
 private:
-    ImFontBaked* Baked(float size) const {
-        auto it = bakes_.find(size);
-        return it != bakes_.end() ? it->second : nullptr;
-    }
-
     std::unique_ptr<ImFontAtlas> atlas_;
     ImFont* font_ = nullptr;
-    std::unordered_map<float, ImFontBaked*> bakes_;
+    ImFontBaked* baked_ = nullptr;
     unsigned char* tex_ = nullptr;
     int tw_ = 0, th_ = 0;
 };
