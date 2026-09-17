@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <cmath>
+#include <numeric>
 // 第三方標頭必須在 namespace Potato 之外 include——
 // 放在 Potato 內會把 std 巢狀成 Potato::std（GCC 直接編譯失敗）
 #include "tiny_gltf.h"
@@ -481,8 +482,11 @@ void GltfWalkNode(const tinygltf::Model& g, int nodeIdx, int parentIdx,
         const tinygltf::Mesh& gm = g.meshes[node.mesh];
         for (const auto& prim : gm.primitives) {
             if (prim.mode != TINYGLTF_MODE_TRIANGLES) continue;
+            // JOINTS_0 與 WEIGHTS_0 必須成對存在才算蒙皮——缺 WEIGHTS_0
+            // 時退回靜態烘焙（否則頂點留在 mesh space 又走不到 skinned 路徑）
             const bool skinned =
-                prim.attributes.find("JOINTS_0") != prim.attributes.end();
+                prim.attributes.find("JOINTS_0") != prim.attributes.end() &&
+                prim.attributes.find("WEIGHTS_0") != prim.attributes.end();
             GltfConvertPrimitive(g, prim, world, skinned, node.skin, modelData);
         }
     }
@@ -596,6 +600,34 @@ bool GltfConvert(const tinygltf::Model& g, ModelData& modelData,
                         smp.values.push_back(Vector4(v3.x, v3.y, v3.z, 0.0f));
                     }
                 }
+            }
+            // 畸形 glTF：sampler 時間軸非遞增會讓取樣找到錯誤區間——重排
+            // （CUBICSPLINE 的 values 是每 key 3 元組，需整組搬移）
+            if (!std::is_sorted(smp.times.begin(), smp.times.end())) {
+                LOG_WARNING("glTF animation sampler times unsorted; reordering");
+                const size_t mul =
+                    smp.interpolation ==
+                            ModelData::AnimationClip::Interpolation::CubicSpline
+                        ? 3 : 1;
+                std::vector<size_t> order(smp.times.size());
+                std::iota(order.begin(), order.end(), size_t(0));
+                std::stable_sort(order.begin(), order.end(),
+                                 [&](size_t a, size_t b) {
+                                     return smp.times[a] < smp.times[b];
+                                 });
+                std::vector<float> t2(smp.times.size());
+                std::vector<Vector4> v2;
+                if (smp.values.size() >= smp.times.size() * mul) {
+                    v2.resize(smp.times.size() * mul);
+                }
+                for (size_t i = 0; i < order.size(); ++i) {
+                    t2[i] = smp.times[order[i]];
+                    for (size_t c = 0; c < mul && !v2.empty(); ++c) {
+                        v2[i * mul + c] = smp.values[order[i] * mul + c];
+                    }
+                }
+                smp.times.swap(t2);
+                if (!v2.empty()) smp.values.swap(v2);
             }
             clip.samplers.push_back(std::move(smp));
         }
@@ -722,6 +754,7 @@ bool Model::LoadFromData(const ModelData& modelData) {
     skinnedMeshes.clear();
     skinnedMeshMaterialNames.clear();
     textures.clear();
+    materialDefs.clear();
     animNodes.clear();
     skinsData.clear();
     animations.clear();
@@ -798,6 +831,7 @@ bool Model::LoadFromData(const ModelData& modelData) {
     }
 
     // 內嵌貼圖（glTF/VRM）→ GPU texture；檔案路徑貼圖維持原行為
+    materialDefs = modelData.materials;
     for (const auto& pair : modelData.materials) {
         const MaterialData& md = pair.second;
         if (!md.embeddedDiffuse.empty() && md.embeddedWidth > 0 &&
@@ -810,13 +844,26 @@ bool Model::LoadFromData(const ModelData& modelData) {
         }
     }
 
-    LOG_INFO("Loaded model: " + name + " with " + std::to_string(meshes.size()) + " meshes");
+    LOG_INFO("Loaded model: " + name + " with " +
+             std::to_string(meshes.size()) + " meshes, " +
+             std::to_string(skinnedMeshes.size()) + " skinned");
     return true;
 }
+
+// builtin "skinned" shader 的 uJointMatrices 陣列大小
+static constexpr int kMaxShaderJoints = 128;
 
 void Model::BindMeshMaterial(size_t meshIndex, const std::string& matName,
                              AdvancedShader& shader) const {
     (void)meshIndex;
+    // skinned fragment shader 的 baseColorFactor 預設全 1——GL uniform
+    // 初始為 0，不設會讓整個模型變黑/透明
+    Vector3 baseColor(1.0f, 1.0f, 1.0f);
+    auto mit = materialDefs.find(matName);
+    if (mit != materialDefs.end()) baseColor = mit->second.diffuse;
+    shader.SetVec4("baseColorFactor", baseColor.x, baseColor.y, baseColor.z,
+                   1.0f);
+
     auto it = textures.find(matName);
     if (it != textures.end() && it->second) {
         it->second->Bind(0);
@@ -830,6 +877,7 @@ void Model::BindMeshMaterial(size_t meshIndex, const std::string& matName,
 }
 
 void Model::Draw(AdvancedShader& shader) const {
+    if (!shader.IsValid()) return; // headless 或未編譯的 shader
     Matrix4 modelMatrix = GetModelMatrix();
     shader.SetMat4("model", modelMatrix);
 
@@ -837,6 +885,9 @@ void Model::Draw(AdvancedShader& shader) const {
         const std::string& matName =
             i < meshMaterialNames.size() ? meshMaterialNames[i] : name;
         BindMeshMaterial(i, matName, shader);
+        // 靜態 mesh 不吃蒙皮——關掉避免沿用上一個模型的 palette
+        shader.SetBool("uHasSkin", false);
+        shader.SetInt("uJointCount", 0);
         meshes[i]->Draw();
     }
     for (size_t i = 0; i < skinnedMeshes.size(); ++i) {
@@ -850,9 +901,10 @@ void Model::Draw(AdvancedShader& shader) const {
         if (skinIdx >= 0 && skinIdx < (int)jointPalettes.size() &&
             !jointPalettes[skinIdx].empty()) {
             const auto& palette = jointPalettes[skinIdx];
-            shader.SetInt("uJointCount", (int)palette.size());
-            shader.SetMat4Array("uJointMatrices", palette.data(),
-                                (int)palette.size());
+            // shader 陣列上限 128——超過的 joint 在 shader 內落回 bind pose
+            const int n = std::min((int)palette.size(), kMaxShaderJoints);
+            shader.SetInt("uJointCount", n);
+            shader.SetMat4Array("uJointMatrices", palette.data(), n);
         } else {
             shader.SetInt("uJointCount", 0);
         }
@@ -861,10 +913,27 @@ void Model::Draw(AdvancedShader& shader) const {
 }
 
 void Model::DrawInstanced(AdvancedShader& shader, int instanceCount) const {
+    if (!shader.IsValid()) return;
     Matrix4 modelMatrix = GetModelMatrix();
     shader.SetMat4("model", modelMatrix);
     
     for (const auto& mesh : meshes) {
+        shader.SetBool("uHasSkin", false);
+        shader.SetInt("uJointCount", 0);
+        mesh->DrawInstanced(instanceCount);
+    }
+    for (const auto& mesh : skinnedMeshes) {
+        int skinIdx = mesh->GetSkinIndex();
+        shader.SetBool("uHasSkin", skinIdx >= 0);
+        if (skinIdx >= 0 && skinIdx < (int)jointPalettes.size() &&
+            !jointPalettes[skinIdx].empty()) {
+            const auto& palette = jointPalettes[skinIdx];
+            const int n = std::min((int)palette.size(), kMaxShaderJoints);
+            shader.SetInt("uJointCount", n);
+            shader.SetMat4Array("uJointMatrices", palette.data(), n);
+        } else {
+            shader.SetInt("uJointCount", 0);
+        }
         mesh->DrawInstanced(instanceCount);
     }
 }
@@ -925,6 +994,7 @@ void Model::StopAnimation() {
 }
 
 void Model::UpdateAnimation(float dt) {
+    if (!std::isfinite(dt)) return; // NaN/Inf 會讓 fmod 卡在 NaN
     if (activeAnimation >= 0 && activeAnimation < (int)animations.size()) {
         float dur = animations[activeAnimation].duration;
         animationTime += dt;
@@ -976,12 +1046,8 @@ Vector4 Model::SampleChannel(
     if (smp.interpolation == ModelData::AnimationClip::Interpolation::Step) {
         return a;
     }
-    if (channel.path == ModelData::AnimationClip::Path::Rotation) {
-        Quaternion qa(a.x, a.y, a.z, a.w), qb(b.x, b.y, b.z, b.w);
-        Quaternion q = Quaternion::Slerp(qa, qb, f);
-        return Vector4(q.x, q.y, q.z, q.w);
-    }
-    // CUBICSPLINE 簡化為 Hermite：tangent 已是時間域斜率，需乘區間長
+    // CUBICSPLINE 簡化為 Hermite：tangent 已是時間域斜率，需乘區間長；
+    // rotation 也走 Hermite 再歸一化（近似 cubicspline quaternion）
     if (cubic) {
         const Vector4& m0 = smp.values[k * 3 + 2];       // out-tangent(k)
         const Vector4& m1 = smp.values[(k + 1) * 3];     // in-tangent(k+1)
@@ -990,11 +1056,22 @@ Vector4 Model::SampleChannel(
         const float h10 = f3 - 2 * f2 + f;
         const float h01 = -2 * f3 + 3 * f2;
         const float h11 = f3 - f2;
-        return Vector4(
+        Vector4 v(
             h00 * a.x + h10 * span * m0.x + h01 * b.x + h11 * span * m1.x,
             h00 * a.y + h10 * span * m0.y + h01 * b.y + h11 * span * m1.y,
             h00 * a.z + h10 * span * m0.z + h01 * b.z + h11 * span * m1.z,
             h00 * a.w + h10 * span * m0.w + h01 * b.w + h11 * span * m1.w);
+        if (channel.path == ModelData::AnimationClip::Path::Rotation) {
+            Quaternion q(v.x, v.y, v.z, v.w);
+            q = q.Normalized();
+            v = Vector4(q.x, q.y, q.z, q.w);
+        }
+        return v;
+    }
+    if (channel.path == ModelData::AnimationClip::Path::Rotation) {
+        Quaternion qa(a.x, a.y, a.z, a.w), qb(b.x, b.y, b.z, b.w);
+        Quaternion q = Quaternion::Slerp(qa, qb, f);
+        return Vector4(q.x, q.y, q.z, q.w);
     }
     // Linear
     return Vector4(
@@ -1038,6 +1115,12 @@ void Model::EvaluatePose() {
         Matrix4 local = useMatrix
             ? nd.matrix
             : Matrix4::Translation(t) * r.ToMatrix() * Matrix4::Scale(s);
+        if (nd.parent >= (int)i) {
+            // 手建的 ModelData 可能不符合 parent-before-child 序——
+            // 這樣的 node 會被當 root，world transform 會錯
+            LOG_WARNING("Model node '" + nd.name +
+                        "' has parent index >= self; treated as root");
+        }
         nodeWorld[i] = (nd.parent >= 0 && nd.parent < (int)i)
             ? nodeWorld[nd.parent] * local   // nodes 為 parent-before-child 序
             : local;
@@ -1080,6 +1163,7 @@ Matrix4 Model::GetNodeWorldTransform(int nodeIndex) const {
 }
 
 int Model::FindNodeIndexByName(const std::string& namePart) const {
+    if (namePart.empty()) return -1; // 空 needle 會誤中 node 0
     auto lower = [](std::string s) {
         for (auto& c : s)
             if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
@@ -1095,9 +1179,18 @@ int Model::FindNodeIndexByName(const std::string& namePart) const {
 
 bool Model::RotateNodeLocal(int nodeIndex, const Quaternion& q) {
     if (nodeIndex < 0 || nodeIndex >= (int)animNodes.size()) return false;
-    // parent 空間疊加：先套姿勢旋轉再乘 bind rotation
-    animNodes[nodeIndex].rotation = (q * animNodes[nodeIndex].rotation).Normalized();
-    animNodes[nodeIndex].hasMatrix = false; // 改用 TRS，matrix 不再代表 local
+    if (!std::isfinite(q.x + q.y + q.z + q.w)) return false; // 擋 NaN/Inf
+    ModelData::NodeData& nd = animNodes[nodeIndex];
+    if (nd.hasMatrix) {
+        // matrix 節點：以自身平移為軸心旋轉（M' = T·Rq·T⁻¹·M），
+        // 與 TRS 路徑的 q*rotation 語意一致，且不丟 matrix 資訊
+        const Vector3 t(nd.matrix.m[12], nd.matrix.m[13], nd.matrix.m[14]);
+        nd.matrix = Matrix4::Translation(t) * q.ToMatrix() *
+                    Matrix4::Translation(-t.x, -t.y, -t.z) * nd.matrix;
+    } else {
+        // parent 空間疊加：先套姿勢旋轉再乘 bind rotation
+        nd.rotation = (q * nd.rotation).Normalized();
+    }
     EvaluatePose();
     return true;
 }

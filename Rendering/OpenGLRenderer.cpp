@@ -583,7 +583,7 @@ void Mesh::Draw() const {
 void Mesh::DrawInstanced(int instanceCount) const {
     if (instanceCount <= 0 || (indices.empty() && vertices.empty())) return;
     vertexArray.Bind();
-    if (vertexArray.GetVAO() == 0) return;
+    if (!vertexArray.IsUploaded()) return;
     if (!indices.empty()) {
         glDrawElementsInstanced(GL_TRIANGLES, static_cast<int>(indices.size()), GL_UNSIGNED_INT, 0, instanceCount);
     } else {
@@ -615,11 +615,13 @@ bool Texture::LoadFromFile(const std::string& path) {
     std::cout << "Loading texture from file: " << path << std::endl;
 
     if (glGenTextures == nullptr) {
-        // headless：無 GL context，只記錄尺寸（1x1 佔位）
-        width = height = 1;
-        channels = 3;
+        // headless：無 GL context——暫存路徑，首次 Bind 時由 EnsureUploaded 補載
+        pendingPath = path;
         return true;
     }
+
+    pendingPixels.clear();
+    pendingPath.clear();
 
     // 創建紋理
     glGenTextures(1, &textureID);
@@ -639,6 +641,11 @@ bool Texture::LoadFromFile(const std::string& path) {
 }
 
 bool Texture::LoadFromMemory(const unsigned char* data, int w, int h, int ch) {
+    // 只支援 1/3/4 channel；ch==2 或其他值會造成 driver 越界讀
+    if (data == nullptr || w <= 0 || h <= 0 ||
+        (ch != 1 && ch != 3 && ch != 4)) {
+        return false;
+    }
     width = w;
     height = h;
     channels = ch;
@@ -649,6 +656,10 @@ bool Texture::LoadFromMemory(const unsigned char* data, int w, int h, int ch) {
         pendingPixels.assign(data, data + sz);
         return true;
     }
+
+    // 清掉之前的暫存狀態，避免 EnsureUploaded 重放舊像素
+    pendingPixels.clear();
+    pendingPath.clear();
 
     glGenTextures(1, &textureID);
     glBindTexture(GL_TEXTURE_2D, textureID);
@@ -668,7 +679,15 @@ bool Texture::LoadFromMemory(const unsigned char* data, int w, int h, int ch) {
 }
 
 void Texture::EnsureUploaded() const {
-    if (pendingPixels.empty() || glGenTextures == nullptr) return;
+    if (glGenTextures == nullptr) return;
+    // headless LoadFromFile：context 就緒後補做真正的檔案載入
+    if (textureID == 0 && !pendingPath.empty()) {
+        std::string path;
+        path.swap(pendingPath);
+        const_cast<Texture*>(this)->LoadFromFile(path);
+        return;
+    }
+    if (pendingPixels.empty()) return;
     // 補上傳：複用 LoadFromMemory 的寫法（會清掉 pendingPixels）
     std::vector<unsigned char> pixels;
     pixels.swap(pendingPixels);
@@ -689,6 +708,7 @@ void Texture::Unbind() const {
 }
 
 void Texture::SetWrapMode(WrapMode mode) {
+    if (glBindTexture == nullptr || textureID == 0) return;
     glBindTexture(GL_TEXTURE_2D, textureID);
     
     GLenum wrap = GL_REPEAT;
@@ -703,6 +723,7 @@ void Texture::SetWrapMode(WrapMode mode) {
 }
 
 void Texture::SetFilterMode(FilterMode mode) {
+    if (glBindTexture == nullptr || textureID == 0) return;
     glBindTexture(GL_TEXTURE_2D, textureID);
     
     GLenum minFilter = GL_LINEAR;

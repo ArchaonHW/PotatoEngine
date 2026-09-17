@@ -256,6 +256,9 @@ const char* BuiltinShaders::SkinnedVertexShader() {
                     }
                 }
                 if (wSum > 0.0) {
+                    // WEIGHTS_0 不保證總和為 1（截斷/匯出誤差）——歸一化
+                    // 避免頂點被 wSum<1 縮向原點
+                    skin = skin / wSum;
                     localPos = skin * localPos;
                     localNormal = mat3(skin) * aNormal;
                 }

@@ -6,7 +6,6 @@
 
 #include "Rendering/OpenGLRenderer.h"
 #include "MathUtils/Vector4.h"
-#include <array>
 #include <vector>
 
 namespace Potato {
@@ -25,6 +24,12 @@ class SkinnedMesh {
 public:
     SkinnedMesh();
     ~SkinnedMesh();
+
+    // 與 Mesh/VertexArray 一致：禁拷貝、可 move
+    SkinnedMesh(const SkinnedMesh&) = delete;
+    SkinnedMesh& operator=(const SkinnedMesh&) = delete;
+    SkinnedMesh(SkinnedMesh&&) = default;
+    SkinnedMesh& operator=(SkinnedMesh&&) = default;
 
     void SetVertices(const std::vector<SkinnedVertex>& vertices);
     void SetIndices(const std::vector<uint32>& indices);

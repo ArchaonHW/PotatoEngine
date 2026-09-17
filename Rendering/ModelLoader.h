@@ -221,6 +221,7 @@ private:
     std::vector<UniquePtr<Mesh>> meshes;
     std::vector<std::string> meshMaterialNames; // 每個 mesh 對應的材質名
     std::unordered_map<std::string, UniquePtr<Texture>> textures;
+    std::unordered_map<std::string, MaterialData> materialDefs; // baseColor 等材質參數
 
     // ---- 蒙皮資料（glTF/VRM）----
     std::vector<UniquePtr<SkinnedMesh>> skinnedMeshes;
