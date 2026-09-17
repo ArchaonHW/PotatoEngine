@@ -413,16 +413,25 @@ VertexArray::VertexArray()
 }
 
 VertexArray::~VertexArray() {
-    if (glDeleteBuffers == nullptr) return; // GL 未初始化/已銷毀
+    ReleaseGLObjects();
+}
+
+void VertexArray::ReleaseGLObjects() {
+    if (glDeleteBuffers == nullptr) return; // GL 未初始化
     if (ebo) glDeleteBuffers(1, &ebo);
     if (vbo) glDeleteBuffers(1, &vbo);
     if (vao) glDeleteVertexArrays(1, &vao);
+    vao = vbo = ebo = 0;
+    buffersUploaded = false;
 }
 
 void VertexArray::EnsureCreated() const {
     // glad 函式指標未載入（無 GL context）時直接返回——
     // 允許 headless 建構 Mesh/Model，繪製時由 Bind 再補建
-    if (glGenVertexArrays == nullptr) return;
+    if (glGenVertexArrays == nullptr || glBindVertexArray == nullptr ||
+        glBufferData == nullptr) {
+        return;
+    }
     if (vao == 0) {
         glGenVertexArrays(1, &vao);
     }
@@ -432,8 +441,10 @@ void VertexArray::EnsureCreated() const {
     if (ebo == 0) {
         glGenBuffers(1, &ebo);
     }
-    // 重放 headless 期間暫存的 buffer/attribute
-    if (!buffersUploaded && vao != 0 && !pendingVertexData.empty()) {
+    // 重放 headless 期間暫存的 buffer/attribute（任何一類 pending 都要重放）
+    if (!buffersUploaded && vao != 0 &&
+        (!pendingVertexData.empty() || !pendingIndexData.empty() ||
+         !pendingAttribs.empty())) {
         glBindVertexArray(vao);
         glBindBuffer(GL_ARRAY_BUFFER, vbo);
         glBufferData(GL_ARRAY_BUFFER, pendingVertexData.size(),
@@ -471,13 +482,18 @@ void VertexArray::Unbind() const {
 void VertexArray::AddVertexBuffer(const void* data, size_t size, uint32 usage) {
     EnsureCreated();
     if (vao == 0) {
-        // 無 GL context：暫存，等 EnsureCreated 重放
-        const auto* bytes = static_cast<const unsigned char*>(data);
-        pendingVertexData.assign(bytes, bytes + size);
-        pendingVertexUsage = usage;
+        // 無 GL context：暫存，等 EnsureCreated 重放；空資料不暫存
+        if (data != nullptr && size > 0) {
+            const auto* bytes = static_cast<const unsigned char*>(data);
+            pendingVertexData.assign(bytes, bytes + size);
+            pendingVertexUsage = usage;
+        } else {
+            pendingVertexData.clear();
+        }
         buffersUploaded = false;
         return;
     }
+    if (data == nullptr || size == 0) return;
     glBindVertexArray(vao);
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
     glBufferData(GL_ARRAY_BUFFER, size, data, usage);
@@ -489,10 +505,15 @@ void VertexArray::AddIndexBuffer(const uint32* indices, size_t count, uint32 usa
     EnsureCreated();
     indexCount = static_cast<uint32>(count);
     if (vao == 0) {
-        pendingIndexData.assign(indices, indices + count);
-        pendingIndexUsage = usage;
+        if (indices != nullptr && count > 0) {
+            pendingIndexData.assign(indices, indices + count);
+            pendingIndexUsage = usage;
+        } else {
+            pendingIndexData.clear();
+        }
         return;
     }
+    if (indices == nullptr || count == 0) return;
     glBindVertexArray(vao);
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
     glBufferData(GL_ELEMENT_ARRAY_BUFFER, count * sizeof(uint32), indices, usage);
@@ -550,7 +571,7 @@ void Mesh::Unbind() const {
 void Mesh::Draw() const {
     if (indices.empty() && vertices.empty()) return;
     vertexArray.Bind();
-    if (vertexArray.GetVAO() == 0) return; // headless：無 GL context 不繪製
+    if (!vertexArray.IsUploaded()) return; // headless/未上傳：不繪製（避免畫到外部 VAO）
     if (!indices.empty()) {
         glDrawElements(GL_TRIANGLES, static_cast<int>(indices.size()), GL_UNSIGNED_INT, 0);
     } else {
