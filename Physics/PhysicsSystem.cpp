@@ -358,8 +358,12 @@ void PhysicsWorld::UpdateBodies(float deltaTime) {
     
     // 積分：先速度（累積力 -> 速度）再位置（速度 -> 位置）
     // 兩者內部皆已遍歷所有物體,不可放在每物體迴圈內
-    IntegrateVelocity(deltaTime);
-    IntegratePosition(deltaTime);
+    if (integrator == IntegratorType::VelocityVerlet) {
+        IntegrateVerlet(deltaTime);
+    } else {
+        IntegrateVelocity(deltaTime);
+        IntegratePosition(deltaTime);
+    }
 }
 
 namespace {
@@ -595,6 +599,47 @@ void PhysicsWorld::IntegrateVelocity(float deltaTime) {
             body->linearVelocity += (body->accumulatedForce / mass) * deltaTime;
         }
         body->accumulatedForce = Vector3::Zero();
+    }
+}
+
+void PhysicsWorld::IntegrateVerlet(float deltaTime) {
+    // Velocity Verlet = leapfrog KDK：linearVelocity 存半步相位。
+    //   首步（bootstrap）：v += a·dt/2（v_0 → v_½）
+    //   之後每步：       v += a·dt   （v_{n-½} → v_{n+½}）
+    //   x += v·dt                  （drift，等效 x += v_n·dt + ½a_n·dt²）
+    // 常數加速度下解析精確；位置相依力（彈簧等）為二階辛——力在
+    // 下一步以新位置重算，自然取得 a(x_{n+1})。
+    // 注意：GetLinearVelocity 讀到半步相位（偏移 ≤ ½a·dt），
+    //       ApplyImpulse/SetLinearVelocity 作用於半步速度，視為
+    //       直接改寫該相位——對遊戲語義等效。
+    for (auto body : bodies) {
+        if (body->GetBodyType() == PhysicsBodyType::Static) {
+            body->verletBooted = false;
+            continue;
+        }
+        if (body->GetBodyType() != PhysicsBodyType::Dynamic ||
+            body->IsKinematic()) {
+            // Kinematic：速度驅動，力清空（同 Euler 路徑的理由）
+            body->accumulatedForce = Vector3::Zero();
+            body->verletBooted = false;
+            Vector3 position = body->GetPosition();
+            position += body->GetLinearVelocity() * deltaTime;
+            body->SetPosition(position);
+            continue;
+        }
+        const float mass = body->GetMass();
+        const Vector3 accel = (mass > 0.0f)
+            ? (body->accumulatedForce / mass) : Vector3::Zero();
+        body->accumulatedForce = Vector3::Zero();
+
+        Vector3 v = body->GetLinearVelocity();
+        v += body->verletBooted ? (accel * deltaTime)
+                                : (accel * (deltaTime * 0.5f));
+        body->verletBooted = true;
+        Vector3 position = body->GetPosition();
+        position += v * deltaTime;
+        body->SetPosition(position);
+        body->SetLinearVelocity(v);
     }
 }
 

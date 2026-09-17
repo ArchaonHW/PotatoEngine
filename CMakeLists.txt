@@ -505,6 +505,11 @@ target_link_libraries(MathTest)
 # 物理積分測試
 add_executable(PhysicsTest Examples/PhysicsTest.cpp)
 target_include_directories(PhysicsTest PRIVATE ${CMAKE_SOURCE_DIR})
+
+# 物理數學測試（headless：Verlet 精度、無散度湍流場、混沌敏感度）
+add_executable(PhysicsMathTest Examples/PhysicsMathTest.cpp)
+target_include_directories(PhysicsMathTest PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(PhysicsMathTest PotatoEngine)
 target_link_libraries(PhysicsTest PotatoEngine)
 
 # 安全模組紅隊測試（對抗性驗證 Security/ 的偵測能力）
@@ -651,6 +656,7 @@ set(POTATO_TESTS
     MinimalTest
     MathTest
     PhysicsTest
+    PhysicsMathTest
     FileSystemTest
     LoggerTest
     MemoryTest
