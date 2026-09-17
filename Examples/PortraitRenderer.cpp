@@ -40,6 +40,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -64,6 +65,7 @@ uniform int uJointCount;
 uniform mat4 uJointMatrices[128];
 out vec2 vUV;
 out vec3 vNormal;
+out vec3 vViewNormal; // C-3 normal pass：view-space 法線
 void main() {
     mat4 skin = mat4(1.0);
     if (uHasSkin) {
@@ -82,7 +84,27 @@ void main() {
     vec4 p = skin * vec4(aPos, 1.0);
     vUV = aUV;
     vNormal = mat3(skin) * aNormal;
+    vViewNormal = mat3(view * model) * mat3(skin) * aNormal;
     gl_Position = projection * view * model * p;
+}
+)GLSL";
+
+// C-3：view-space 法線可視化 pass——alphaCutoff 保留髮卡鏤空，
+// 背景慣例 (0.5,0.5,1.0)（+Z 朝向相機的平法線色）
+const char* kNormalFragSrc = R"GLSL(
+#version 330 core
+in vec2 vUV;
+in vec3 vViewNormal;
+uniform sampler2D baseColorTexture;
+uniform bool useTexture;
+uniform float alphaCutoff;
+out vec4 FragColor;
+void main() {
+    vec4 c = useTexture ? texture(baseColorTexture, vUV) : vec4(1.0);
+    if (c.a < alphaCutoff) discard;
+    vec3 n = normalize(vViewNormal);
+    if (!gl_FrontFacing) n = -n;
+    FragColor = vec4(n * 0.5 + 0.5, 1.0);
 }
 )GLSL";
 
@@ -124,6 +146,12 @@ struct Args {
     std::string region = "half";     // 單張模式
     std::string labelsPath;
     PoseMode pose = PoseMode::Relax;
+    // C-3 多通道：rgb 恆產出；depth/normal 由 --channels 啟用
+    bool wantDepth = false;
+    bool wantNormal = false;
+    std::vector<std::string> poses = {"relax"}; // 批量可多姿勢
+    float pitchDeg = 0.0f;                      // 相機俯仰（manifest 記錄）
+    std::string manifestPath;                   // --manifest 輸出 JSON
 };
 
 void PrintUsage() {
@@ -132,6 +160,8 @@ void PrintUsage() {
     printf("  [--yaw 角度]  [--pose relax|none]\n");
     printf("用法（批量）: PortraitRenderer --batch <dir> <outdir>\n");
     printf("  [--regions head,half,full]  [--yaws -30,0,30]  [--labels out.csv]\n");
+    printf("  [--poses relax,none]  [--pitch 角度]  [--channels rgb,depth,normal]\n");
+    printf("  [--manifest out.json]   多通道訓練資料 manifest（C-3）\n");
 }
 
 // 解析 n 個以 sep 分隔的整數（CI 禁用 sscanf，手寫 strtol 版本）
@@ -214,6 +244,31 @@ bool ParseArgs(int argc, char** argv, Args& args) {
             const char* v = next(); if (!v) return false;
             args.pose = (std::strcmp(v, "none") == 0) ? PoseMode::None
                                                       : PoseMode::Relax;
+        } else if (std::strcmp(a, "--poses") == 0) {
+            const char* v = next(); if (!v) return false;
+            args.poses = SplitStr(v, ',');
+            for (const auto& p : args.poses)
+                if (p != "relax" && p != "none") {
+                    printf("未知 pose: %s\n", p.c_str());
+                    return false;
+                }
+        } else if (std::strcmp(a, "--channels") == 0) {
+            const char* v = next(); if (!v) return false;
+            for (const auto& tok : SplitStr(v, ',')) {
+                if (tok == "rgb") continue; // 恆產出
+                if (tok == "depth") args.wantDepth = true;
+                else if (tok == "normal") args.wantNormal = true;
+                else if (tok != "rgb") {
+                    printf("未知 channel: %s\n", tok.c_str());
+                    return false;
+                }
+            }
+        } else if (std::strcmp(a, "--pitch") == 0) {
+            const char* v = next(); if (!v) return false;
+            args.pitchDeg = static_cast<float>(std::atof(v));
+        } else if (std::strcmp(a, "--manifest") == 0) {
+            const char* v = next(); if (!v) return false;
+            args.manifestPath = v;
         } else if (std::strcmp(a, "--labels") == 0) {
             const char* v = next(); if (!v) return false;
             args.labelsPath = v;
@@ -400,12 +455,15 @@ bool CreateFBO(int w, int h, GLuint& fbo, GLuint& colorTex, GLuint& depthRb) {
 struct RenderCtx {
     GLuint fbo = 0, colorTex = 0, depthRb = 0;
     AdvancedShader shader;
+    AdvancedShader normalShader; // C-3 normal pass
     bool ok = false;
 };
 
 bool InitRenderCtx(int w, int h, RenderCtx& ctx) {
     if (!CreateFBO(w, h, ctx.fbo, ctx.colorTex, ctx.depthRb)) return false;
     if (!ctx.shader.LoadFromSource(kVertSrc, kFragSrc)) return false;
+    if (!ctx.normalShader.LoadFromSource(kVertSrc, kNormalFragSrc))
+        return false;
     ctx.ok = true;
     return true;
 }
@@ -417,11 +475,33 @@ void DestroyRenderCtx(RenderCtx& ctx) {
     glDeleteRenderbuffers(1, &ctx.depthRb);
 }
 
-// 渲染單張立繪；ctx/模型由呼叫端持有（批量時重用 GL 資源）
+// 垂直翻轉 readback 像素（GL 原點在左下，PNG 在左上）
+void FlipRows(std::vector<unsigned char>& px, int w, int h, int bpp) {
+    std::vector<unsigned char> tmp(px.size());
+    const size_t rowBytes = static_cast<size_t>(w) * bpp;
+    for (int y = 0; y < h; ++y) {
+        std::memcpy(tmp.data() + static_cast<size_t>(y) * rowBytes,
+                    px.data() + static_cast<size_t>(h - 1 - y) * rowBytes,
+                    rowBytes);
+    }
+    px.swap(tmp);
+}
+
+// outPath 衍生通道檔名：foo.png → foo_depth.png / foo_normal.png
+std::string ChannelPath(const std::string& outPath, const char* suffix) {
+    std::filesystem::path p(outPath);
+    return (p.parent_path() /
+            (p.stem().string() + suffix + p.extension().string()))
+        .string();
+}
+
+// 渲染單張立繪；ctx/模型由呼叫端持有（批量時重用 GL 資源）。
+// wantDepth/wantNormal 時同 FBO 補產 _depth/_normal 通道；
+// camDist 回傳相機-取景中心距離供 manifest 記錄。
 bool RenderPortrait(const ModelData& md, Model& model,
                     RenderCtx& ctx, const Args& args,
                     const std::string& region, float yawDeg,
-                    const std::string& outPath) {
+                    const std::string& outPath, float& camDist) {
     Vector3 center;
     float halfH, halfW;
     ComputeFraming(md, model, region, center, halfH, halfW);
@@ -438,11 +518,16 @@ bool RenderPortrait(const ModelData& md, Model& model,
             zFront = (std::max)(zFront, v.position.z);
         }
     }
-    float camZ = zFront + 2.0f;
-    Matrix4 view = Matrix4::LookAt(Vector3(center.x, center.y, camZ),
-                                   center, Vector3(0, 1, 0));
+    // pitch：相機繞 X 軸俯仰，正面為 0
+    const float kDeg = 3.14159265f / 180.0f;
+    const float camD = zFront + 2.0f - center.z;
+    camDist = camD;
+    const float pitch = args.pitchDeg * kDeg;
+    const Vector3 camPos(center.x, center.y + camD * std::sin(pitch),
+                         center.z + camD * std::cos(pitch));
+    Matrix4 view = Matrix4::LookAt(camPos, center, Vector3(0, 1, 0));
     Matrix4 proj = Matrix4::Orthographic(-w, w, -halfH, halfH,
-                                         0.01f, camZ - zBack + 2.0f);
+                                         0.01f, camD + center.z - zBack + 2.0f);
 
     glBindFramebuffer(GL_FRAMEBUFFER, ctx.fbo);
     glViewport(0, 0, args.width, args.height);
@@ -451,39 +536,91 @@ bool RenderPortrait(const ModelData& md, Model& model,
     glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA,
                         GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
     glDisable(GL_CULL_FACE);
+
+    model.SetRotation(Quaternion::FromAxisAngle(
+        Vector3(0, 1, 0), yawDeg * kDeg));
+
+    const size_t pxCount =
+        static_cast<size_t>(args.width) * args.height;
+    std::vector<unsigned char> pixels(pxCount * 4);
+    std::string err;
+
+    // ---- RGB pass ----
     glClearColor(args.bg[0], args.bg[1], args.bg[2], args.bg[3]);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
     ctx.shader.Bind();
     ctx.shader.SetMat4("view", view);
     ctx.shader.SetMat4("projection", proj);
     ctx.shader.SetFloat("alphaCutoff", 0.5f);
     ctx.shader.SetVec3("uLightDir", Vector3(0.45f, 0.8f, 0.65f));
     ctx.shader.SetFloat("uAmbient", 0.45f);
-
-    model.SetRotation(Quaternion::FromAxisAngle(
-        Vector3(0, 1, 0), yawDeg * 3.14159265f / 180.0f));
     model.Draw(ctx.shader);
 
-    std::vector<unsigned char> pixels(
-        static_cast<size_t>(args.width) * args.height * 4);
     glFinish();
     glReadPixels(0, 0, args.width, args.height, GL_RGBA,
                  GL_UNSIGNED_BYTE, pixels.data());
-    std::vector<unsigned char> flipped(pixels.size());
-    size_t rowBytes = static_cast<size_t>(args.width) * 4;
-    for (int y = 0; y < args.height; ++y) {
-        std::memcpy(flipped.data() + static_cast<size_t>(y) * rowBytes,
-                    pixels.data() +
-                        static_cast<size_t>(args.height - 1 - y) * rowBytes,
-                    rowBytes);
-    }
-
-    std::string err;
+    FlipRows(pixels, args.width, args.height, 4);
     if (!ImageCodec::WritePNGFile(outPath, args.width, args.height,
-                                  flipped.data(), &err)) {
+                                  pixels.data(), &err)) {
         printf("PNG 寫出失敗 %s: %s\n", outPath.c_str(), err.c_str());
         return false;
+    }
+
+    // ---- depth pass：同 FBO 讀回深度（C-1 模式：近亮遠暗線性）----
+    if (args.wantDepth) {
+        std::vector<float> raw(pxCount);
+        glReadPixels(0, 0, args.width, args.height, GL_DEPTH_COMPONENT,
+                     GL_FLOAT, raw.data());
+        // 翻轉 + 深度灰階：ortho 下 window depth 線性；正規化到模型
+        // z 厚度（前緣=1 後緣=0、背景=0）——全 far-plane 正規化只剩
+        // ~23 灰階，對訓練訊噪比太差
+        std::vector<unsigned char> dpx(pxCount * 4);
+        const float near_ = 0.01f;
+        const float far_ = camD + center.z - zBack + 2.0f;
+        const float dFront = (2.0f - near_) / (far_ - near_);
+        const float dBack =
+            (2.0f + (zFront - zBack) - near_) / (far_ - near_);
+        const float inv = (dBack > dFront) ? 1.0f / (dBack - dFront) : 0.0f;
+        for (int y = 0; y < args.height; ++y) {
+            const int sy = args.height - 1 - y;
+            for (int x = 0; x < args.width; ++x) {
+                const size_t si = static_cast<size_t>(sy) * args.width + x;
+                const size_t di = (static_cast<size_t>(y) * args.width + x) * 4;
+                const float g = (dBack - raw[si]) * inv;
+                const unsigned char v = static_cast<unsigned char>(
+                    std::max(0.0f, std::min(1.0f, g)) * 255.0f);
+                dpx[di] = dpx[di + 1] = dpx[di + 2] = v;
+                dpx[di + 3] = (raw[si] < 1.0f) ? 255 : 0; // 背景 alpha=0
+            }
+        }
+        const std::string dp = ChannelPath(outPath, "_depth");
+        if (!ImageCodec::WritePNGFile(dp, args.width, args.height,
+                                      dpx.data(), &err)) {
+            printf("depth PNG 寫出失敗 %s: %s\n", dp.c_str(), err.c_str());
+            return false;
+        }
+    }
+
+    // ---- normal pass：view-space 法線色 ----
+    if (args.wantNormal) {
+        glClearColor(0.5f, 0.5f, 1.0f, 1.0f); // 平法線慣例色
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        ctx.normalShader.Bind();
+        ctx.normalShader.SetMat4("view", view);
+        ctx.normalShader.SetMat4("projection", proj);
+        ctx.normalShader.SetFloat("alphaCutoff", 0.5f);
+        model.Draw(ctx.normalShader);
+
+        glFinish();
+        glReadPixels(0, 0, args.width, args.height, GL_RGBA,
+                     GL_UNSIGNED_BYTE, pixels.data());
+        FlipRows(pixels, args.width, args.height, 4);
+        const std::string np = ChannelPath(outPath, "_normal");
+        if (!ImageCodec::WritePNGFile(np, args.width, args.height,
+                                      pixels.data(), &err)) {
+            printf("normal PNG 寫出失敗 %s: %s\n", np.c_str(), err.c_str());
+            return false;
+        }
     }
     return true;
 }
@@ -529,10 +666,12 @@ int main(int argc, char** argv) {
     if (!args.labelsPath.empty()) {
         labels.open(args.labelsPath);
         if (labels)
-            labels << "filename,model,region,yaw,width,height\n";
+            labels << "filename,model,pose,region,yaw,width,height\n";
         else
             printf("[警告] 無法開啟標註檔 %s\n", args.labelsPath.c_str());
     }
+    // C-3 manifest：entries 先累積（避免尾逗號），收尾才寫檔
+    std::ostringstream manEntries;
 
     do {
         RenderCtx ctx;
@@ -560,6 +699,7 @@ int main(int argc, char** argv) {
         if (inputs.empty()) { printf("找不到輸入模型\n"); break; }
 
         bool allOk = true;
+        int rendered = 0;
         for (const auto& in : inputs) {
             ModelData md;
             if (!GLTFLoader::LoadFromFile(in.string(), md)) {
@@ -567,47 +707,102 @@ int main(int argc, char** argv) {
                 allOk = false;
                 continue;
             }
-            Model model;
-            if (!model.LoadFromData(md)) {
-                printf("GPU 資源建立失敗: %s\n", in.string().c_str());
-                allOk = false;
-                continue;
-            }
-            if (args.pose == PoseMode::Relax) ApplyRelaxPose(model, md);
 
             const auto& regions = args.batch ? args.regions
                                              : std::vector<std::string>{args.region};
             const auto& yaws = args.batch ? args.yaws
                                           : std::vector<float>{args.yawDeg};
-            for (const auto& region : regions) {
-                for (float yaw : yaws) {
-                    std::string out;
-                    if (args.batch) {
-                        char suffix[64];
-                        std::snprintf(suffix, sizeof(suffix),
-                                      "_%s_y%d.png", region.c_str(), (int)yaw);
-                        out = args.output + "/" + in.stem().string() + suffix;
-                    } else {
-                        out = args.output;
-                    }
-                    if (!RenderPortrait(md, model, ctx, args, region, yaw,
-                                        out)) {
-                        allOk = false;
-                        continue;
-                    }
-                    printf("立繪輸出: %s (%dx%d)\n", out.c_str(),
-                           args.width, args.height);
-                    if (labels) {
-                        labels << std::filesystem::path(out).filename().string()
-                               << ',' << in.filename().string() << ','
-                               << region << ',' << yaw << ',' << args.width
-                               << ',' << args.height << '\n';
+            const auto& poses =
+                args.batch
+                    ? args.poses
+                    : std::vector<std::string>{
+                          args.pose == PoseMode::Relax ? "relax" : "none"};
+            const bool multiPose = poses.size() > 1;
+
+            for (const auto& poseName : poses) {
+                // 每姿勢重建 Model——ApplyRelaxPose 會累積旋轉
+                Model model;
+                if (!model.LoadFromData(md)) {
+                    printf("GPU 資源建立失敗: %s\n", in.string().c_str());
+                    allOk = false;
+                    break;
+                }
+                if (poseName == "relax") ApplyRelaxPose(model, md);
+
+                for (const auto& region : regions) {
+                    for (float yaw : yaws) {
+                        std::string out;
+                        if (args.batch) {
+                            char suffix[96];
+                            std::snprintf(suffix, sizeof(suffix),
+                                          multiPose ? "_%s_%s_y%d.png"
+                                                    : "_%s_y%d.png",
+                                          multiPose ? poseName.c_str() : "",
+                                          region.c_str(), (int)yaw);
+                            out = args.output + "/" + in.stem().string() +
+                                  suffix;
+                        } else {
+                            out = args.output;
+                        }
+                        float camDist = 0.0f;
+                        if (!RenderPortrait(md, model, ctx, args, region, yaw,
+                                            out, camDist)) {
+                            allOk = false;
+                            continue;
+                        }
+                        ++rendered;
+                        printf("立繪輸出: %s (%dx%d)\n", out.c_str(),
+                               args.width, args.height);
+                        const std::string fname =
+                            std::filesystem::path(out).filename().string();
+                        if (labels) {
+                            labels << fname << ',' << in.filename().string()
+                                   << ',' << poseName << ',' << region << ','
+                                   << yaw << ',' << args.width << ','
+                                   << args.height << '\n';
+                        }
+                        if (!args.manifestPath.empty()) {
+                            manEntries << "    {\"file\": \"" << fname
+                                     << "\", \"model\": \""
+                                     << in.filename().string()
+                                     << "\", \"pose\": \"" << poseName
+                                     << "\", \"region\": \"" << region
+                                     << "\", \"yaw\": " << yaw
+                                     << ", \"pitch\": " << args.pitchDeg
+                                     << ", \"camera_distance\": " << camDist
+                                     << ", \"width\": " << args.width
+                                     << ", \"height\": " << args.height
+                                     << "},\n";
+                        }
                     }
                 }
             }
         }
         DestroyRenderCtx(ctx);
-        exitCode = allOk ? 0 : 1;
+        exitCode = (allOk && rendered > 0) ? 0 : 1;
+
+        // manifest 收尾：去掉最後一筆的尾逗號再封 JSON
+        if (!args.manifestPath.empty()) {
+            std::ofstream mf(args.manifestPath);
+            if (mf) {
+                std::string body = manEntries.str();
+                if (body.size() >= 2 && body.compare(body.size() - 2, 2, ",\n") == 0)
+                    body.replace(body.size() - 2, 2, "\n");
+                mf << "{\n  \"channels\": [\"rgb\"";
+                if (args.wantDepth) mf << ", \"depth\"";
+                if (args.wantNormal) mf << ", \"normal\"";
+                mf << "],\n  \"depth_format\": "
+                      "\"normalized over model z-extent: front=1 back=0, "
+                      "bg alpha=0\",\n"
+                      "  \"normal_format\": \"view-space n*0.5+0.5, "
+                      "bg=(0.5,0.5,1.0)\",\n  \"entries\": [\n"
+                   << body << "  ]\n}\n";
+            } else {
+                printf("[警告] 無法寫出 manifest %s\n",
+                       args.manifestPath.c_str());
+                exitCode = 1;
+            }
+        }
     } while (false);
 
     DestroyGLFWWindow(win);
