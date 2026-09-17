@@ -148,8 +148,11 @@ int main() {
             Check(m.meshes[0].vertices.size() == 3 &&
                   m.meshes[0].indices.size() == 3,
                   "vertex/index counts");
-            Check(std::fabs(m.meshes[0].vertices[1].position.x - 1.0f) < 1e-6f,
-                  "POSITION accessor decoded");
+            if (m.meshes[0].vertices.size() >= 3) {
+                Check(std::fabs(m.meshes[0].vertices[1].position.x - 1.0f) <
+                          1e-6f,
+                      "POSITION accessor decoded");
+            }
         }
     }
 

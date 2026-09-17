@@ -331,9 +331,10 @@ public:
             const char* q = utf8.c_str();
             uint32_t cp0 = NextCodepoint(q);
             const ImFontGlyph* g0 = baked_->FindGlyph((ImWchar)cp0);
-            printf("[dbg] cp=%u X=[%.1f..%.1f] Y=[%.1f..%.1f] U=[%.4f..%.4f] V=[%.4f..%.4f] adv=%.1f tex=%dx%d\n",
+            printf("[dbg] cp=%u X=[%.1f..%.1f] Y=[%.1f..%.1f] U=[%.4f..%.4f] V=[%.4f..%.4f] adv=%.1f tex=%dx%d bakedSize=%.1f density=%.2f\n",
                    cp0, g0->X0, g0->X1, g0->Y0, g0->Y1,
-                   g0->U0, g0->U1, g0->V0, g0->V1, g0->AdvanceX, tw, th);
+                   g0->U0, g0->U1, g0->V0, g0->V1, g0->AdvanceX, tw, th,
+                   baked_->Size, baked_->RasterizerDensity);
         }
         while (*p) {
             uint32_t cp = NextCodepoint(p);
