@@ -42,6 +42,25 @@ void Qudit::SetProbabilities(const std::vector<double>& probs) {
     }
 }
 
+bool Qudit::SetAmplitudes(const std::vector<Amplitude>& amps) {
+    if (static_cast<int>(amps.size()) != dim) {
+        return false;
+    }
+    amplitudes = amps;
+    return true;
+}
+
+bool Qudit::SetPhases(const std::vector<double>& phases) {
+    if (static_cast<int>(phases.size()) != dim) {
+        return false;
+    }
+    for (int i = 0; i < dim; ++i) {
+        amplitudes[i] *=
+            Amplitude{std::cos(phases[i]), std::sin(phases[i])};
+    }
+    return true;
+}
+
 void Qudit::SetUniform() {
     amplitudes.assign(dim, Amplitude{1.0 / std::sqrt(static_cast<double>(dim)), 0.0});
 }

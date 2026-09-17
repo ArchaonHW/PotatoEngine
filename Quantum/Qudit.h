@@ -34,6 +34,11 @@ public:
 
     // 以機率分佈初始化（自動取平方根轉振幅，相位為 0）
     void SetProbabilities(const std::vector<double>& probs);
+    // 直接設定振幅（存檔還原用，保留相位）；長度不符回 false
+    bool SetAmplitudes(const std::vector<Amplitude>& amps);
+    // Q-7：相位初始化——a_i *= e^{i·phases[i]}；機率分佈不變。
+    // 長度不符回 false。
+    bool SetPhases(const std::vector<double>& phases);
     // 均勻疊加
     void SetUniform();
 
