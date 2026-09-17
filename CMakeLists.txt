@@ -416,6 +416,24 @@ add_executable(BattlePickerTest Examples/BattlePickerTest.cpp)
 target_include_directories(BattlePickerTest PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(BattlePickerTest Gameplay)
 
+# 斷橋可玩 demo（E4-3：LMB 選取/RMB 下令走 CP 介入；A-4 膠囊體+選取環+血條）
+# 互動視窗程式——無顯示環境自行 [SKIP]，不進 POTATO_TESTS
+add_executable(DuanqiaoPlayable
+    Examples/DuanqiaoPlayable.cpp
+    external/imgui/imgui.cpp
+    external/imgui/imgui_draw.cpp
+    external/imgui/imgui_tables.cpp
+    external/imgui/imgui_widgets.cpp
+    external/imgui/backends/imgui_impl_glfw.cpp
+    external/imgui/backends/imgui_impl_opengl3.cpp
+)
+target_include_directories(DuanqiaoPlayable PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/external/imgui
+    ${CMAKE_SOURCE_DIR}/external/imgui/backends
+)
+target_link_libraries(DuanqiaoPlayable glfw glad ${OPENGL_LIBRARIES} Gameplay)
+
 # 量子敵情霧可視化（ImGui：機率雲/觀測塌縮/情報時效）
 add_executable(QuantumFogDemo
     Examples/QuantumFogDemo.cpp
