@@ -487,10 +487,13 @@ void PhysicsWorld::DetectCollisions() {
         if (bodyA->collisionCallback) {
             bodyA->collisionCallback(collision);
         }
-        if (bodyB->collisionCallback) {
+        // A 的回調可能已 DestroyBody(A 或 B)——再觸碰任何 body 前先驗活,
+        // otherBodyID 改用碰撞時已存好的 ID,不再讀 bodyA
+        bool bAlive = std::find(bodies.begin(), bodies.end(), bodyB) != bodies.end();
+        if (bAlive && bodyB->collisionCallback) {
             // 給 B 的回調:把 other 換成 A,保持「otherBodyID = 對方」的語意
             CollisionData forB = collision;
-            forB.otherBodyID = bodyA->GetBodyID();
+            forB.otherBodyID = collision.bodyAID;
             bodyB->collisionCallback(forB);
         }
         if (globalCollisionCallback) {
