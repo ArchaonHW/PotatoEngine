@@ -339,6 +339,14 @@ target_link_libraries(DevAssistantSmoke
 )
 
 # 戰鬥玩法層 - 小隊/flow field/doctrine 腳本/戰鬥控制器
+# 量子模擬層 - 態向量暫存器/qudit（疊加態/糾纏/Born rule 測量）
+add_library(Quantum STATIC
+    Quantum/QubitRegister.cpp
+    Quantum/Qudit.cpp
+)
+target_include_directories(Quantum PUBLIC ${CMAKE_SOURCE_DIR})
+
+# 戰鬥玩法層 - 小隊/flow field/doctrine 腳本/戰鬥控制器
 add_library(Gameplay STATIC
     Gameplay/FlowField.cpp
     Gameplay/Squad.cpp
@@ -352,10 +360,12 @@ add_library(Gameplay STATIC
     Gameplay/BattleRecorder.cpp
     Gameplay/Roster.cpp
     Gameplay/SageCommand.cpp
+    Gameplay/QuantumFog.cpp
 )
 target_include_directories(Gameplay PUBLIC ${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/Gameplay)
 # BattleSceneSync 需要場景圖/渲染類型;PotatoEngine 不依賴 Gameplay,無循環
-target_link_libraries(Gameplay PUBLIC PotatoEngine)
+# QuantumFog 需要量子態模擬（疊加態敵情霧）
+target_link_libraries(Gameplay PUBLIC PotatoEngine Quantum)
 
 # Doctrine 戰鬥演示（無頭模式：規劃階段寫腳本，即時層自動執行）
 add_executable(DoctrineBattleDemo Examples/DoctrineBattleDemo.cpp)
@@ -394,6 +404,28 @@ target_include_directories(SageCommandDemo PRIVATE
     ${CMAKE_SOURCE_DIR}/external/imgui/backends
 )
 target_link_libraries(SageCommandDemo glfw glad ${OPENGL_LIBRARIES} Gameplay)
+
+# 量子模組測試（headless：暫存器/qudit/敵情霧的 Born rule 與時效）
+add_executable(QuantumTest Examples/QuantumTest.cpp)
+target_include_directories(QuantumTest PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(QuantumTest Quantum Gameplay)
+
+# 量子敵情霧可視化（ImGui：機率雲/觀測塌縮/情報時效）
+add_executable(QuantumFogDemo
+    Examples/QuantumFogDemo.cpp
+    external/imgui/imgui.cpp
+    external/imgui/imgui_draw.cpp
+    external/imgui/imgui_tables.cpp
+    external/imgui/imgui_widgets.cpp
+    external/imgui/backends/imgui_impl_glfw.cpp
+    external/imgui/backends/imgui_impl_opengl3.cpp
+)
+target_include_directories(QuantumFogDemo PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/external/imgui
+    ${CMAKE_SOURCE_DIR}/external/imgui/backends
+)
+target_link_libraries(QuantumFogDemo glfw glad ${OPENGL_LIBRARIES} Gameplay)
 
 # MingGoRTS IDE（AI Agent 整合 IDE - 命令行版本）
 add_executable(MingGoRTS_IDE_CLI MingGoRTS_IDE/MingGoRTS_IDE_Main.cpp MingGoRTS_IDE/IDECore.cpp MingGoRTS_IDE/AIIntegration.cpp)
@@ -585,6 +617,8 @@ set(POTATO_TESTS
     AutoPlannerDemo
     DuanqiaoDemo
     SageCommandTest
+    QuantumTest
+    SynthDataDemo
 )
 foreach(test_name IN LISTS POTATO_TESTS)
     if(TARGET ${test_name})
