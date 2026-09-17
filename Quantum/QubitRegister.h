@@ -1,7 +1,10 @@
 #pragma once
 
+#include "RandomSource.h"
+
 #include <complex>
 #include <cstdint>
+#include <memory>
 #include <random>
 #include <string>
 #include <vector>
@@ -26,6 +29,8 @@ public:
 
     // 建立 n 位元暫存器，初始為 |0...0>；seed 供可重現測量
     explicit QubitRegister(int numQubits, uint64_t seed = 0);
+    // Q-5：注入隨機源（接管測量擲骰）；nullptr 等價 seed=0
+    QubitRegister(int numQubits, std::unique_ptr<IRandomSource> src);
 
     int NumQubits() const { return numQubits; }
     size_t StateCount() const { return amplitudes.size(); }
@@ -61,6 +66,10 @@ private:
     int numQubits;
     std::vector<Amplitude> amplitudes;
     std::mt19937_64 rng;
+    std::unique_ptr<IRandomSource> source; // Q-5 注入源；空則用 rng
+
+    // 測量擲骰：注入源優先，否則內建 seeded RNG
+    double Roll();
 
     void CheckQubit(int q) const;
     // 對所有滿足 mask 條件的基態套用 2x2 么正矩陣
@@ -76,12 +85,16 @@ private:
 class QuantumBitSource {
 public:
     explicit QuantumBitSource(uint64_t seed = 0);
+    // Q-5：注入隨機源（如 EntropyRandomSource）；接管所有擲骰
+    explicit QuantumBitSource(std::unique_ptr<IRandomSource> src);
     bool NextBit();                 // 每次 |0>→H→Measure，獨立公平
     int NextInt(int maxExclusive);  // 均勻整數（reject sampling 免 modulo bias）
     double NextDouble();            // [0,1) 均勻
 
 private:
+    double Roll();                  // 注入源優先，否則內建 rng
     std::mt19937_64 rng;  // 模擬器測量擲骰用（量子部分仍是 Born rule）
+    std::unique_ptr<IRandomSource> source;
 };
 
 } // namespace Quantum

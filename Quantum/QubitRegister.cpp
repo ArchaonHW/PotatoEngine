@@ -16,6 +16,19 @@ QubitRegister::QubitRegister(int n, uint64_t seed)
     amplitudes[0] = Amplitude{1.0, 0.0};
 }
 
+QubitRegister::QubitRegister(int n, std::unique_ptr<IRandomSource> src)
+    : QubitRegister(n, 0) {
+    source = std::move(src);
+}
+
+double QubitRegister::Roll() {
+    if (source) {
+        return source->NextDouble();
+    }
+    std::uniform_real_distribution<double> dist(0.0, 1.0);
+    return dist(rng);
+}
+
 void QubitRegister::CheckQubit(int q) const {
     if (q < 0 || q >= numQubits) {
         throw std::out_of_range("QubitRegister: qubit index 越界");
@@ -113,8 +126,7 @@ double QubitRegister::BasisProbability(size_t index) const {
 
 bool QubitRegister::Measure(int q) {
     const double p1 = Probability(q);
-    std::uniform_real_distribution<double> dist(0.0, 1.0);
-    const bool result = dist(rng) < p1;
+    const bool result = Roll() < p1;
 
     const size_t bit = size_t{1} << q;
     double kept = 0.0;
@@ -133,8 +145,7 @@ bool QubitRegister::Measure(int q) {
 }
 
 uint64_t QubitRegister::MeasureAll() {
-    std::uniform_real_distribution<double> dist(0.0, 1.0);
-    const double roll = dist(rng);
+    const double roll = Roll();
     double acc = 0.0;
     size_t outcome = amplitudes.size() - 1;
     for (size_t i = 0; i < amplitudes.size(); ++i) {
@@ -184,11 +195,22 @@ QuantumBitSource::QuantumBitSource(uint64_t seed)
     : rng(seed ? seed : std::random_device{}()) {
 }
 
+QuantumBitSource::QuantumBitSource(std::unique_ptr<IRandomSource> src)
+    : rng(0), source(std::move(src)) {
+}
+
+double QuantumBitSource::Roll() {
+    if (source) {
+        return source->NextDouble();
+    }
+    std::uniform_real_distribution<double> dist(0.0, 1.0);
+    return dist(rng);
+}
+
 bool QuantumBitSource::NextBit() {
     // 態向量 |0> → H → Measure 的封閉結果即 50/50；
     // 直接以均勻分佈實現（數學等價，免去每次建暫存器）
-    std::uniform_int_distribution<int> dist(0, 1);
-    return dist(rng) == 1;
+    return Roll() < 0.5;
 }
 
 int QuantumBitSource::NextInt(int maxExclusive) {
@@ -207,8 +229,7 @@ int QuantumBitSource::NextInt(int maxExclusive) {
 }
 
 double QuantumBitSource::NextDouble() {
-    std::uniform_real_distribution<double> dist(0.0, 1.0);
-    return dist(rng);
+    return Roll();
 }
 
 } // namespace Quantum

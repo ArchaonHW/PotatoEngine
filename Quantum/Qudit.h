@@ -1,7 +1,10 @@
 #pragma once
 
+#include "RandomSource.h"
+
 #include <complex>
 #include <cstdint>
+#include <memory>
 #include <random>
 #include <vector>
 
@@ -24,6 +27,8 @@ public:
     using Amplitude = std::complex<double>;
 
     Qudit(int dimension, uint64_t seed = 0);
+    // Q-5：注入隨機源（接管 Measure 擲骰）；nullptr 等價 seed=0
+    Qudit(int dimension, std::unique_ptr<IRandomSource> src);
 
     int Dimension() const { return dim; }
 
@@ -49,6 +54,9 @@ private:
     int dim;
     std::vector<Amplitude> amplitudes;
     std::mt19937_64 rng;
+    std::unique_ptr<IRandomSource> source; // Q-5 注入源；空則用 rng
+
+    double Roll(); // 注入源優先，否則內建 seeded RNG
 };
 
 } // namespace Quantum

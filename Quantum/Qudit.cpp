@@ -14,6 +14,19 @@ Qudit::Qudit(int dimension, uint64_t seed)
     SetUniform();
 }
 
+Qudit::Qudit(int dimension, std::unique_ptr<IRandomSource> src)
+    : Qudit(dimension, 0) {
+    source = std::move(src);
+}
+
+double Qudit::Roll() {
+    if (source) {
+        return source->NextDouble();
+    }
+    std::uniform_real_distribution<double> dist(0.0, 1.0);
+    return dist(rng);
+}
+
 void Qudit::SetProbabilities(const std::vector<double>& probs) {
     if (static_cast<int>(probs.size()) != dim) {
         throw std::invalid_argument("Qudit: 機率向量長度不符");
@@ -47,8 +60,7 @@ std::vector<double> Qudit::Probabilities() const {
 }
 
 int Qudit::Measure() {
-    std::uniform_real_distribution<double> dist(0.0, 1.0);
-    const double roll = dist(rng);
+    const double roll = Roll();
     double acc = 0.0;
     int outcome = dim - 1;
     for (int i = 0; i < dim; ++i) {
