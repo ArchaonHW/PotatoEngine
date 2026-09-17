@@ -469,6 +469,8 @@ add_executable(MingGoRTS_IDE_GUI
     MingGoRTS_IDE/GUI/I18N.h
     MingGoRTS_IDE/IDECore.cpp
     MingGoRTS_IDE/AIIntegration.cpp
+    Rendering/ImageCodec.cpp
+    Logging/Logger.cpp
     external/imgui/imgui.cpp
     external/imgui/imgui_draw.cpp
     external/imgui/imgui_tables.cpp
