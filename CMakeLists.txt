@@ -411,6 +411,11 @@ add_executable(QuantumTest Examples/QuantumTest.cpp)
 target_include_directories(QuantumTest PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(QuantumTest Quantum Gameplay)
 
+# 準隨機/藍噪取樣測試（headless：差異度、最小間距、種子決定性）
+add_executable(QuasiRandomTest Examples/QuasiRandomTest.cpp)
+target_include_directories(QuasiRandomTest PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(QuasiRandomTest Gameplay)
+
 # RTS 點選層測試（headless：螢幕→射線→地面/小隊包圍球）
 add_executable(BattlePickerTest Examples/BattlePickerTest.cpp)
 target_include_directories(BattlePickerTest PRIVATE ${CMAKE_SOURCE_DIR})
@@ -667,6 +672,7 @@ set(POTATO_TESTS
     DuanqiaoDemo
     SageCommandTest
     QuantumTest
+    QuasiRandomTest
     BattlePickerTest
     SynthDataDemo
 )
