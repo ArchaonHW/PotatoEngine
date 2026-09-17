@@ -30,13 +30,13 @@ public:
     
     LightType GetType() const { return type; }
     
-    void SetColor(const Vector3& color) { this->color = color; }
+    void SetColor(const Vector3& newColor) { this->color = newColor; }
     Vector3 GetColor() const { return color; }
-    
-    void SetIntensity(float intensity) { this->intensity = intensity; }
+
+    void SetIntensity(float newIntensity) { this->intensity = newIntensity; }
     float GetIntensity() const { return intensity; }
-    
-    void SetEnabled(bool enabled) { this->enabled = enabled; }
+
+    void SetEnabled(bool newEnabled) { this->enabled = newEnabled; }
     bool IsEnabled() const { return enabled; }
     
     virtual void ApplyToShader(const std::string& uniformPrefix, AdvancedShader& shader) = 0;
@@ -221,16 +221,16 @@ class Material {
 public:
     Material();
     
-    void SetAlbedo(const Vector3& albedo) { this->albedo = albedo; }
+    void SetAlbedo(const Vector3& newAlbedo) { this->albedo = newAlbedo; }
     Vector3 GetAlbedo() const { return albedo; }
-    
-    void SetMetallic(float metallic) { this->metallic = metallic; }
+
+    void SetMetallic(float newMetallic) { this->metallic = newMetallic; }
     float GetMetallic() const { return metallic; }
-    
-    void SetRoughness(float roughness) { this->roughness = roughness; }
+
+    void SetRoughness(float newRoughness) { this->roughness = newRoughness; }
     float GetRoughness() const { return roughness; }
-    
-    void SetAO(float ao) { this->ao = ao; }
+
+    void SetAO(float newAO) { this->ao = newAO; }
     float GetAO() const { return ao; }
     
     void ApplyToShader(AdvancedShader& shader) const;

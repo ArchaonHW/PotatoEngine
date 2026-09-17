@@ -102,12 +102,12 @@ void SpotLight::SetDirection(const Vector3& dir) {
     direction = dir.Normalized();
 }
 
-void SpotLight::SetCutoff(float cutoff) {
-    this->cutoff = cutoff;
+void SpotLight::SetCutoff(float newCutoff) {
+    this->cutoff = newCutoff;
 }
 
-void SpotLight::SetOuterCutoff(float outerCutoff) {
-    this->outerCutoff = outerCutoff;
+void SpotLight::SetOuterCutoff(float newOuterCutoff) {
+    this->outerCutoff = newOuterCutoff;
 }
 
 void SpotLight::ApplyToShader(const std::string& uniformPrefix, AdvancedShader& shader) {
@@ -204,6 +204,8 @@ Vector3 LightingCalculator::CalculatePBR(
     float metallic,
     float roughness
 ) {
+    (void)viewDir;
+    (void)roughness;
     // 簡化 PBR 實現
     Vector3 ambient = 0.1f * albedo;
     
@@ -343,18 +345,22 @@ void LightingManager::SetAmbientIntensity(float intensity) {
 }
 
 void LightingManager::SetEnvironmentMap(const std::string& path) {
+    (void)path;
     LOG_WARNING("Environment map loading not implemented yet");
 }
 
 void LightingManager::SetIrradianceMap(const std::string& path) {
+    (void)path;
     LOG_WARNING("Irradiance map loading not implemented yet");
 }
 
 void LightingManager::SetPrefilterMap(const std::string& path) {
+    (void)path;
     LOG_WARNING("Prefilter map loading not implemented yet");
 }
 
 void LightingManager::SetBRDFLUT(const std::string& path) {
+    (void)path;
     LOG_WARNING("BRDF LUT loading not implemented yet");
 }
 

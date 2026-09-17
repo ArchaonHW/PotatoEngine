@@ -347,18 +347,21 @@ const char* BuiltinShaders::MToonFragmentShader() {
 // ============================================================================
 
 bool ShaderCompiler::CompileGLSL(const std::string& source, ShaderType type, std::string& bytecode) {
+    (void)type;
     // 簡化實現：直接返回源代碼
     bytecode = source;
     return true;
 }
 
 bool ShaderCompiler::CompileSPIRV(const std::string& source, ShaderType type, std::string& bytecode) {
+    (void)source; (void)type; (void)bytecode;
     // 需要 Vulkan SDK 的 glslangValidator
     LOG_WARNING("SPIRV compilation not implemented yet");
     return false;
 }
 
 bool ShaderCompiler::Validate(const std::string& bytecode) {
+    (void)bytecode;
     // 簡化實現
     return true;
 }
@@ -430,22 +433,22 @@ AdvancedShader::~AdvancedShader() {
     }
 }
 
-bool AdvancedShader::LoadFromSource(const std::string& vertexSource, const std::string& fragmentSource) {
+bool AdvancedShader::LoadFromSource(const std::string& vertexSrc, const std::string& fragmentSrc) {
     // 釋放舊的 GL 物件並重置 ID,避免重載時洩漏或留下懸垂 shader ID
     if (programID) { glDeleteProgram(programID); programID = 0; }
     if (vertexID) { glDeleteShader(vertexID); vertexID = 0; }
     if (fragmentID) { glDeleteShader(fragmentID); fragmentID = 0; }
     if (geometryID) { glDeleteShader(geometryID); geometryID = 0; }
-    
-    this->vertexSource = vertexSource;
-    this->fragmentSource = fragmentSource;
+
+    this->vertexSource = vertexSrc;
+    this->fragmentSource = fragmentSrc;
     this->geometrySource.clear();
-    
+
     uint32 vID, fID;
-    if (!CompileShader(GL_VERTEX_SHADER, vertexSource, vID)) {
+    if (!CompileShader(GL_VERTEX_SHADER, vertexSrc, vID)) {
         return false;
     }
-    if (!CompileShader(GL_FRAGMENT_SHADER, fragmentSource, fID)) {
+    if (!CompileShader(GL_FRAGMENT_SHADER, fragmentSrc, fID)) {
         glDeleteShader(vID);
         return false;
     }
@@ -463,25 +466,25 @@ bool AdvancedShader::LoadFromSource(const std::string& vertexSource, const std::
     return true;
 }
 
-bool AdvancedShader::LoadFromSource(const std::string& vertexSource, const std::string& fragmentSource, const std::string& geometrySource) {
+bool AdvancedShader::LoadFromSource(const std::string& vertexSrc, const std::string& fragmentSrc, const std::string& geometrySrc) {
     if (programID) { glDeleteProgram(programID); programID = 0; }
     if (vertexID) { glDeleteShader(vertexID); vertexID = 0; }
     if (fragmentID) { glDeleteShader(fragmentID); fragmentID = 0; }
     if (geometryID) { glDeleteShader(geometryID); geometryID = 0; }
-    
-    this->vertexSource = vertexSource;
-    this->fragmentSource = fragmentSource;
-    this->geometrySource = geometrySource;
-    
+
+    this->vertexSource = vertexSrc;
+    this->fragmentSource = fragmentSrc;
+    this->geometrySource = geometrySrc;
+
     uint32 vID, fID, gID;
-    if (!CompileShader(GL_VERTEX_SHADER, vertexSource, vID)) {
+    if (!CompileShader(GL_VERTEX_SHADER, vertexSrc, vID)) {
         return false;
     }
-    if (!CompileShader(GL_FRAGMENT_SHADER, fragmentSource, fID)) {
+    if (!CompileShader(GL_FRAGMENT_SHADER, fragmentSrc, fID)) {
         glDeleteShader(vID);
         return false;
     }
-    if (!CompileShader(GL_GEOMETRY_SHADER, geometrySource, gID)) {
+    if (!CompileShader(GL_GEOMETRY_SHADER, geometrySrc, gID)) {
         glDeleteShader(vID);
         glDeleteShader(fID);
         return false;
@@ -520,6 +523,7 @@ bool AdvancedShader::LoadFromFile(const std::string& vertexPath, const std::stri
 }
 
 bool AdvancedShader::LoadFromFile(const std::string& vertexPath, const std::string& fragmentPath, const std::string& geometryPath) {
+    (void)geometryPath;
     // 簡化實現
     LOG_WARNING("Geometry shader loading from file not implemented yet");
     return LoadFromFile(vertexPath, fragmentPath);
@@ -633,12 +637,12 @@ bool AdvancedShader::CompileShader(uint32 type, const std::string& source, uint3
     return success == GL_TRUE;
 }
 
-bool AdvancedShader::LinkProgram(uint32 vertexID, uint32 fragmentID, uint32 geometryID) {
+bool AdvancedShader::LinkProgram(uint32 vShader, uint32 fShader, uint32 gShader) {
     programID = glCreateProgram();
-    glAttachShader(programID, vertexID);
-    glAttachShader(programID, fragmentID);
-    if (geometryID) {
-        glAttachShader(programID, geometryID);
+    glAttachShader(programID, vShader);
+    glAttachShader(programID, fShader);
+    if (gShader) {
+        glAttachShader(programID, gShader);
     }
     glLinkProgram(programID);
     
