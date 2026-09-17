@@ -132,3 +132,14 @@ output/synth_dataset/
 
 # PortraitRenderer 產生的立繪輸出（可再生）
 output/portraits/
+
+# Java services: Maven build output and embedded H2 database files
+services/**/target/
+services/data/
+
+# VrmLoadTest/訓練管線產生的資料集（可再生）
+output/vrm_dataset/
+
+# 臨時 patch/除錯檔
+*.patch
+nul
