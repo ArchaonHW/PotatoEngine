@@ -370,8 +370,10 @@ add_library(Gameplay STATIC
     Gameplay/BattlePicker.cpp
     Gameplay/PlanningDeck.cpp
     Gameplay/PostBattle.cpp
+    Gameplay/RefitCamp.cpp
     Gameplay/MapGenerator.cpp
     Gameplay/SquadTemplate.cpp
+    Gameplay/BattlePlan.cpp
 )
 target_include_directories(Gameplay PUBLIC ${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/Gameplay)
 # BattleSceneSync 需要場景圖/渲染類型;PotatoEngine 不依賴 Gameplay,無循環
@@ -630,6 +632,28 @@ add_executable(GeneralGuardTest Examples/GeneralGuardTest.cpp)
 target_include_directories(GeneralGuardTest PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(GeneralGuardTest Gameplay)
 
+add_executable(BattlePlanTest Examples/BattlePlanTest.cpp)
+target_include_directories(BattlePlanTest PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(BattlePlanTest Gameplay)
+
+# G-9 戰鬥間整補循環測試（headless：傷兵池/招募/遺物/部署/存檔）
+add_executable(RefitCampTest Examples/RefitCampTest.cpp)
+target_include_directories(RefitCampTest PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(RefitCampTest Gameplay)
+
+# 主題 token 品質門檻（headless：WCAG 對比地板/hover 可辨/UTF-8 步進器）
+add_executable(UIThemeTest
+    Examples/UIThemeTest.cpp
+    external/imgui/imgui.cpp
+    external/imgui/imgui_draw.cpp
+    external/imgui/imgui_tables.cpp
+    external/imgui/imgui_widgets.cpp
+)
+target_include_directories(UIThemeTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/external/imgui
+)
+
 # 斷橋攻防戰即時渲染 → MP4
 add_executable(BattleRenderDemo Examples/BattleRenderDemo.cpp)
 target_include_directories(BattleRenderDemo PRIVATE ${CMAKE_SOURCE_DIR})
@@ -785,6 +809,9 @@ set(POTATO_TESTS
     MapGenTest
     SquadTemplateTest
     GeneralGuardTest
+    RefitCampTest
+    BattlePlanTest
+    UIThemeTest
     SynthDataDemo
 )
 foreach(test_name IN LISTS POTATO_TESTS)
