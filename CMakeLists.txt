@@ -375,7 +375,9 @@ add_library(Gameplay STATIC
     Gameplay/SquadTemplate.cpp
     Gameplay/BattlePlan.cpp
     Gameplay/HistorianReport.cpp
+    Gameplay/RivalDeck.cpp
     Gameplay/GeneralDossier.cpp
+    Gameplay/RivalStrategist.cpp
 )
 target_include_directories(Gameplay PUBLIC ${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/Gameplay)
 # BattleSceneSync 需要場景圖/渲染類型;PotatoEngine 不依賴 Gameplay,無循環
@@ -661,15 +663,29 @@ add_executable(HistorianReportTest Examples/HistorianReportTest.cpp)
 target_include_directories(HistorianReportTest PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(HistorianReportTest Gameplay)
 
+add_executable(RivalDeckTest Examples/RivalDeckTest.cpp)
+target_include_directories(RivalDeckTest PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(RivalDeckTest Gameplay)
+
 # N-2 敵將判詞（聽聞態）無頭測試
 add_executable(GeneralDossierTest Examples/GeneralDossierTest.cpp)
 target_include_directories(GeneralDossierTest PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(GeneralDossierTest Gameplay)
 
+# N-3 對手軍師反制牌組（帳本外洩）無頭測試
+add_executable(RivalStrategistTest Examples/RivalStrategistTest.cpp)
+target_include_directories(RivalStrategistTest PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(RivalStrategistTest Gameplay)
+
 # 斷橋攻防戰即時渲染 → MP4
 add_executable(BattleRenderDemo Examples/BattleRenderDemo.cpp)
 target_include_directories(BattleRenderDemo PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(BattleRenderDemo Gameplay)
+
+# 時序訓練資料產線（工具性質：需顯示環境,不進 POTATO_TESTS）
+add_executable(VideoDataDemo Examples/VideoDataDemo.cpp)
+target_include_directories(VideoDataDemo PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(VideoDataDemo Gameplay)
 
 add_executable(ModelLoaderTest Examples/ModelLoaderTest.cpp)
 target_include_directories(ModelLoaderTest PRIVATE ${CMAKE_SOURCE_DIR})
@@ -825,6 +841,8 @@ set(POTATO_TESTS
     BattlePlanTest
     UIThemeTest
     HistorianReportTest
+    RivalDeckTest
+    RivalStrategistTest
     GeneralDossierTest
     SynthDataDemo
 )
