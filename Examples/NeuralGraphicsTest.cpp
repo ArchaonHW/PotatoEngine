@@ -227,7 +227,7 @@ int main() {
         std::vector<NeuralLODSelector::Features> feats;
         std::vector<int> labels;
         std::uniform_real_distribution<float> ud(0.0f, 1.0f);
-        for (int i = 0; i < 600; ++i) {
+        for (int i = 0; i < 900; ++i) {
             NeuralLODSelector::Features f;
             f.distance = ud(rng) * 500.0f;
             f.screenRadius = ud(rng) * 400.0f;
@@ -237,7 +237,7 @@ int main() {
             feats.push_back(f);
             labels.push_back(NeuralLODSelector::RuleLabel(f, 4));
         }
-        lod.Train(feats, labels, 400, 0.15f, 37);
+        lod.Train(feats, labels, 800, 0.05f, 37);
         int agree = 0;
         for (size_t i = 0; i < feats.size(); ++i)
             if (lod.Select(feats[i]) == labels[i]) ++agree;
