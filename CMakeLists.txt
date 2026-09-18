@@ -607,6 +607,10 @@ add_executable(SquadFatigueTest Examples/SquadFatigueTest.cpp)
 target_include_directories(SquadFatigueTest PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(SquadFatigueTest Gameplay)
 
+add_executable(TerrainBonusTest Examples/TerrainBonusTest.cpp)
+target_include_directories(TerrainBonusTest PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(TerrainBonusTest Gameplay)
+
 # 斷橋攻防戰即時渲染 → MP4
 add_executable(BattleRenderDemo Examples/BattleRenderDemo.cpp)
 target_include_directories(BattleRenderDemo PRIVATE ${CMAKE_SOURCE_DIR})
@@ -757,6 +761,7 @@ set(POTATO_TESTS
     TutorialScriptTest
     BattlePickerTest
     PlanningDeckTest
+    TerrainBonusTest
     SynthDataDemo
 )
 foreach(test_name IN LISTS POTATO_TESTS)
