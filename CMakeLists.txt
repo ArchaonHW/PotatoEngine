@@ -344,6 +344,11 @@ target_link_libraries(DevAssistantSmoke
     NaturalLanguageProcessing
 )
 
+# 智能建議規則測試（命中行號/anti-pattern 接線/優化偵測/信心保留）
+add_executable(SuggestionRulesTest Examples/SuggestionRulesTest.cpp)
+target_include_directories(SuggestionRulesTest PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(SuggestionRulesTest IntelligentSuggestion)
+
 # 戰鬥玩法層 - 小隊/flow field/doctrine 腳本/戰鬥控制器
 # 量子模擬層 - 態向量暫存器/qudit（疊加態/糾纏/Born rule 測量）
 add_library(Quantum STATIC
@@ -379,6 +384,7 @@ add_library(Gameplay STATIC
     Gameplay/CampaignLedger.cpp
     Gameplay/GeneralDossier.cpp
     Gameplay/MythLog.cpp
+    Gameplay/ChapterConventions.cpp
 )
 target_include_directories(Gameplay PUBLIC ${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/Gameplay)
 # BattleSceneSync 需要場景圖/渲染類型;PotatoEngine 不依賴 Gameplay,無循環
@@ -713,6 +719,11 @@ add_executable(MythLogTest Examples/MythLogTest.cpp)
 target_include_directories(MythLogTest PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(MythLogTest Gameplay)
 
+# N-6 章節慣例文字層（題詞/判詞/欲知後事/結局四聲部）無頭測試
+add_executable(ChapterConventionsTest Examples/ChapterConventionsTest.cpp)
+target_include_directories(ChapterConventionsTest PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(ChapterConventionsTest Gameplay)
+
 # E-7 戰役框架 facade 無頭測試（roundtrip/壞檔拒絕/原子寫）
 add_executable(CampaignStateTest Examples/CampaignStateTest.cpp)
 target_include_directories(CampaignStateTest PRIVATE ${CMAKE_SOURCE_DIR})
@@ -731,7 +742,7 @@ target_link_libraries(BattleTrainerDemo Gameplay ReinforcementLearning NeuralNet
 # 時序訓練資料產線（工具性質：需顯示環境,不進 POTATO_TESTS）
 add_executable(VideoDataDemo Examples/VideoDataDemo.cpp)
 target_include_directories(VideoDataDemo PRIVATE ${CMAKE_SOURCE_DIR})
-target_link_libraries(VideoDataDemo Gameplay)
+target_link_libraries(VideoDataDemo Gameplay Media glad glfw)
 
 # 天使軍團程序化影片（工具性質：需 GL + ffmpeg,不進 POTATO_TESTS）
 add_executable(AngelLegionVideo Examples/AngelLegionVideo.cpp)
@@ -871,6 +882,7 @@ set(POTATO_TESTS
     SecurityRedTeamTest
     AITestSuite
     DevAssistantSmoke
+    SuggestionRulesTest
     AIAgentSmoke
     DoctrineBattleDemo
     AutoPlannerDemo
@@ -901,6 +913,7 @@ set(POTATO_TESTS
     CampaignStateTest
     SynthDataDemo
     MythLogTest
+    ChapterConventionsTest
 )
 foreach(test_name IN LISTS POTATO_TESTS)
     if(TARGET ${test_name})
