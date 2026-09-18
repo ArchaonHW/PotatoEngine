@@ -385,6 +385,7 @@ add_library(Gameplay STATIC
     Gameplay/GeneralDossier.cpp
     Gameplay/MythLog.cpp
     Gameplay/ChapterConventions.cpp
+    Gameplay/Ledger.cpp
 )
 target_include_directories(Gameplay PUBLIC ${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/Gameplay)
 # BattleSceneSync 需要場景圖/渲染類型;PotatoEngine 不依賴 Gameplay,無循環
@@ -669,6 +670,11 @@ add_executable(BattlePlanTest Examples/BattlePlanTest.cpp)
 target_include_directories(BattlePlanTest PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(BattlePlanTest Gameplay)
 
+# quantum-plan-effects：計畫加成依情報確定度縮放（無頭,進 POTATO_TESTS）
+add_executable(QuantumPlanTest Examples/QuantumPlanTest.cpp)
+target_include_directories(QuantumPlanTest PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(QuantumPlanTest Gameplay)
+
 # G-9 戰鬥間整補循環測試（headless：傷兵池/招募/遺物/部署/存檔）
 add_executable(RefitCampTest Examples/RefitCampTest.cpp)
 target_include_directories(RefitCampTest PRIVATE ${CMAKE_SOURCE_DIR})
@@ -725,6 +731,11 @@ add_executable(ChapterConventionsTest Examples/ChapterConventionsTest.cpp)
 target_include_directories(ChapterConventionsTest PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(ChapterConventionsTest Gameplay)
 
+# L-1/L-2 帳本機械化：複式記帳 + 雜湊鏈無頭測試
+add_executable(LedgerChainTest Examples/LedgerChainTest.cpp)
+target_include_directories(LedgerChainTest PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(LedgerChainTest Gameplay)
+
 # E-7 戰役框架 facade 無頭測試（roundtrip/壞檔拒絕/原子寫）
 add_executable(CampaignStateTest Examples/CampaignStateTest.cpp)
 target_include_directories(CampaignStateTest PRIVATE ${CMAKE_SOURCE_DIR})
@@ -734,6 +745,11 @@ target_link_libraries(CampaignStateTest Campaign)
 add_executable(ChapterLibraryTest Examples/ChapterLibraryTest.cpp)
 target_include_directories(ChapterLibraryTest PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(ChapterLibraryTest Campaign)
+
+# B-1 Potato::Log 輕量日誌無頭測試（stderr 捕獲/級別/檔案 sink）
+add_executable(LogTest Examples/LogTest.cpp)
+target_include_directories(LogTest PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(LogTest PotatoEngine)
 
 # 斷橋攻防戰即時渲染 → MP4
 add_executable(BattleRenderDemo Examples/BattleRenderDemo.cpp)
@@ -909,6 +925,7 @@ set(POTATO_TESTS
     GeneralGuardTest
     RefitCampTest
     BattlePlanTest
+    QuantumPlanTest
     MediaPipeTest
     UIThemeTest
     RenderTargetTest
@@ -918,9 +935,11 @@ set(POTATO_TESTS
     GeneralDossierTest
     CampaignStateTest
     ChapterLibraryTest
+    LogTest
     SynthDataDemo
     MythLogTest
     ChapterConventionsTest
+    LedgerChainTest
 )
 foreach(test_name IN LISTS POTATO_TESTS)
     if(TARGET ${test_name})
