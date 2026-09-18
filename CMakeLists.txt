@@ -374,6 +374,8 @@ add_library(Gameplay STATIC
     Gameplay/MapGenerator.cpp
     Gameplay/SquadTemplate.cpp
     Gameplay/BattlePlan.cpp
+    Gameplay/HistorianReport.cpp
+    Gameplay/GeneralDossier.cpp
 )
 target_include_directories(Gameplay PUBLIC ${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/Gameplay)
 # BattleSceneSync 需要場景圖/渲染類型;PotatoEngine 不依賴 Gameplay,無循環
@@ -654,6 +656,16 @@ target_include_directories(UIThemeTest PRIVATE
     ${CMAKE_SOURCE_DIR}/external/imgui
 )
 
+# N-1 史官戰報組裝器無頭測試
+add_executable(HistorianReportTest Examples/HistorianReportTest.cpp)
+target_include_directories(HistorianReportTest PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(HistorianReportTest Gameplay)
+
+# N-2 敵將判詞（聽聞態）無頭測試
+add_executable(GeneralDossierTest Examples/GeneralDossierTest.cpp)
+target_include_directories(GeneralDossierTest PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(GeneralDossierTest Gameplay)
+
 # 斷橋攻防戰即時渲染 → MP4
 add_executable(BattleRenderDemo Examples/BattleRenderDemo.cpp)
 target_include_directories(BattleRenderDemo PRIVATE ${CMAKE_SOURCE_DIR})
@@ -812,6 +824,8 @@ set(POTATO_TESTS
     RefitCampTest
     BattlePlanTest
     UIThemeTest
+    HistorianReportTest
+    GeneralDossierTest
     SynthDataDemo
 )
 foreach(test_name IN LISTS POTATO_TESTS)
