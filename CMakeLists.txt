@@ -369,7 +369,9 @@ add_library(Gameplay STATIC
     Gameplay/QuantumFog.cpp
     Gameplay/BattlePicker.cpp
     Gameplay/PlanningDeck.cpp
+    Gameplay/PostBattle.cpp
     Gameplay/MapGenerator.cpp
+    Gameplay/SquadTemplate.cpp
 )
 target_include_directories(Gameplay PUBLIC ${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/Gameplay)
 # BattleSceneSync 需要場景圖/渲染類型;PotatoEngine 不依賴 Gameplay,無循環
@@ -612,9 +614,21 @@ add_executable(TerrainBonusTest Examples/TerrainBonusTest.cpp)
 target_include_directories(TerrainBonusTest PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(TerrainBonusTest Gameplay)
 
+add_executable(PostBattleTest Examples/PostBattleTest.cpp)
+target_include_directories(PostBattleTest PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(PostBattleTest Gameplay)
+
 add_executable(MapGenTest Examples/MapGenTest.cpp)
 target_include_directories(MapGenTest PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(MapGenTest Gameplay)
+
+add_executable(SquadTemplateTest Examples/SquadTemplateTest.cpp)
+target_include_directories(SquadTemplateTest PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(SquadTemplateTest Gameplay)
+
+add_executable(GeneralGuardTest Examples/GeneralGuardTest.cpp)
+target_include_directories(GeneralGuardTest PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(GeneralGuardTest Gameplay)
 
 # 斷橋攻防戰即時渲染 → MP4
 add_executable(BattleRenderDemo Examples/BattleRenderDemo.cpp)
@@ -767,7 +781,10 @@ set(POTATO_TESTS
     BattlePickerTest
     PlanningDeckTest
     TerrainBonusTest
+    PostBattleTest
     MapGenTest
+    SquadTemplateTest
+    GeneralGuardTest
     SynthDataDemo
 )
 foreach(test_name IN LISTS POTATO_TESTS)
