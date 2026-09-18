@@ -13,6 +13,7 @@
 #include "MathUtils/MathUtils.h"
 #include "MathUtils/Vector3.h"
 #include "MathUtils/Matrix4.h"
+#include "Media/VideoEncoder.h"
 
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
@@ -434,14 +435,10 @@ int main(int argc, char** argv) {
     // ---- 投影矩陣 ----
     Matrix4 proj = Matrix4::Perspective(50.0f * DEG_TO_RAD, (float)W / H, 0.1f, 400.0f);
 
-    // ---- FFmpeg 管道 ----
-    std::string cmd = "ffmpeg -y -f rawvideo -pix_fmt rgb24 -s " +
-        std::to_string(W) + "x" + std::to_string(H) +
-        " -r " + std::to_string(fps) +
-        " -i - -vf vflip -an -c:v libx264 -pix_fmt yuv420p -crf 18 -movflags +faststart \"" +
-        outPath + "\" 2> ffmpeg_encode.log";
-    FILE* pipe = _popen(cmd.c_str(), "wb");
-    if (!pipe) {
+    // ---- FFmpeg 管道(Media/VideoEncoder,高品質檔 crf16/slow)----
+    Media::VideoEncoder enc;
+    if (!enc.Open(outPath, W, H, fps, Media::PixelFormat::RGB,
+                  "ffmpeg_encode.log", Media::EncodeQuality::High())) {
         std::cerr << "Failed to open ffmpeg pipe" << std::endl;
         return 1;
     }
@@ -600,7 +597,7 @@ int main(int argc, char** argv) {
 
         // ---- 擷取畫面 ----
         glReadPixels(0, 0, W, H, GL_RGB, GL_UNSIGNED_BYTE, frameBuf.data());
-        fwrite(frameBuf.data(), 1, frameBuf.size(), pipe);
+        enc.WriteFrame(frameBuf.data(), frameBuf.size());
 
         renderer.Present();
 
@@ -609,7 +606,7 @@ int main(int argc, char** argv) {
     }
 
     std::cout << "Finalizing encode..." << std::endl;
-    _pclose(pipe);
+    enc.Close();
     renderer.Shutdown();
 
     std::cout << "Done: " << outPath << std::endl;
