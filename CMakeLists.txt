@@ -378,7 +378,6 @@ add_library(Gameplay STATIC
     Gameplay/RivalDeck.cpp
     Gameplay/CampaignLedger.cpp
     Gameplay/GeneralDossier.cpp
-    Gameplay/RivalStrategist.cpp
 )
 target_include_directories(Gameplay PUBLIC ${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/Gameplay)
 # BattleSceneSync 需要場景圖/渲染類型;PotatoEngine 不依賴 Gameplay,無循環
@@ -677,11 +676,6 @@ add_executable(GeneralDossierTest Examples/GeneralDossierTest.cpp)
 target_include_directories(GeneralDossierTest PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(GeneralDossierTest Gameplay)
 
-# N-3 對手軍師反制牌組（帳本外洩）無頭測試
-add_executable(RivalStrategistTest Examples/RivalStrategistTest.cpp)
-target_include_directories(RivalStrategistTest PRIVATE ${CMAKE_SOURCE_DIR})
-target_link_libraries(RivalStrategistTest Gameplay)
-
 # 斷橋攻防戰即時渲染 → MP4
 add_executable(BattleRenderDemo Examples/BattleRenderDemo.cpp)
 target_include_directories(BattleRenderDemo PRIVATE ${CMAKE_SOURCE_DIR})
@@ -853,7 +847,6 @@ set(POTATO_TESTS
     HistorianReportTest
     RivalDeckTest
     CampaignLedgerTest
-    RivalStrategistTest
     GeneralDossierTest
     SynthDataDemo
 )
