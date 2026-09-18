@@ -376,6 +376,7 @@ add_library(Gameplay STATIC
     Gameplay/BattlePlan.cpp
     Gameplay/HistorianReport.cpp
     Gameplay/RivalDeck.cpp
+    Gameplay/CampaignLedger.cpp
     Gameplay/GeneralDossier.cpp
     Gameplay/RivalStrategist.cpp
 )
@@ -667,6 +668,10 @@ add_executable(RivalDeckTest Examples/RivalDeckTest.cpp)
 target_include_directories(RivalDeckTest PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(RivalDeckTest Gameplay)
 
+add_executable(CampaignLedgerTest Examples/CampaignLedgerTest.cpp)
+target_include_directories(CampaignLedgerTest PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(CampaignLedgerTest Gameplay)
+
 # N-2 敵將判詞（聽聞態）無頭測試
 add_executable(GeneralDossierTest Examples/GeneralDossierTest.cpp)
 target_include_directories(GeneralDossierTest PRIVATE ${CMAKE_SOURCE_DIR})
@@ -686,6 +691,11 @@ target_link_libraries(BattleRenderDemo Gameplay)
 add_executable(VideoDataDemo Examples/VideoDataDemo.cpp)
 target_include_directories(VideoDataDemo PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(VideoDataDemo Gameplay)
+
+# 天使軍團程序化影片（工具性質：需 GL + ffmpeg,不進 POTATO_TESTS）
+add_executable(AngelLegionVideo Examples/AngelLegionVideo.cpp)
+target_include_directories(AngelLegionVideo PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(AngelLegionVideo PotatoEngine glad glfw)
 
 add_executable(ModelLoaderTest Examples/ModelLoaderTest.cpp)
 target_include_directories(ModelLoaderTest PRIVATE ${CMAKE_SOURCE_DIR})
@@ -842,6 +852,7 @@ set(POTATO_TESTS
     UIThemeTest
     HistorianReportTest
     RivalDeckTest
+    CampaignLedgerTest
     RivalStrategistTest
     GeneralDossierTest
     SynthDataDemo
