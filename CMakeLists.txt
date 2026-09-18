@@ -461,6 +461,28 @@ add_executable(QuantumBench Examples/QuantumBench.cpp)
 target_include_directories(QuantumBench PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(QuantumBench Gameplay)
 
+# Q-9 量子偵查教學情境（ImGui：三段引導 observe→probe→時效）
+add_executable(DuanqiaoTutorial
+    Examples/DuanqiaoTutorial.cpp
+    external/imgui/imgui.cpp
+    external/imgui/imgui_draw.cpp
+    external/imgui/imgui_tables.cpp
+    external/imgui/imgui_widgets.cpp
+    external/imgui/backends/imgui_impl_glfw.cpp
+    external/imgui/backends/imgui_impl_opengl3.cpp
+)
+target_include_directories(DuanqiaoTutorial PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/external/imgui
+    ${CMAKE_SOURCE_DIR}/external/imgui/backends
+)
+target_link_libraries(DuanqiaoTutorial glfw glad ${OPENGL_LIBRARIES} Gameplay)
+
+# Q-9 教學狀態機無頭測試
+add_executable(TutorialScriptTest Examples/TutorialScriptTest.cpp)
+target_include_directories(TutorialScriptTest PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(TutorialScriptTest Gameplay)
+
 # 量子敵情霧可視化（ImGui：機率雲/觀測塌縮/情報時效）
 add_executable(QuantumFogDemo
     Examples/QuantumFogDemo.cpp
@@ -580,6 +602,10 @@ target_link_libraries(RenderPipelineTest PotatoEngine)
 add_executable(BattleSceneTest Examples/BattleSceneTest.cpp)
 target_include_directories(BattleSceneTest PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(BattleSceneTest Gameplay)
+
+add_executable(SquadFatigueTest Examples/SquadFatigueTest.cpp)
+target_include_directories(SquadFatigueTest PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(SquadFatigueTest Gameplay)
 
 # 斷橋攻防戰即時渲染 → MP4
 add_executable(BattleRenderDemo Examples/BattleRenderDemo.cpp)
@@ -706,6 +732,7 @@ set(POTATO_TESTS
     SerializationTest
     RenderPipelineTest
     BattleSceneTest
+    SquadFatigueTest
     ModelLoaderTest
     VrmLoadTest
     InputTest
@@ -727,6 +754,7 @@ set(POTATO_TESTS
     QuasiRandomTest
     QuantumFogBattleTest
     QuantumBench
+    TutorialScriptTest
     BattlePickerTest
     PlanningDeckTest
     SynthDataDemo
