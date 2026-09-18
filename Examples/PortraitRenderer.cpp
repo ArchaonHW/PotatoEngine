@@ -24,6 +24,7 @@
 #include "Rendering/OpenGLRenderer.h"
 #include "Rendering/Shader.h"
 #include "Rendering/ImageCodec.h"
+#include "Rendering/RenderTarget.h"
 #include "Platform/GLFWSharedContext.h"
 #include "MathUtils/Matrix4.h"
 #include "MathUtils/MathUtils.h"
@@ -427,40 +428,16 @@ void ComputeFraming(const ModelData& md, const Model& model,
     halfW = (bx1 - bx0) * 0.5f * 1.06f;
 }
 
-// 建立離屏 FBO（RGBA8 color texture + depth renderbuffer）
-bool CreateFBO(int w, int h, GLuint& fbo, GLuint& colorTex, GLuint& depthRb) {
-    glGenFramebuffers(1, &fbo);
-    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
-
-    glGenTextures(1, &colorTex);
-    glBindTexture(GL_TEXTURE_2D, colorTex);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA,
-                 GL_UNSIGNED_BYTE, nullptr);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-                         GL_TEXTURE_2D, colorTex, 0);
-
-    glGenRenderbuffers(1, &depthRb);
-    glBindRenderbuffer(GL_RENDERBUFFER, depthRb);
-    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, w, h);
-    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT,
-                              GL_RENDERBUFFER, depthRb);
-
-    bool ok = glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    return ok;
-}
-
+// 離屏渲染走 Rendering/RenderTarget（原手寫 FBO 已由引擎類取代）
 struct RenderCtx {
-    GLuint fbo = 0, colorTex = 0, depthRb = 0;
+    RenderTarget rt;
     AdvancedShader shader;
     AdvancedShader normalShader; // C-3 normal pass
     bool ok = false;
 };
 
 bool InitRenderCtx(int w, int h, RenderCtx& ctx) {
-    if (!CreateFBO(w, h, ctx.fbo, ctx.colorTex, ctx.depthRb)) return false;
+    if (!ctx.rt.Create(w, h)) return false;
     if (!ctx.shader.LoadFromSource(kVertSrc, kFragSrc)) return false;
     if (!ctx.normalShader.LoadFromSource(kVertSrc, kNormalFragSrc))
         return false;
@@ -470,9 +447,7 @@ bool InitRenderCtx(int w, int h, RenderCtx& ctx) {
 
 void DestroyRenderCtx(RenderCtx& ctx) {
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    glDeleteFramebuffers(1, &ctx.fbo);
-    glDeleteTextures(1, &ctx.colorTex);
-    glDeleteRenderbuffers(1, &ctx.depthRb);
+    ctx.rt.Destroy();
 }
 
 // 垂直翻轉 readback 像素（GL 原點在左下，PNG 在左上）
@@ -529,8 +504,7 @@ bool RenderPortrait(const ModelData& md, Model& model,
     Matrix4 proj = Matrix4::Orthographic(-w, w, -halfH, halfH,
                                          0.01f, camD + center.z - zBack + 2.0f);
 
-    glBindFramebuffer(GL_FRAMEBUFFER, ctx.fbo);
-    glViewport(0, 0, args.width, args.height);
+    ctx.rt.Bind();
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_BLEND);
     glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA,
@@ -557,8 +531,7 @@ bool RenderPortrait(const ModelData& md, Model& model,
     model.Draw(ctx.shader);
 
     glFinish();
-    glReadPixels(0, 0, args.width, args.height, GL_RGBA,
-                 GL_UNSIGNED_BYTE, pixels.data());
+    ctx.rt.ReadColor(pixels);
     FlipRows(pixels, args.width, args.height, 4);
     if (!ImageCodec::WritePNGFile(outPath, args.width, args.height,
                                   pixels.data(), &err)) {
@@ -568,9 +541,8 @@ bool RenderPortrait(const ModelData& md, Model& model,
 
     // ---- depth pass：同 FBO 讀回深度（C-1 模式：近亮遠暗線性）----
     if (args.wantDepth) {
-        std::vector<float> raw(pxCount);
-        glReadPixels(0, 0, args.width, args.height, GL_DEPTH_COMPONENT,
-                     GL_FLOAT, raw.data());
+        std::vector<float> raw;
+        ctx.rt.ReadDepth(raw);
         // 翻轉 + 深度灰階：ortho 下 window depth 線性；正規化到模型
         // z 厚度（前緣=1 後緣=0、背景=0）——全 far-plane 正規化只剩
         // ~23 灰階，對訓練訊噪比太差
@@ -612,8 +584,7 @@ bool RenderPortrait(const ModelData& md, Model& model,
         model.Draw(ctx.normalShader);
 
         glFinish();
-        glReadPixels(0, 0, args.width, args.height, GL_RGBA,
-                     GL_UNSIGNED_BYTE, pixels.data());
+        ctx.rt.ReadColor(pixels);
         FlipRows(pixels, args.width, args.height, 4);
         const std::string np = ChannelPath(outPath, "_normal");
         if (!ImageCodec::WritePNGFile(np, args.width, args.height,

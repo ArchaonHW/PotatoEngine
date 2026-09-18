@@ -22,6 +22,7 @@
 #include "Rendering/OpenGLRenderer.h"
 #include "Rendering/Shader.h"
 #include "Rendering/ImageCodec.h"
+#include "Rendering/RenderTarget.h"
 #include "AI/NeuralNetwork.h"
 #include "MathUtils/Matrix4.h"
 #include "MathUtils/Vector3.h"
@@ -136,30 +137,7 @@ std::vector<Vertex> BuildCubeVertices() {
     return verts;
 }
 
-// 離屏 FBO（RGBA8 color + depth renderbuffer），同 PortraitRenderer
-bool CreateFBO(int w, int h, GLuint& fbo, GLuint& colorTex, GLuint& depthRb) {
-    glGenFramebuffers(1, &fbo);
-    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
-
-    glGenTextures(1, &colorTex);
-    glBindTexture(GL_TEXTURE_2D, colorTex);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA,
-                 GL_UNSIGNED_BYTE, nullptr);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-                         GL_TEXTURE_2D, colorTex, 0);
-
-    glGenRenderbuffers(1, &depthRb);
-    glBindRenderbuffer(GL_RENDERBUFFER, depthRb);
-    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, w, h);
-    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT,
-                              GL_RENDERBUFFER, depthRb);
-
-    bool ok = glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    return ok;
-}
+// 離屏渲染走 Rendering/RenderTarget（原手寫 FBO 已由引擎類取代）
 
 struct Sample {
     int label = 0;
@@ -302,12 +280,9 @@ int main() {
             break;
         }
 
-        GLuint fbo = 0, colorTex = 0, depthRb = 0;
-        if (!CreateFBO(kImageSize, kImageSize, fbo, colorTex, depthRb)) {
+        RenderTarget rt;
+        if (!rt.Create(kImageSize, kImageSize)) {
             printf("  [FAIL] FBO 建立失敗\n");
-            if (fbo) glDeleteFramebuffers(1, &fbo);
-            if (colorTex) glDeleteTextures(1, &colorTex);
-            if (depthRb) glDeleteRenderbuffers(1, &depthRb);
             break;
         }
 
@@ -318,8 +293,7 @@ int main() {
         Matrix4 proj = Matrix4::Orthographic(-1.7f, 1.7f, -1.7f, 1.7f,
                                              0.1f, 20.0f);
 
-        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
-        glViewport(0, 0, kImageSize, kImageSize);
+        rt.Bind();
         glEnable(GL_DEPTH_TEST);
         glEnable(GL_CULL_FACE);
         glClearColor(0.10f, 0.11f, 0.13f, 1.0f);
@@ -334,10 +308,7 @@ int main() {
         std::ofstream csv(std::string(kOutDir) + "/labels.csv");
         if (!csv) {
             printf("  [FAIL] labels.csv 無法開啟\n");
-            glBindFramebuffer(GL_FRAMEBUFFER, 0);
-            glDeleteFramebuffers(1, &fbo);
-            glDeleteTextures(1, &colorTex);
-            glDeleteRenderbuffers(1, &depthRb);
+            rt.Unbind();
             break;
         }
         csv << "filename,depth_file,mask_file,label,cell_col,cell_row,pos_x,pos_z,yaw_deg\n";
@@ -370,10 +341,9 @@ int main() {
             cube.Draw();
 
             // 讀回 + 翻轉列序
-            std::vector<unsigned char> raw(s.rgba.size());
+            std::vector<unsigned char> raw;
             glFinish();
-            glReadPixels(0, 0, kImageSize, kImageSize, GL_RGBA,
-                         GL_UNSIGNED_BYTE, raw.data());
+            rt.ReadColor(raw);
             for (int y = 0; y < kImageSize; ++y) {
                 std::memcpy(s.rgba.data() + static_cast<size_t>(y) * rowBytes,
                             raw.data() + static_cast<size_t>(kImageSize - 1 - y)
@@ -384,9 +354,8 @@ int main() {
             // 深度讀回（C-1）：GL_DEPTH_COMPONENT float [0,1]，同列序翻轉
             s.depth.resize(static_cast<size_t>(kImageSize) * kImageSize);
             {
-                std::vector<float> draw(s.depth.size());
-                glReadPixels(0, 0, kImageSize, kImageSize, GL_DEPTH_COMPONENT,
-                             GL_FLOAT, draw.data());
+                std::vector<float> draw;
+                rt.ReadDepth(draw);
                 for (int y = 0; y < kImageSize; ++y) {
                     std::memcpy(s.depth.data() +
                                     static_cast<size_t>(y) * kImageSize,
@@ -411,10 +380,9 @@ int main() {
                 maskShader.SetVec3("idColor", InstanceColor(1));
                 cube.Draw();
 
-                std::vector<unsigned char> mraw(s.mask.size());
+                std::vector<unsigned char> mraw;
                 glFinish();
-                glReadPixels(0, 0, kImageSize, kImageSize, GL_RGBA,
-                             GL_UNSIGNED_BYTE, mraw.data());
+                rt.ReadColor(mraw);
                 for (int y = 0; y < kImageSize; ++y) {
                     std::memcpy(s.mask.data() +
                                     static_cast<size_t>(y) * rowBytes,
@@ -464,10 +432,7 @@ int main() {
                 << ',' << s.posZ << ',' << s.yawDeg << '\n';
         }
         csv.close();
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
-        glDeleteFramebuffers(1, &fbo);
-        glDeleteTextures(1, &colorTex);
-        glDeleteRenderbuffers(1, &depthRb);
+        rt.Unbind();
         if (renderFailed) break;
 
         // ---- dataset.json ----
