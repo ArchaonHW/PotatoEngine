@@ -148,3 +148,8 @@ output/media_pipeline/
 # 臨時 patch/除錯檔
 *.patch
 nul
+
+# 測試/訓練輸出落盤與 IDE 狀態
+imgui.ini
+*_test.json
+trained_*.json
