@@ -378,11 +378,33 @@ add_library(Gameplay STATIC
     Gameplay/RivalDeck.cpp
     Gameplay/CampaignLedger.cpp
     Gameplay/GeneralDossier.cpp
+    Gameplay/MythLog.cpp
 )
 target_include_directories(Gameplay PUBLIC ${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/Gameplay)
 # BattleSceneSync 需要場景圖/渲染類型;PotatoEngine 不依賴 Gameplay,無循環
 # QuantumFog 需要量子態模擬（疊加態敵情霧）
 target_link_libraries(Gameplay PUBLIC PotatoEngine Quantum)
+
+# E-7 戰役層：跨章節狀態 facade（potato.campaign/1 聚合存檔）
+# 分層：PotatoEngine ← Gameplay ← Campaign，Campaign 不回流 Gameplay
+add_library(Campaign STATIC
+    Campaign/CampaignState.cpp
+)
+target_include_directories(Campaign PUBLIC ${CMAKE_SOURCE_DIR})
+target_link_libraries(Campaign PUBLIC Gameplay)
+
+# 影音生成管線共用層（AD-1/AD-3/AD-4）
+# HeadlessCapture.cpp 含 GL——static lib 只在 exe 實際參考時才拉入，
+# 用到它的工具自行連 glad/glfw；lib 本身不宣告 GL 依賴 實際參考時才拉入，
+# 用到它的工具自行連 glad/glfw；lib 本身不宣告 GL 依賴
+add_library(Media STATIC
+    Media/DatasetManifest.cpp
+    Media/VideoEncoder.cpp
+    Media/PipelineRunner.cpp
+    Media/HeadlessCapture.cpp
+)
+target_include_directories(Media PUBLIC ${CMAKE_SOURCE_DIR})
+target_link_libraries(Media PUBLIC PotatoEngine)
 
 # Doctrine 戰鬥演示（無頭模式：規劃階段寫腳本，即時層自動執行）
 add_executable(DoctrineBattleDemo Examples/DoctrineBattleDemo.cpp)
@@ -458,7 +480,7 @@ target_include_directories(DuanqiaoPlayable PRIVATE
     ${CMAKE_SOURCE_DIR}/external/imgui
     ${CMAKE_SOURCE_DIR}/external/imgui/backends
 )
-target_link_libraries(DuanqiaoPlayable glfw glad ${OPENGL_LIBRARIES} Gameplay)
+target_link_libraries(DuanqiaoPlayable glfw glad ${OPENGL_LIBRARIES} Gameplay Campaign)
 
 # Q-1 敵情霧戰鬥整合測試（headless：觀測塌縮/時效回雲/接觸揭露/Scout）
 add_executable(QuantumFogBattleTest Examples/QuantumFogBattleTest.cpp)
@@ -645,6 +667,11 @@ add_executable(RefitCampTest Examples/RefitCampTest.cpp)
 target_include_directories(RefitCampTest PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(RefitCampTest Gameplay)
 
+# 影音管線 CPU 段無頭測試（GL/ffmpeg 段不進測試）
+add_executable(MediaPipeTest Examples/MediaPipeTest.cpp)
+target_include_directories(MediaPipeTest PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(MediaPipeTest Media)
+
 # 主題 token 品質門檻（headless：WCAG 對比地板/hover 可辨/UTF-8 步進器）
 add_executable(UIThemeTest
     Examples/UIThemeTest.cpp
@@ -657,6 +684,11 @@ target_include_directories(UIThemeTest PRIVATE
     ${CMAKE_SOURCE_DIR}
     ${CMAKE_SOURCE_DIR}/external/imgui
 )
+
+# RenderTarget 離屏 FBO 測試（GL-gated：無顯示環境 SKIP）
+add_executable(RenderTargetTest Examples/RenderTargetTest.cpp)
+target_include_directories(RenderTargetTest PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(RenderTargetTest PotatoEngine glad glfw)
 
 # N-1 史官戰報組裝器無頭測試
 add_executable(HistorianReportTest Examples/HistorianReportTest.cpp)
@@ -676,10 +708,25 @@ add_executable(GeneralDossierTest Examples/GeneralDossierTest.cpp)
 target_include_directories(GeneralDossierTest PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(GeneralDossierTest Gameplay)
 
+# N-5 神話事件具名記錄 + 滲透掛鉤無頭測試
+add_executable(MythLogTest Examples/MythLogTest.cpp)
+target_include_directories(MythLogTest PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(MythLogTest Gameplay)
+
+# E-7 戰役框架 facade 無頭測試（roundtrip/壞檔拒絕/原子寫）
+add_executable(CampaignStateTest Examples/CampaignStateTest.cpp)
+target_include_directories(CampaignStateTest PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(CampaignStateTest Campaign)
+
 # 斷橋攻防戰即時渲染 → MP4
 add_executable(BattleRenderDemo Examples/BattleRenderDemo.cpp)
 target_include_directories(BattleRenderDemo PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(BattleRenderDemo Gameplay)
+
+# 戰鬥指揮官 RL 訓練：DQN 學 CP 介入時機（無頭,進 POTATO_TESTS）
+add_executable(BattleTrainerDemo Examples/BattleTrainerDemo.cpp)
+target_include_directories(BattleTrainerDemo PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(BattleTrainerDemo Gameplay ReinforcementLearning NeuralNetwork)
 
 # 時序訓練資料產線（工具性質：需顯示環境,不進 POTATO_TESTS）
 add_executable(VideoDataDemo Examples/VideoDataDemo.cpp)
@@ -827,6 +874,7 @@ set(POTATO_TESTS
     AIAgentSmoke
     DoctrineBattleDemo
     AutoPlannerDemo
+    BattleTrainerDemo
     DuanqiaoDemo
     SageCommandTest
     QuantumTest
@@ -843,12 +891,16 @@ set(POTATO_TESTS
     GeneralGuardTest
     RefitCampTest
     BattlePlanTest
+    MediaPipeTest
     UIThemeTest
+    RenderTargetTest
     HistorianReportTest
     RivalDeckTest
     CampaignLedgerTest
     GeneralDossierTest
+    CampaignStateTest
     SynthDataDemo
+    MythLogTest
 )
 foreach(test_name IN LISTS POTATO_TESTS)
     if(TARGET ${test_name})
