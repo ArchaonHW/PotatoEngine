@@ -53,7 +53,10 @@ bool VideoEncoder::Open(const std::string& outPath, int width, int height,
                         int fps, PixelFormat fmt,
                         const std::string& logPath,
                         const EncodeQuality& quality) {
-    if (pipe_ || width <= 0 || height <= 0 || fps <= 0 || outPath.empty()) {
+    // '"' 會破壞 BuildCommand 的雙引號包覆（shell 注入面）——直接拒絕
+    if (pipe_ || width <= 0 || height <= 0 || fps <= 0 || outPath.empty() ||
+        outPath.find('"') != std::string::npos ||
+        logPath.find('"') != std::string::npos) {
         return false;
     }
     const std::string cmd =
