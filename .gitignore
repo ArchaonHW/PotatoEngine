@@ -153,3 +153,10 @@ nul
 imgui.ini
 *_test.json
 trained_*.json
+
+# 打包輸出與影音/資料集產物
+dist/
+output/videos/
+output/video_ds_test/
+*_test_save.json
+output/vds_hq/
