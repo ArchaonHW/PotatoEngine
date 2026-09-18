@@ -140,6 +140,11 @@ services/data/
 # VrmLoadTest/訓練管線產生的資料集（可再生）
 output/vrm_dataset/
 
+# VideoDataDemo 影格資料集與影音管線產物（可再生，不入版控）
+output/video_ds/
+output/media_test/
+output/media_pipeline/
+
 # 臨時 patch/除錯檔
 *.patch
 nul
