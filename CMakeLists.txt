@@ -395,6 +395,7 @@ target_link_libraries(Gameplay PUBLIC PotatoEngine Quantum)
 # 分層：PotatoEngine ← Gameplay ← Campaign，Campaign 不回流 Gameplay
 add_library(Campaign STATIC
     Campaign/CampaignState.cpp
+    Campaign/ChapterLibrary.cpp
 )
 target_include_directories(Campaign PUBLIC ${CMAKE_SOURCE_DIR})
 target_link_libraries(Campaign PUBLIC Gameplay)
@@ -729,10 +730,20 @@ add_executable(CampaignStateTest Examples/CampaignStateTest.cpp)
 target_include_directories(CampaignStateTest PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(CampaignStateTest Campaign)
 
+# C-1 章節定義庫無頭測試（schema/消毒/LoadDir/Find）
+add_executable(ChapterLibraryTest Examples/ChapterLibraryTest.cpp)
+target_include_directories(ChapterLibraryTest PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(ChapterLibraryTest Campaign)
+
+# C-1 章節定義庫（assets/campaign/*.json 內容側定義）無頭測試
+add_executable(ChapterLibraryTest Examples/ChapterLibraryTest.cpp)
+target_include_directories(ChapterLibraryTest PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(ChapterLibraryTest Campaign)
+
 # 斷橋攻防戰即時渲染 → MP4
 add_executable(BattleRenderDemo Examples/BattleRenderDemo.cpp)
 target_include_directories(BattleRenderDemo PRIVATE ${CMAKE_SOURCE_DIR})
-target_link_libraries(BattleRenderDemo Gameplay)
+target_link_libraries(BattleRenderDemo Gameplay Media)
 
 # 戰鬥指揮官 RL 訓練：DQN 學 CP 介入時機（無頭,進 POTATO_TESTS）
 add_executable(BattleTrainerDemo Examples/BattleTrainerDemo.cpp)
@@ -747,7 +758,7 @@ target_link_libraries(VideoDataDemo Gameplay Media glad glfw)
 # 天使軍團程序化影片（工具性質：需 GL + ffmpeg,不進 POTATO_TESTS）
 add_executable(AngelLegionVideo Examples/AngelLegionVideo.cpp)
 target_include_directories(AngelLegionVideo PRIVATE ${CMAKE_SOURCE_DIR})
-target_link_libraries(AngelLegionVideo PotatoEngine glad glfw)
+target_link_libraries(AngelLegionVideo PotatoEngine glad glfw Media)
 
 add_executable(ModelLoaderTest Examples/ModelLoaderTest.cpp)
 target_include_directories(ModelLoaderTest PRIVATE ${CMAKE_SOURCE_DIR})
@@ -911,6 +922,7 @@ set(POTATO_TESTS
     CampaignLedgerTest
     GeneralDossierTest
     CampaignStateTest
+    ChapterLibraryTest
     SynthDataDemo
     MythLogTest
     ChapterConventionsTest
