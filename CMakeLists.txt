@@ -730,12 +730,7 @@ add_executable(CampaignStateTest Examples/CampaignStateTest.cpp)
 target_include_directories(CampaignStateTest PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(CampaignStateTest Campaign)
 
-# C-1 章節定義庫無頭測試（schema/消毒/LoadDir/Find）
-add_executable(ChapterLibraryTest Examples/ChapterLibraryTest.cpp)
-target_include_directories(ChapterLibraryTest PRIVATE ${CMAKE_SOURCE_DIR})
-target_link_libraries(ChapterLibraryTest Campaign)
-
-# C-1 章節定義庫（assets/campaign/*.json 內容側定義）無頭測試
+# C-1 章節定義庫無頭測試（schema 驗證/消毒/LoadDir 除重/真實資產）
 add_executable(ChapterLibraryTest Examples/ChapterLibraryTest.cpp)
 target_include_directories(ChapterLibraryTest PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(ChapterLibraryTest Campaign)
