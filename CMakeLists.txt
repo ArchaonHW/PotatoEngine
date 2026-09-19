@@ -741,6 +741,11 @@ add_executable(LedgerAuditTest Examples/LedgerAuditTest.cpp)
 target_include_directories(LedgerAuditTest PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(LedgerAuditTest Gameplay)
 
+# L-5 回放完整性：battle_replay rootHash 驗證無頭測試
+add_executable(ReplayIntegrityTest Examples/ReplayIntegrityTest.cpp)
+target_include_directories(ReplayIntegrityTest PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(ReplayIntegrityTest Gameplay)
+
 # E-7 戰役框架 facade 無頭測試（roundtrip/壞檔拒絕/原子寫）
 add_executable(CampaignStateTest Examples/CampaignStateTest.cpp)
 target_include_directories(CampaignStateTest PRIVATE ${CMAKE_SOURCE_DIR})
@@ -957,6 +962,7 @@ set(POTATO_TESTS
     ChapterConventionsTest
     LedgerChainTest
     LedgerAuditTest
+    ReplayIntegrityTest
     GovernanceTest
 )
 foreach(test_name IN LISTS POTATO_TESTS)
