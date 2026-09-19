@@ -736,6 +736,11 @@ add_executable(LedgerChainTest Examples/LedgerChainTest.cpp)
 target_include_directories(LedgerChainTest PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(LedgerChainTest Gameplay)
 
+# L-3 查帳戰報：HistorianReport 消費 LedgerChain 無頭測試
+add_executable(LedgerAuditTest Examples/LedgerAuditTest.cpp)
+target_include_directories(LedgerAuditTest PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(LedgerAuditTest Gameplay)
+
 # E-7 戰役框架 facade 無頭測試（roundtrip/壞檔拒絕/原子寫）
 add_executable(CampaignStateTest Examples/CampaignStateTest.cpp)
 target_include_directories(CampaignStateTest PRIVATE ${CMAKE_SOURCE_DIR})
@@ -940,6 +945,7 @@ set(POTATO_TESTS
     MythLogTest
     ChapterConventionsTest
     LedgerChainTest
+    LedgerAuditTest
 )
 foreach(test_name IN LISTS POTATO_TESTS)
     if(TARGET ${test_name})
