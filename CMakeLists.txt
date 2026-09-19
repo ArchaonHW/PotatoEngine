@@ -697,6 +697,7 @@ target_include_directories(UIThemeTest PRIVATE
     ${CMAKE_SOURCE_DIR}
     ${CMAKE_SOURCE_DIR}/external/imgui
 )
+target_link_libraries(UIThemeTest PotatoEngine) # SpriteAtlas(F-1)
 
 # RenderTarget 離屏 FBO 測試（GL-gated：無顯示環境 SKIP）
 add_executable(RenderTargetTest Examples/RenderTargetTest.cpp)
@@ -755,6 +756,11 @@ target_link_libraries(ChapterLibraryTest Campaign)
 add_executable(LogTest Examples/LogTest.cpp)
 target_include_directories(LogTest PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(LogTest PotatoEngine)
+
+# F-1 sprite atlas 索引/uv/降級無頭測試
+add_executable(SpriteAtlasTest Examples/SpriteAtlasTest.cpp)
+target_include_directories(SpriteAtlasTest PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(SpriteAtlasTest PotatoEngine)
 
 # 斷橋攻防戰即時渲染 → MP4
 add_executable(BattleRenderDemo Examples/BattleRenderDemo.cpp)
@@ -941,6 +947,7 @@ set(POTATO_TESTS
     CampaignStateTest
     ChapterLibraryTest
     LogTest
+    SpriteAtlasTest
     SynthDataDemo
     MythLogTest
     ChapterConventionsTest
