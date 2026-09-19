@@ -135,7 +135,6 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/Serialization
     ${CMAKE_SOURCE_DIR}/Time
     ${CMAKE_SOURCE_DIR}/AI
-    ${CMAKE_SOURCE_DIR}/GUI
     ${CMAKE_SOURCE_DIR}/Security
     ${OPENGL_INCLUDE_DIRS}
 )
@@ -159,7 +158,7 @@ file(GLOB_RECURSE ENGINE_SOURCES
     "Resources/*.cpp"
     "ECS/*.cpp"
     "GameObject/*.cpp"
-    "GUI/*.cpp"
+    # "GUI/*.cpp"      # AgentGUI 依賴遊戲側 AIAgentSystem,不進引擎
     # "MathUtils/*.cpp"      # 全 header-only
     # "AI/*.cpp"      # AI 模組另有獨立靜態庫目標,避免重複編譯
 )
@@ -182,7 +181,6 @@ file(GLOB_RECURSE ENGINE_HEADERS
     "Serialization/*.h"
     "Time/*.h"
     "AI/*.h"
-    "GUI/*.h"
     "MathUtils/*.h"
 )
 
@@ -397,6 +395,7 @@ target_link_libraries(Gameplay PUBLIC PotatoEngine Quantum)
 add_library(Campaign STATIC
     Campaign/CampaignState.cpp
     Campaign/ChapterLibrary.cpp
+    Campaign/Governance.cpp
 )
 target_include_directories(Campaign PUBLIC ${CMAKE_SOURCE_DIR})
 target_link_libraries(Campaign PUBLIC Gameplay)
@@ -752,6 +751,11 @@ add_executable(ChapterLibraryTest Examples/ChapterLibraryTest.cpp)
 target_include_directories(ChapterLibraryTest PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(ChapterLibraryTest Campaign)
 
+# C-2 戰役治理累加器無頭測試（折半率/動亂級/持久化）
+add_executable(GovernanceTest Examples/GovernanceTest.cpp)
+target_include_directories(GovernanceTest PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(GovernanceTest Campaign)
+
 # B-1 Potato::Log 輕量日誌無頭測試（stderr 捕獲/級別/檔案 sink）
 add_executable(LogTest Examples/LogTest.cpp)
 target_include_directories(LogTest PRIVATE ${CMAKE_SOURCE_DIR})
@@ -953,6 +957,7 @@ set(POTATO_TESTS
     ChapterConventionsTest
     LedgerChainTest
     LedgerAuditTest
+    GovernanceTest
 )
 foreach(test_name IN LISTS POTATO_TESTS)
     if(TARGET ${test_name})
