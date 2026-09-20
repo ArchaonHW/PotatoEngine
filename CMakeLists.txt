@@ -384,6 +384,7 @@ add_library(Gameplay STATIC
     Gameplay/MythLog.cpp
     Gameplay/ChapterConventions.cpp
     Gameplay/Ledger.cpp
+    Gameplay/GovernanceField.cpp
 )
 target_include_directories(Gameplay PUBLIC ${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/Gameplay)
 # BattleSceneSync 需要場景圖/渲染類型;PotatoEngine 不依賴 Gameplay,無循環
@@ -766,6 +767,11 @@ add_executable(GovernanceTest Examples/GovernanceTest.cpp)
 target_include_directories(GovernanceTest PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(GovernanceTest Campaign)
 
+# Epic A 戰場治理追蹤無頭測試（佔領/焚村/護輜/墮落 ratchet）
+add_executable(GovernanceFieldTest Examples/GovernanceFieldTest.cpp)
+target_include_directories(GovernanceFieldTest PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(GovernanceFieldTest Campaign)
+
 # B-1 Potato::Log 輕量日誌無頭測試（stderr 捕獲/級別/檔案 sink）
 add_executable(LogTest Examples/LogTest.cpp)
 target_include_directories(LogTest PRIVATE ${CMAKE_SOURCE_DIR})
@@ -970,6 +976,7 @@ set(POTATO_TESTS
     ReplayIntegrityTest
     LedgerForgeTest
     GovernanceTest
+    GovernanceFieldTest
 )
 foreach(test_name IN LISTS POTATO_TESTS)
     if(TARGET ${test_name})
