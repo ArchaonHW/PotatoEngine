@@ -746,6 +746,11 @@ add_executable(ReplayIntegrityTest Examples/ReplayIntegrityTest.cpp)
 target_include_directories(ReplayIntegrityTest PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(ReplayIntegrityTest Gameplay)
 
+# L-4 偽帳機制：InjectForgery + 疑帳標記無頭測試
+add_executable(LedgerForgeTest Examples/LedgerForgeTest.cpp)
+target_include_directories(LedgerForgeTest PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(LedgerForgeTest Gameplay)
+
 # E-7 戰役框架 facade 無頭測試（roundtrip/壞檔拒絕/原子寫）
 add_executable(CampaignStateTest Examples/CampaignStateTest.cpp)
 target_include_directories(CampaignStateTest PRIVATE ${CMAKE_SOURCE_DIR})
@@ -963,6 +968,7 @@ set(POTATO_TESTS
     LedgerChainTest
     LedgerAuditTest
     ReplayIntegrityTest
+    LedgerForgeTest
     GovernanceTest
 )
 foreach(test_name IN LISTS POTATO_TESTS)
