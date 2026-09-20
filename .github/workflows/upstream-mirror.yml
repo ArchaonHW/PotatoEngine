@@ -1,0 +1,94 @@
+name: Upstream Mirror Check
+
+# 驗證引擎模組改動已同步到上游 PotatoEngine 鏡像 repo
+# (C:\HWC\PotatoEngine → github.com/ArchaonHW/PotatoEngine)
+# 做法:checkout 上游 repo、跑同步腳本、git status 非空 = 漂移
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'Core/**'
+      - 'Security/**'
+      - 'Events/**'
+      - 'FileSystem/**'
+      - 'Logging/**'
+      - 'MathUtils/**'
+      - 'Memory/**'
+      - 'Platform/**'
+      - 'Scene/**'
+      - 'Serialization/**'
+      - 'Time/**'
+      - 'Rendering/**'
+      - 'Physics/**'
+      - 'Audio/**'
+      - 'Input/**'
+      - 'Resources/**'
+      - 'ECS/**'
+      - 'GameObject/**'
+      - 'GUI/**'
+      - 'AI/**'
+      - 'Quantum/**'
+      - 'external/glad_gen/**'
+      - 'external/tinygltf/**'
+  pull_request:
+    branches: [ main, develop ]
+    paths:
+      - 'Core/**'
+      - 'Security/**'
+      - 'Events/**'
+      - 'FileSystem/**'
+      - 'Logging/**'
+      - 'MathUtils/**'
+      - 'Memory/**'
+      - 'Platform/**'
+      - 'Scene/**'
+      - 'Serialization/**'
+      - 'Time/**'
+      - 'Rendering/**'
+      - 'Physics/**'
+      - 'Audio/**'
+      - 'Input/**'
+      - 'Resources/**'
+      - 'ECS/**'
+      - 'GameObject/**'
+      - 'GUI/**'
+      - 'AI/**'
+      - 'Quantum/**'
+      - 'external/glad_gen/**'
+      - 'external/tinygltf/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  mirror-check:
+    name: PotatoEngine mirror in sync
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+    - name: Checkout MingGoRTS
+      uses: actions/checkout@v4
+
+    - name: Checkout PotatoEngine (upstream mirror)
+      uses: actions/checkout@v4
+      with:
+        repository: ArchaonHW/PotatoEngine
+        path: upstream
+        # 若 PotatoEngine 為 private,需改用 PAT secret:
+        # token: ${{ secrets.UPSTREAM_SYNC_TOKEN }}
+
+    - name: Run sync script into upstream checkout
+      run: bash tools/sync-potatoengine-upstream.sh "$PWD/upstream"
+
+    - name: Verify mirror is clean
+      run: |
+        cd upstream
+        if [ -n "$(git status --porcelain)" ]; then
+          echo "::error::Upstream mirror out of sync. Run tools/sync-potatoengine-upstream.sh and push PotatoEngine."
+          git status --short
+          exit 1
+        fi
+        echo "Upstream mirror is in sync."
