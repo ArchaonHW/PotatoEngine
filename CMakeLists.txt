@@ -771,6 +771,11 @@ add_executable(LedgerRegistryTest Examples/LedgerRegistryTest.cpp)
 target_include_directories(LedgerRegistryTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(LedgerRegistryTest Gameplay)
 
+# L-8 查證式史官：seeded 抽驗 + 三態確信結論無頭測試
+add_executable(LedgerAssuranceTest Examples/LedgerAssuranceTest.cpp)
+target_include_directories(LedgerAssuranceTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(LedgerAssuranceTest Gameplay)
+
 # E-7 戰役框架 facade 無頭測試（roundtrip/壞檔拒絕/原子寫）
 add_executable(CampaignStateTest Examples/CampaignStateTest.cpp)
 target_include_directories(CampaignStateTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -995,6 +1000,7 @@ set(POTATO_TESTS
     LedgerForgeTest
     LedgerProvenanceTest
     LedgerRegistryTest
+    LedgerAssuranceTest
     GovernanceTest
     GovernanceFieldTest
 )
