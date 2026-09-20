@@ -31,6 +31,8 @@ on:
       - 'Quantum/**'
       - 'external/glad_gen/**'
       - 'external/tinygltf/**'
+      - 'Examples/**'
+      - 'tools/sync-potatoengine-upstream.sh'
   pull_request:
     branches: [ main, develop ]
     paths:
@@ -57,6 +59,8 @@ on:
       - 'Quantum/**'
       - 'external/glad_gen/**'
       - 'external/tinygltf/**'
+      - 'Examples/**'
+      - 'tools/sync-potatoengine-upstream.sh'
   workflow_dispatch:
 
 permissions:
