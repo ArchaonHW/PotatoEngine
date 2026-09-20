@@ -15,7 +15,7 @@ Physics/PhysicsSystem.cpp Platform/PlatformSystem.cpp
 Rendering/Camera.cpp Rendering/Lighting.cpp Rendering/ModelLoader.cpp
 Rendering/OpenGLRenderer.cpp Rendering/Shader.cpp
 Resources/ResourceManager.cpp Scene/SceneNode.cpp Security/SecuritySystem.cpp
-Serialization/Serialization.cpp Time/TimeManager.cpp GUI/AgentGUI.cpp
+Serialization/Serialization.cpp Time/TimeManager.cpp
 "
 total=0
 for f in $FILES; do
