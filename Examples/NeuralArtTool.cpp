@@ -8,6 +8,9 @@
  *   NeuralArtTool denoise      <in.png> <out.png> <model.pnn>
  *   NeuralArtTool colorize-train <in.png> <out.pnn> [epochs]
  *   NeuralArtTool colorize     <in.png> <out.png> <model.pnn>
+ *   NeuralArtTool texgen-train <in.png> <out.pnn> [epochs]
+ *   NeuralArtTool terrain-train <hm.png> <out.pnn> [epochs]
+ *   NeuralArtTool normalmap-train <hm.png> <out.pnn> [epochs]
  *   NeuralArtTool texgen       <out.png> <model.pnn> <w> <h> <z0,z1,...>
  *   NeuralArtTool terrain      <out_hm.png> <model.pnn> <w> <h> <z0,...>
  *   NeuralArtTool normalmap    <hm.png> <out.png> <model.pnn>
@@ -64,6 +67,13 @@ std::vector<float> ParseLatent(const char* s, int expected) {
     return v;
 }
 
+// 取影像 R 通道作高度場（0..1）
+std::vector<float> HeightsFromImage(const FImage& img) {
+    std::vector<float> heights((size_t)img.w * img.h);
+    for (size_t i = 0; i < heights.size(); ++i) heights[i] = img.px[i * 4];
+    return heights;
+}
+
 int ArgInt(char** argv, int i, int def) {
     return argv[i] ? std::atoi(argv[i]) : def;
 }
@@ -80,6 +90,9 @@ void Usage() {
         "  denoise        <in.png> <out.png> <model.pnn>\n"
         "  colorize-train <in.png> <out.pnn> [epochs]\n"
         "  colorize       <in.png> <out.png> <model.pnn>\n"
+        "  texgen-train   <in.png> <out.pnn> [epochs]\n"
+        "  terrain-train  <hm.png> <out.pnn> [epochs]\n"
+        "  normalmap-train <hm.png> <out.pnn> [epochs]\n"
         "  texgen         <out.png> <model.pnn> <w> <h> <z0,z1,...>\n"
         "  terrain        <out.png> <model.pnn> <w> <h> <z0,...>\n"
         "  normalmap      <hm.png> <out.png> <model.pnn>\n");
@@ -138,6 +151,38 @@ int main(int argc, char** argv) {
         NeuralColorizer cz; cz.Build();
         if (!LoadNetFromFile(cz.Net(), argv[4])) return 1;
         return SavePNG(argv[3], cz.Colorize(img)) ? 0 : 1;
+    }
+    if (mode == "texgen-train" && argc >= 4) {
+        FImage img;
+        if (!LoadPNG(argv[2], img)) return 1;
+        NeuralFieldImage gen;
+        // 單圖樣本：latent 用全零，Generate(zeros) 即重現此圖
+        NeuralFieldImage::Sample s{std::vector<float>(gen.LatentDim(), 0.0f), img};
+        float loss = gen.Train({s}, (size_t)ArgInt(argv, 4, 300), 0.05f, 17);
+        std::printf("紋理場訓練完成 loss=%.5f\n", loss);
+        return SaveNetToFile(gen.Net(), argv[3]) ? 0 : 1;
+    }
+    if (mode == "terrain-train" && argc >= 4) {
+        FImage img;
+        if (!LoadPNG(argv[2], img)) return 1;
+        NeuralTerrainGen tg;
+        NeuralTerrainGen::Sample s{
+            std::vector<float>(tg.LatentDim(), 0.0f),
+            HeightsFromImage(img), img.w, img.h};
+        float loss = tg.Train({s}, (size_t)ArgInt(argv, 4, 300), 0.05f, 23);
+        std::printf("地形訓練完成 loss=%.5f\n", loss);
+        return SaveNetToFile(tg.Net(), argv[3]) ? 0 : 1;
+    }
+    if (mode == "normalmap-train" && argc >= 4) {
+        FImage img;
+        if (!LoadPNG(argv[2], img)) return 1;
+        NeuralNormalMapper nm;
+        std::vector<float> heights = HeightsFromImage(img);
+        std::vector<int> dims = {img.w, img.h};
+        float loss = nm.Train({heights}, dims,
+                              (size_t)ArgInt(argv, 4, 200), 0.05f, 29);
+        std::printf("法線貼圖訓練完成 loss=%.5f\n", loss);
+        return SaveNetToFile(nm.Net(), argv[3]) ? 0 : 1;
     }
     if (mode == "texgen" && argc >= 7) {
         NeuralFieldImage gen;
