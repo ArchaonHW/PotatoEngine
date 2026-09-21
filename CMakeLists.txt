@@ -78,7 +78,8 @@ if(NOT glfw3_FOUND)
         HINTS ${GLFW_ROOT} $ENV{GLFW_ROOT}
         PATH_SUFFIXES ${_glfw_lib_suffixes})
     if(GLFW3_INCLUDE_DIR AND GLFW3_LIBRARY)
-        add_library(glfw STATIC IMPORTED)
+        # GLOBAL:讓 add_subdirectory 消費端（遊戲 repo）也能連結此 target
+        add_library(glfw STATIC IMPORTED GLOBAL)
         set_target_properties(glfw PROPERTIES
             IMPORTED_LOCATION "${GLFW3_LIBRARY}"
             INTERFACE_INCLUDE_DIRECTORIES "${GLFW3_INCLUDE_DIR}")
@@ -97,6 +98,14 @@ if(NOT glfw3_FOUND)
     set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
     set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
     FetchContent_MakeAvailable(glfw)
+endif()
+# 若 glfw 是 imported target（find_package/find_library 路徑），提升為 GLOBAL
+# 讓 add_subdirectory 消費端可見
+if(TARGET glfw)
+    get_property(_glfw_imported TARGET glfw PROPERTY IMPORTED)
+    if(_glfw_imported)
+        set_target_properties(glfw PROPERTIES IMPORTED_GLOBAL TRUE)
+    endif()
 endif()
 
 # GLAD - OpenGL 加載器
@@ -279,320 +288,6 @@ target_link_libraries(OptimizedAIDemo)
 add_executable(AITestSuite Examples/AITestSuite.cpp)
 target_link_libraries(AITestSuite)
 
-# AI 增強模塊 - 強化學習
-add_library(ReinforcementLearning STATIC AI/ReinforcementLearning.cpp)
-target_include_directories(ReinforcementLearning PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/AI)
-target_link_libraries(ReinforcementLearning NeuralNetwork)
-
-# AI 增強模塊 - 自然語言處理
-add_library(NaturalLanguageProcessing STATIC AI/NaturalLanguageProcessing.cpp)
-target_include_directories(NaturalLanguageProcessing PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/AI)
-
-# AI Agent 系統
-add_library(AIAgentSystem STATIC AI/AIAgentSystem.cpp)
-target_include_directories(AIAgentSystem PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/AI)
-
-# AI 增強模塊 - LLM 集成
-add_library(LLMIntegration STATIC AI/LLMIntegration.cpp)
-target_include_directories(LLMIntegration PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/AI)
-# WinHTTP transport：MSVC 由 #pragma comment 處理，MinGW 需顯式連結
-if(WIN32 AND NOT MSVC)
-    target_link_libraries(LLMIntegration winhttp)
-endif()
-
-# AI 增強模塊 - RAG 系統
-add_library(RAGSystem STATIC AI/RAGSystem.cpp)
-target_include_directories(RAGSystem PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/AI)
-target_link_libraries(RAGSystem LLMIntegration)
-
-# AI 增強模塊 - Agent 鏈
-add_library(AgentChain STATIC AI/AgentChain.cpp)
-target_include_directories(AgentChain PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/AI)
-target_link_libraries(AgentChain LLMIntegration)
-
-# AI 增強模塊 - 工具框架
-add_library(ToolFramework STATIC AI/ToolFramework.cpp)
-target_include_directories(ToolFramework PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/AI)
-target_link_libraries(ToolFramework LLMIntegration)
-
-# AI 增強模塊 - 知識圖譜（長期記憶與關係推理）
-add_library(KnowledgeGraph STATIC AI/KnowledgeGraph.cpp)
-target_include_directories(KnowledgeGraph PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/AI)
-
-# AI 增強模塊 - 自我反思引擎（元認知與決策校準）
-add_library(SelfReflection STATIC AI/SelfReflection.cpp)
-target_include_directories(SelfReflection PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/AI)
-
-# AI 增強模塊 - 智能開發系統
-add_library(IntelligentDevelopmentSystem STATIC AI/IntelligentDevelopmentSystem.cpp)
-target_include_directories(IntelligentDevelopmentSystem PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/AI)
-target_link_libraries(IntelligentDevelopmentSystem LLMIntegration RAGSystem AgentChain ToolFramework AIAgentSystem NeuralNetwork NaturalLanguageProcessing KnowledgeGraph SelfReflection)
-
-# MingGoRTS IDE 智能建議系統
-add_library(IntelligentSuggestion STATIC MingGoRTS_IDE/IntelligentSuggestion.cpp)
-target_include_directories(IntelligentSuggestion PUBLIC 
-    ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}/MingGoRTS_IDE
-)
-
-# AI 增強演示程序
-add_executable(AIEnhancedDemo Examples/AIEnhancedDemo.cpp)
-target_include_directories(AIEnhancedDemo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(AIEnhancedDemo NeuralNetwork ReinforcementLearning NaturalLanguageProcessing)
-
-# 終極 AI Agent 演示程序
-add_executable(UltimateAIAgentDemo Examples/UltimateAIAgentDemo.cpp)
-target_include_directories(UltimateAIAgentDemo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(UltimateAIAgentDemo AIAgentSystem LLMIntegration RAGSystem AgentChain ToolFramework NeuralNetwork NaturalLanguageProcessing)
-
-# 智能開發系統演示程序
-add_executable(IntelligentDevelopmentDemo Examples/IntelligentDevelopmentDemo.cpp)
-target_include_directories(IntelligentDevelopmentDemo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(IntelligentDevelopmentDemo IntelligentDevelopmentSystem LLMIntegration AIAgentSystem)
-
-# 認知增強演示（知識圖譜 + 自我反思）
-add_executable(CognitiveDemo Examples/CognitiveDemo.cpp)
-target_include_directories(CognitiveDemo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(CognitiveDemo KnowledgeGraph SelfReflection)
-
-# 開發助手本地管線煙霧測試（無 LLM 客戶端亦可生成）
-add_executable(DevAssistantSmoke Examples/DevAssistantSmoke.cpp)
-target_include_directories(DevAssistantSmoke PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(DevAssistantSmoke
-    IntelligentDevelopmentSystem
-    IntelligentSuggestion
-    KnowledgeGraph
-    SelfReflection
-    LLMIntegration
-    RAGSystem
-    AgentChain
-    ToolFramework
-    AIAgentSystem
-    NeuralNetwork
-    NaturalLanguageProcessing
-)
-
-# 智能建議規則測試（命中行號/anti-pattern 接線/優化偵測/信心保留）
-add_executable(SuggestionRulesTest Examples/SuggestionRulesTest.cpp)
-target_include_directories(SuggestionRulesTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(SuggestionRulesTest IntelligentSuggestion)
-
-# 戰鬥玩法層 - 小隊/flow field/doctrine 腳本/戰鬥控制器
-add_library(Gameplay STATIC
-    Gameplay/FlowField.cpp
-    Gameplay/Squad.cpp
-    Gameplay/Doctrine.cpp
-    Gameplay/BattleController.cpp
-    Gameplay/BattlePlanner.cpp
-    Gameplay/BattleSceneSync.cpp
-    Gameplay/BattleMap.cpp
-    Gameplay/EnemyGeneral.cpp
-    Gameplay/BattleResources.cpp
-    Gameplay/BattleRecorder.cpp
-    Gameplay/Roster.cpp
-    Gameplay/SageCommand.cpp
-    Gameplay/QuantumFog.cpp
-    Gameplay/BattlePicker.cpp
-    Gameplay/PlanningDeck.cpp
-    Gameplay/PostBattle.cpp
-    Gameplay/RefitCamp.cpp
-    Gameplay/MapGenerator.cpp
-    Gameplay/SquadTemplate.cpp
-    Gameplay/BattlePlan.cpp
-    Gameplay/HistorianReport.cpp
-    Gameplay/RivalDeck.cpp
-    Gameplay/CampaignLedger.cpp
-    Gameplay/GeneralDossier.cpp
-    Gameplay/MythLog.cpp
-    Gameplay/ChapterConventions.cpp
-    Gameplay/Ledger.cpp
-    Gameplay/GovernanceField.cpp
-)
-target_include_directories(Gameplay PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/Gameplay)
-# BattleSceneSync 需要場景圖/渲染類型;PotatoEngine 不依賴 Gameplay,無循環
-# QuantumFog 需要量子態模擬（疊加態敵情霧）
-target_link_libraries(Gameplay PUBLIC PotatoEngine Quantum)
-
-# E-7 戰役層：跨章節狀態 facade（potato.campaign/1 聚合存檔）
-# 分層：PotatoEngine ← Gameplay ← Campaign，Campaign 不回流 Gameplay
-add_library(Campaign STATIC
-    Campaign/CampaignState.cpp
-    Campaign/ChapterLibrary.cpp
-    Campaign/Governance.cpp
-)
-target_include_directories(Campaign PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(Campaign PUBLIC Gameplay)
-
-# Doctrine 戰鬥演示（無頭模式：規劃階段寫腳本，即時層自動執行）
-add_executable(DoctrineBattleDemo Examples/DoctrineBattleDemo.cpp)
-target_include_directories(DoctrineBattleDemo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(DoctrineBattleDemo Gameplay)
-
-# 智能規劃演示（AI 參謀自動生成 doctrine 後執行戰鬥）
-add_executable(AutoPlannerDemo Examples/AutoPlannerDemo.cpp)
-target_include_directories(AutoPlannerDemo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(AutoPlannerDemo Gameplay)
-
-# 斷橋原型（T-4~T-8：地圖JSON/敵將腳本/資源/錄製回放/名冊）
-add_executable(DuanqiaoDemo Examples/DuanqiaoDemo.cpp)
-target_include_directories(DuanqiaoDemo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(DuanqiaoDemo Gameplay)
-
-# 至聖者指揮學邏輯測試（headless：三權/正逆六策/墮落/五行/治平）
-add_executable(SageCommandTest Examples/SageCommandTest.cpp)
-target_include_directories(SageCommandTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(SageCommandTest Gameplay)
-
-# 至聖者指揮畫面（ImGui 五區佈局：道權/戰場/策權/兵權/治平儀表）
-# imgui 源碼比照 MingGoRTS_IDE_GUI 區塊
-add_executable(SageCommandDemo
-    Examples/SageCommandDemo.cpp
-    external/imgui/imgui.cpp
-    external/imgui/imgui_draw.cpp
-    external/imgui/imgui_tables.cpp
-    external/imgui/imgui_widgets.cpp
-    external/imgui/backends/imgui_impl_glfw.cpp
-    external/imgui/backends/imgui_impl_opengl3.cpp
-)
-target_include_directories(SageCommandDemo PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui
-    ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui/backends
-)
-target_link_libraries(SageCommandDemo glfw glad ${OPENGL_LIBRARIES} Gameplay)
-
-# 量子模組測試（headless：暫存器/qudit/敵情霧的 Born rule 與時效）
-add_executable(QuantumTest Examples/QuantumTest.cpp)
-target_include_directories(QuantumTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(QuantumTest Quantum Gameplay)
-
-# 準隨機/藍噪取樣測試（headless：差異度、最小間距、種子決定性）
-add_executable(QuasiRandomTest Examples/QuasiRandomTest.cpp)
-target_include_directories(QuasiRandomTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(QuasiRandomTest Gameplay)
-
-# RTS 點選層測試（headless：螢幕→射線→地面/小隊包圍球）
-add_executable(BattlePickerTest Examples/BattlePickerTest.cpp)
-target_include_directories(BattlePickerTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(BattlePickerTest Gameplay)
-
-# T-9 回合層牌組測試（headless：卡槽編輯/驗證/AI 模板/Commit）
-add_executable(PlanningDeckTest Examples/PlanningDeckTest.cpp)
-target_include_directories(PlanningDeckTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(PlanningDeckTest Gameplay)
-
-# 斷橋可玩 demo（E4-3：LMB 選取/RMB 下令走 CP 介入；A-4 膠囊體+選取環+血條）
-# 互動視窗程式——無顯示環境自行 [SKIP]，不進 POTATO_TESTS
-add_executable(DuanqiaoPlayable
-    Examples/DuanqiaoPlayable.cpp
-    external/imgui/imgui.cpp
-    external/imgui/imgui_draw.cpp
-    external/imgui/imgui_tables.cpp
-    external/imgui/imgui_widgets.cpp
-    external/imgui/backends/imgui_impl_glfw.cpp
-    external/imgui/backends/imgui_impl_opengl3.cpp
-)
-target_include_directories(DuanqiaoPlayable PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui
-    ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui/backends
-)
-target_link_libraries(DuanqiaoPlayable glfw glad ${OPENGL_LIBRARIES} Gameplay Campaign)
-
-# Q-1 敵情霧戰鬥整合測試（headless：觀測塌縮/時效回雲/接觸揭露/Scout）
-add_executable(QuantumFogBattleTest Examples/QuantumFogBattleTest.cpp)
-target_include_directories(QuantumFogBattleTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(QuantumFogBattleTest Gameplay)
-
-# Q-8 疊加態效能基準（無頭、入 ctest）
-add_executable(QuantumBench Examples/QuantumBench.cpp)
-target_include_directories(QuantumBench PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(QuantumBench Gameplay)
-
-# Q-9 量子偵查教學情境（ImGui：三段引導 observe→probe→時效）
-add_executable(DuanqiaoTutorial
-    Examples/DuanqiaoTutorial.cpp
-    external/imgui/imgui.cpp
-    external/imgui/imgui_draw.cpp
-    external/imgui/imgui_tables.cpp
-    external/imgui/imgui_widgets.cpp
-    external/imgui/backends/imgui_impl_glfw.cpp
-    external/imgui/backends/imgui_impl_opengl3.cpp
-)
-target_include_directories(DuanqiaoTutorial PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui
-    ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui/backends
-)
-target_link_libraries(DuanqiaoTutorial glfw glad ${OPENGL_LIBRARIES} Gameplay)
-
-# Q-9 教學狀態機無頭測試
-add_executable(TutorialScriptTest Examples/TutorialScriptTest.cpp)
-target_include_directories(TutorialScriptTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(TutorialScriptTest Gameplay)
-
-# 量子敵情霧可視化（ImGui：機率雲/觀測塌縮/情報時效）
-add_executable(QuantumFogDemo
-    Examples/QuantumFogDemo.cpp
-    external/imgui/imgui.cpp
-    external/imgui/imgui_draw.cpp
-    external/imgui/imgui_tables.cpp
-    external/imgui/imgui_widgets.cpp
-    external/imgui/backends/imgui_impl_glfw.cpp
-    external/imgui/backends/imgui_impl_opengl3.cpp
-)
-target_include_directories(QuantumFogDemo PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui
-    ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui/backends
-)
-target_link_libraries(QuantumFogDemo glfw glad ${OPENGL_LIBRARIES} Gameplay)
-
-# AI Agent 介面無頭煙霧測試（IDECore+AIIntegration 自包含，無 GUI 依賴）
-add_executable(AIAgentSmoke Examples/AIAgentSmoke.cpp MingGoRTS_IDE/IDECore.cpp MingGoRTS_IDE/AIIntegration.cpp)
-target_include_directories(AIAgentSmoke PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-
-# MingGoRTS IDE（AI Agent 整合 IDE - 命令行版本）
-add_executable(MingGoRTS_IDE_CLI MingGoRTS_IDE/MingGoRTS_IDE_Main.cpp MingGoRTS_IDE/IDECore.cpp MingGoRTS_IDE/AIIntegration.cpp)
-target_include_directories(MingGoRTS_IDE_CLI PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-
-# MingGoRTS IDE（GUI 版本）
-add_executable(MingGoRTS_IDE_GUI 
-    MingGoRTS_IDE/GUI/Main.cpp
-    MingGoRTS_IDE/GUI/IDEGUI.cpp
-    MingGoRTS_IDE/GUI/IDEGUI.h
-    MingGoRTS_IDE/GUI/I18N.cpp
-    MingGoRTS_IDE/GUI/I18N.h
-    MingGoRTS_IDE/IDECore.cpp
-    MingGoRTS_IDE/AIIntegration.cpp
-    Rendering/ImageCodec.cpp
-    Logging/Logger.cpp
-    external/imgui/imgui.cpp
-    external/imgui/imgui_draw.cpp
-    external/imgui/imgui_tables.cpp
-    external/imgui/imgui_widgets.cpp
-    external/imgui/backends/imgui_impl_glfw.cpp
-    external/imgui/backends/imgui_impl_opengl3.cpp
-)
-target_include_directories(MingGoRTS_IDE_GUI PRIVATE 
-    ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui
-    ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui/backends
-)
-target_link_libraries(MingGoRTS_IDE_GUI glfw ${OPENGL_LIBRARIES}
-    IntelligentDevelopmentSystem
-    IntelligentSuggestion
-    LLMIntegration
-    RAGSystem
-    AgentChain
-    ToolFramework
-    AIAgentSystem
-    NeuralNetwork
-    NaturalLanguageProcessing
-    KnowledgeGraph
-    SelfReflection
-)
-
 # 數學測試程序
 add_executable(MathTest Examples/MathTest.cpp)
 target_include_directories(MathTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -647,154 +342,15 @@ add_executable(RenderPipelineTest Examples/RenderPipelineTest.cpp)
 target_include_directories(RenderPipelineTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(RenderPipelineTest PotatoEngine)
 
-add_executable(BattleSceneTest Examples/BattleSceneTest.cpp)
-target_include_directories(BattleSceneTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(BattleSceneTest Gameplay)
-
-add_executable(SquadFatigueTest Examples/SquadFatigueTest.cpp)
-target_include_directories(SquadFatigueTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(SquadFatigueTest Gameplay)
-
-add_executable(TerrainBonusTest Examples/TerrainBonusTest.cpp)
-target_include_directories(TerrainBonusTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(TerrainBonusTest Gameplay)
-
-add_executable(PostBattleTest Examples/PostBattleTest.cpp)
-target_include_directories(PostBattleTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(PostBattleTest Gameplay)
-
-add_executable(MapGenTest Examples/MapGenTest.cpp)
-target_include_directories(MapGenTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(MapGenTest Gameplay)
-
-add_executable(SquadTemplateTest Examples/SquadTemplateTest.cpp)
-target_include_directories(SquadTemplateTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(SquadTemplateTest Gameplay)
-
-add_executable(GeneralGuardTest Examples/GeneralGuardTest.cpp)
-target_include_directories(GeneralGuardTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(GeneralGuardTest Gameplay)
-
-add_executable(BattlePlanTest Examples/BattlePlanTest.cpp)
-target_include_directories(BattlePlanTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(BattlePlanTest Gameplay)
-
-# quantum-plan-effects：計畫加成依情報確定度縮放（無頭,進 POTATO_TESTS）
-add_executable(QuantumPlanTest Examples/QuantumPlanTest.cpp)
-target_include_directories(QuantumPlanTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(QuantumPlanTest Gameplay)
-
-# G-9 戰鬥間整補循環測試（headless：傷兵池/招募/遺物/部署/存檔）
-add_executable(RefitCampTest Examples/RefitCampTest.cpp)
-target_include_directories(RefitCampTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(RefitCampTest Gameplay)
-
 # 影音管線 CPU 段無頭測試（GL/ffmpeg 段不進測試）
 add_executable(MediaPipeTest Examples/MediaPipeTest.cpp)
 target_include_directories(MediaPipeTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(MediaPipeTest Media)
 
-# 主題 token 品質門檻（headless：WCAG 對比地板/hover 可辨/UTF-8 步進器）
-add_executable(UIThemeTest
-    Examples/UIThemeTest.cpp
-    external/imgui/imgui.cpp
-    external/imgui/imgui_draw.cpp
-    external/imgui/imgui_tables.cpp
-    external/imgui/imgui_widgets.cpp
-)
-target_include_directories(UIThemeTest PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui
-)
-target_link_libraries(UIThemeTest PotatoEngine) # SpriteAtlas(F-1)
-
 # RenderTarget 離屏 FBO 測試（GL-gated：無顯示環境 SKIP）
 add_executable(RenderTargetTest Examples/RenderTargetTest.cpp)
 target_include_directories(RenderTargetTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(RenderTargetTest PotatoEngine glad glfw)
-
-# N-1 史官戰報組裝器無頭測試
-add_executable(HistorianReportTest Examples/HistorianReportTest.cpp)
-target_include_directories(HistorianReportTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(HistorianReportTest Gameplay)
-
-add_executable(RivalDeckTest Examples/RivalDeckTest.cpp)
-target_include_directories(RivalDeckTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(RivalDeckTest Gameplay)
-
-add_executable(CampaignLedgerTest Examples/CampaignLedgerTest.cpp)
-target_include_directories(CampaignLedgerTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(CampaignLedgerTest Gameplay)
-
-# N-2 敵將判詞（聽聞態）無頭測試
-add_executable(GeneralDossierTest Examples/GeneralDossierTest.cpp)
-target_include_directories(GeneralDossierTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(GeneralDossierTest Gameplay)
-
-# N-5 神話事件具名記錄 + 滲透掛鉤無頭測試
-add_executable(MythLogTest Examples/MythLogTest.cpp)
-target_include_directories(MythLogTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(MythLogTest Gameplay)
-
-# N-6 章節慣例文字層（題詞/判詞/欲知後事/結局四聲部）無頭測試
-add_executable(ChapterConventionsTest Examples/ChapterConventionsTest.cpp)
-target_include_directories(ChapterConventionsTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(ChapterConventionsTest Gameplay)
-
-# L-1/L-2 帳本機械化：複式記帳 + 雜湊鏈無頭測試
-add_executable(LedgerChainTest Examples/LedgerChainTest.cpp)
-target_include_directories(LedgerChainTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(LedgerChainTest Gameplay)
-
-# L-3 查帳戰報：HistorianReport 消費 LedgerChain 無頭測試
-add_executable(LedgerAuditTest Examples/LedgerAuditTest.cpp)
-target_include_directories(LedgerAuditTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(LedgerAuditTest Gameplay)
-
-# L-5 回放完整性：battle_replay rootHash 驗證無頭測試
-add_executable(ReplayIntegrityTest Examples/ReplayIntegrityTest.cpp)
-target_include_directories(ReplayIntegrityTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(ReplayIntegrityTest Gameplay)
-
-# L-4 偽帳機制：InjectForgery + 疑帳標記無頭測試
-add_executable(LedgerForgeTest Examples/LedgerForgeTest.cpp)
-target_include_directories(LedgerForgeTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(LedgerForgeTest Gameplay)
-
-# L-7 產生軌跡：provenance 欄位 + hash 保護 + 降級相容無頭測試
-add_executable(LedgerProvenanceTest Examples/LedgerProvenanceTest.cpp)
-target_include_directories(LedgerProvenanceTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(LedgerProvenanceTest Gameplay)
-
-# L-6 帳簿登錄編號：rootHash 派生短碼無頭測試
-add_executable(LedgerRegistryTest Examples/LedgerRegistryTest.cpp)
-target_include_directories(LedgerRegistryTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(LedgerRegistryTest Gameplay)
-
-# L-8 查證式史官：seeded 抽驗 + 三態確信結論無頭測試
-add_executable(LedgerAssuranceTest Examples/LedgerAssuranceTest.cpp)
-target_include_directories(LedgerAssuranceTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(LedgerAssuranceTest Gameplay)
-
-# E-7 戰役框架 facade 無頭測試（roundtrip/壞檔拒絕/原子寫）
-add_executable(CampaignStateTest Examples/CampaignStateTest.cpp)
-target_include_directories(CampaignStateTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(CampaignStateTest Campaign)
-
-# C-1 章節定義庫無頭測試（schema 驗證/消毒/LoadDir 除重/真實資產）
-add_executable(ChapterLibraryTest Examples/ChapterLibraryTest.cpp)
-target_include_directories(ChapterLibraryTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(ChapterLibraryTest Campaign)
-
-# C-2 戰役治理累加器無頭測試（折半率/動亂級/持久化）
-add_executable(GovernanceTest Examples/GovernanceTest.cpp)
-target_include_directories(GovernanceTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(GovernanceTest Campaign)
-
-# Epic A 戰場治理追蹤無頭測試（佔領/焚村/護輜/墮落 ratchet）
-add_executable(GovernanceFieldTest Examples/GovernanceFieldTest.cpp)
-target_include_directories(GovernanceFieldTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(GovernanceFieldTest Campaign)
 
 # B-1 Potato::Log 輕量日誌無頭測試（stderr 捕獲/級別/檔案 sink）
 add_executable(LogTest Examples/LogTest.cpp)
@@ -805,21 +361,6 @@ target_link_libraries(LogTest PotatoEngine)
 add_executable(SpriteAtlasTest Examples/SpriteAtlasTest.cpp)
 target_include_directories(SpriteAtlasTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(SpriteAtlasTest PotatoEngine)
-
-# 斷橋攻防戰即時渲染 → MP4
-add_executable(BattleRenderDemo Examples/BattleRenderDemo.cpp)
-target_include_directories(BattleRenderDemo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(BattleRenderDemo Gameplay Media)
-
-# 戰鬥指揮官 RL 訓練：DQN 學 CP 介入時機（無頭,進 POTATO_TESTS）
-add_executable(BattleTrainerDemo Examples/BattleTrainerDemo.cpp)
-target_include_directories(BattleTrainerDemo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(BattleTrainerDemo Gameplay ReinforcementLearning NeuralNetwork)
-
-# 時序訓練資料產線（工具性質：需顯示環境,不進 POTATO_TESTS）
-add_executable(VideoDataDemo Examples/VideoDataDemo.cpp)
-target_include_directories(VideoDataDemo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(VideoDataDemo Gameplay Media glad glfw)
 
 # 天使軍團程序化影片（工具性質：需 GL + ffmpeg,不進 POTATO_TESTS）
 add_executable(AngelLegionVideo Examples/AngelLegionVideo.cpp)
@@ -866,6 +407,11 @@ add_executable(NeuralArtTool Examples/NeuralArtTool.cpp)
 target_include_directories(NeuralArtTool PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(NeuralArtTool PotatoEngine NeuralNetwork)
 
+# Collatz 雜湊/擁擠阻塞模型測試（headless,純引擎層）
+add_executable(QuasiModelsTest Examples/QuasiModelsTest.cpp)
+target_include_directories(QuasiModelsTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(QuasiModelsTest PotatoEngine)
+
 # GL 煙霧測試：需要顯示環境,無顯示時自行 SKIP
 add_executable(GLSmokeTest Examples/GLSmokeTest.cpp)
 target_include_directories(GLSmokeTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -895,10 +441,6 @@ target_include_directories(PortraitBaker PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui
 )
 target_link_libraries(PortraitBaker PotatoEngine)
-
-# AI Agent GUI 示例 (暫時禁用)
-# add_executable(AIAgentGUIExample Examples/AIAgentGUIExample.cpp)
-# target_link_libraries(AIAgentGUIExample PotatoEngine)
 
 # 安裝 (暫時禁用)
 # install(TARGETS PotatoEngine SimpleExample PlatformTest
@@ -944,8 +486,6 @@ set(POTATO_TESTS
     SceneTest
     SerializationTest
     RenderPipelineTest
-    BattleSceneTest
-    SquadFatigueTest
     ModelLoaderTest
     VrmLoadTest
     InputTest
@@ -957,52 +497,12 @@ set(POTATO_TESTS
     GLSmokeTest
     SecurityRedTeamTest
     AITestSuite
-    DevAssistantSmoke
-    SuggestionRulesTest
-    AIAgentSmoke
-    DoctrineBattleDemo
-    AutoPlannerDemo
-    BattleTrainerDemo
-    DuanqiaoDemo
-    SageCommandTest
-    QuantumTest
-    QuasiRandomTest
-    QuantumFogBattleTest
-    QuantumBench
-    TutorialScriptTest
-    BattlePickerTest
-    PlanningDeckTest
-    TerrainBonusTest
-    PostBattleTest
-    MapGenTest
-    SquadTemplateTest
-    GeneralGuardTest
-    RefitCampTest
-    BattlePlanTest
-    QuantumPlanTest
     MediaPipeTest
-    UIThemeTest
     RenderTargetTest
-    HistorianReportTest
-    RivalDeckTest
-    CampaignLedgerTest
-    GeneralDossierTest
-    CampaignStateTest
-    ChapterLibraryTest
     LogTest
     SpriteAtlasTest
     SynthDataDemo
-    MythLogTest
-    ChapterConventionsTest
-    LedgerChainTest
-    LedgerAuditTest
-    ReplayIntegrityTest
-    LedgerForgeTest
-    LedgerProvenanceTest
-    LedgerRegistryTest
-    LedgerAssuranceTest
-    GovernanceTest
-    GovernanceFieldTest
+    QuasiModelsTest
 )
 foreach(test_name IN LISTS POTATO_TESTS)
     if(TARGET ${test_name})
