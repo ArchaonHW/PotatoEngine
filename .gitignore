@@ -153,6 +153,7 @@ nul
 # NeuralArt/NeuralGraphics 測試產物（可再生）
 .tmp_neural/
 assets/neural/
+neural_demo_out/
 
 # 測試/訓練輸出落盤與 IDE 狀態
 imgui.ini

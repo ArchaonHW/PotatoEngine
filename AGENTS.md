@@ -37,9 +37,13 @@ external（vendored：glad_gen/tinygltf/imgui submodule）
 - MinGW：`cmake -B build-mingw -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release`
   ；`if(MINGW)` 已加 `-static-libgcc -static-libstdc++ -static`。
 - MSVC：`cmake -B build -G "Visual Studio 18 2026" -A x64`。
-- 測試：`ctest -C Release`（白名單 `POTATO_TESTS`，28 項引擎層測試；
+- 測試：`ctest -C Release`（白名單 `POTATO_TESTS`，29 項引擎層測試；
   GL 依賴測試無顯示環境自行 SKIP）。
 - 本地驗證標準：MSVC 與 MinGW 皆建置+ctest 全綠。
+- `assets/neural/` 為 gitignore 排除的本機產物：`NeuralArtTool`
+  以 MiniMax-H3 示範影片抽幀重訓六個 `.pnn`（sr2x/denoise/colorize/
+  texfield/terrain/normalmap）；`NeuralArtDemo` 從 repo 根目錄執行，
+  載入權重各跑一次推論並輸出 PNG 至 `neural_demo_out/`。
 
 ## 規範
 

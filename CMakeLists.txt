@@ -407,6 +407,11 @@ add_executable(NeuralArtTool Examples/NeuralArtTool.cpp)
 target_include_directories(NeuralArtTool PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(NeuralArtTool PotatoEngine NeuralNetwork)
 
+# assets/neural/ 預訓 .pnn 權重載入 + 推論示範（CPU/headless）
+add_executable(NeuralArtDemo Examples/NeuralArtDemo.cpp)
+target_include_directories(NeuralArtDemo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(NeuralArtDemo PotatoEngine NeuralNetwork)
+
 # Collatz 雜湊/擁擠阻塞模型測試（headless,純引擎層）
 add_executable(QuasiModelsTest Examples/QuasiModelsTest.cpp)
 target_include_directories(QuasiModelsTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
