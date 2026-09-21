@@ -97,6 +97,17 @@ enum class IntegratorType {
  */
 using CollisionCallback = std::function<void(const CollisionData&)>;
 
+class PhysicsBody;
+
+/**
+ * 環境力場回調：PhysicsWorld 每個 fixed step 對各動態物體取樣，
+ * 回傳值視為力(N)累積進本步積分（與 ApplyForce 同語義）。
+ * 參數 (body, simTime)——可讀 body 的質量/位置/速度實作阻力或
+ * 質量相依模型（如風阻 ∝ v_rel²）；simTime 為世界已模擬秒數。
+ * 典型來源：Quasi::GustField / TurbulenceField 的 Sample()。
+ */
+using ForceFieldCallback = std::function<Vector3(const PhysicsBody&, float)>;
+
 /**
  * 物理物體
  */
@@ -256,6 +267,15 @@ public:
     // 需要長時間能量穩定（拋射物/回放）時切 VelocityVerlet
     void SetIntegrator(IntegratorType type) { integrator = type; }
     IntegratorType GetIntegrator() const { return integrator; }
+
+    // 環境力場（風/水流/陣風）：每個 substep 對動態物體取樣，
+    // Kinematic/Static 不受影響（與 ApplyForce 的擋法一致）。
+    // 傳 nullptr 或呼叫 ClearForceField 清除。
+    void SetForceField(ForceFieldCallback field);
+    void ClearForceField() { forceField = nullptr; }
+
+    // 世界已模擬秒數（供力場取樣的 t；固定步長累計，不回溯）
+    float GetSimulationTime() const { return simulationTime; }
     
     // Broadphase 網格大小(spatial hash cell size)
     // 較大 → 每格物體多(假陽性多);較小 → 物體跨格多(插入成本高)
@@ -295,7 +315,10 @@ private:
     int collisionCount;
     bool initialized;
     IntegratorType integrator = IntegratorType::SemiImplicitEuler;
-    
+
+    ForceFieldCallback forceField;
+    float simulationTime;   // 已模擬秒數：每 substep 後 += stepTime
+
     float accumulatedTime;
     float broadphaseCellSize;
 };

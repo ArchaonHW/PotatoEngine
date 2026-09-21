@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 
 namespace Potato {
 
@@ -162,6 +163,7 @@ PhysicsWorld::PhysicsWorld()
     , fixedTimeStep(1.0f / 60.0f)
     , collisionCount(0)
     , initialized(false)
+    , simulationTime(0.0f)
     , accumulatedTime(0.0f)
     , broadphaseCellSize(4.0f)
 {
@@ -210,7 +212,8 @@ void PhysicsWorld::Step(float deltaTime) {
         
         for (int i = 0; i < subSteps; i++) {
             UpdateBodies(stepTime);
-            
+            simulationTime += stepTime;
+
             if (collisionDetectionEnabled) {
                 DetectCollisions();
                 ResolveCollisions();
@@ -282,6 +285,10 @@ void PhysicsWorld::SetGlobalCollisionCallback(CollisionCallback callback) {
     globalCollisionCallback = callback;
 }
 
+void PhysicsWorld::SetForceField(ForceFieldCallback field) {
+    forceField = std::move(field);
+}
+
 bool PhysicsWorld::Raycast(const Vector3& from, const Vector3& to, CollisionData& result) {
     // 精確射線檢測：依形狀分派 RayVsSphere / RayVsOBB(slab 法)
     Vector3 direction = to - from;
@@ -350,7 +357,13 @@ void PhysicsWorld::UpdateBodies(float deltaTime) {
         if (body->IsGravityEnabled()) {
             body->ApplyForce(gravity * body->GetMass());
         }
-        
+
+        // 環境力場（風/水流等）：每 substep 取樣累積進本步力;
+        // ApplyForce 內部會再擋 Kinematic,此處不需重複檢查
+        if (forceField) {
+            body->ApplyForce(forceField(*body, simulationTime));
+        }
+
         // 應用阻尼
         body->SetLinearVelocity(body->GetLinearVelocity() * (1.0f - body->GetLinearDamping() * deltaTime));
         body->SetAngularVelocity(body->GetAngularVelocity() * (1.0f - body->GetAngularDamping() * deltaTime));

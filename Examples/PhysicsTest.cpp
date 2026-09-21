@@ -3,6 +3,8 @@
 
 #include "Physics/PhysicsSystem.h"
 #include "MathUtils/Vector3.h"
+#include "MathUtils/CurlNoise.h"
+#include "MathUtils/GustField.h"
 
 #include <cstdio>
 #include <cmath>
@@ -511,6 +513,128 @@ int main() {
 
         world->Step(1.0f / 60.0f);
         Check(world->GetCollisionCount() == 1, "長盒 broadphase 以最大邊計算不漏碰");
+    }
+
+    // [21] 環境力場：常數場對動態物體加速(F=ma 語義)
+    {
+        PhysicsManager& mgr = PhysicsManager::GetInstance();
+        PhysicsWorld* world = mgr.CreateWorld("force_field_const");
+        world->Initialize();
+        world->SetGravity(Vector3::Zero());
+
+        PhysicsBody* b = world->CreateBody();
+        b->SetMass(2.0f);
+        b->SetPosition(Vector3::Zero());
+        b->SetGravityEnabled(false);
+        b->SetCollisionMask(0);
+
+        world->SetForceField([](const PhysicsBody&, float) {
+            return Vector3(4.0f, 0.0f, 0.0f); // F=4N,m=2 → a=2 m/s²
+        });
+
+        for (int i = 0; i < 60; i++) {
+            world->Step(1.0f / 60.0f);
+        }
+        float vx = b->GetLinearVelocity().x;
+        Check(std::fabs(vx - 2.0f) < 0.1f, "力場 1s 後 vx ≈ F/m·t = 2.0", vx, 2.0f);
+        mgr.DestroyWorld("force_field_const");
+    }
+
+    // [22] 力場取樣時間：simTime 隨 fixed step 遞進且可讀
+    {
+        PhysicsManager& mgr = PhysicsManager::GetInstance();
+        PhysicsWorld* world = mgr.CreateWorld("force_field_time");
+        world->Initialize();
+        world->SetGravity(Vector3::Zero());
+
+        PhysicsBody* b = world->CreateBody();
+        b->SetGravityEnabled(false);
+        b->SetCollisionMask(0);
+
+        float lastT = -1.0f;
+        world->SetForceField([&](const PhysicsBody&, float t) {
+            lastT = t;
+            return Vector3::Zero();
+        });
+
+        for (int i = 0; i < 60; i++) {
+            world->Step(1.0f / 60.0f);
+        }
+        // 最後一次取樣在第 60 步起點：t = 59/60
+        Check(std::fabs(lastT - 59.0f / 60.0f) < 1e-4f,
+              "力場取樣 t 為步進起點", lastT, 59.0f / 60.0f);
+        Check(std::fabs(world->GetSimulationTime() - 1.0f) < 1e-4f,
+              "GetSimulationTime ≈ 1.0s", world->GetSimulationTime(), 1.0f);
+        mgr.DestroyWorld("force_field_time");
+    }
+
+    // [23] Kinematic 不受力場;ClearForceField 後不再加速
+    {
+        PhysicsManager& mgr = PhysicsManager::GetInstance();
+        PhysicsWorld* world = mgr.CreateWorld("force_field_gate");
+        world->Initialize();
+        world->SetGravity(Vector3::Zero());
+
+        PhysicsBody* k = world->CreateBody();
+        k->SetKinematic(true);
+        k->SetPosition(Vector3::Zero());
+        k->SetCollisionMask(0);
+
+        PhysicsBody* d = world->CreateBody();
+        d->SetPosition(Vector3::Zero());
+        d->SetGravityEnabled(false);
+        d->SetCollisionMask(0);
+
+        world->SetForceField([](const PhysicsBody&, float) {
+            return Vector3(10.0f, 0.0f, 0.0f);
+        });
+
+        for (int i = 0; i < 30; i++) {
+            world->Step(1.0f / 60.0f);
+        }
+        Check(std::fabs(k->GetPosition().x) < 1e-5f,
+              "kinematic 物體不受力場", k->GetPosition().x, 0.0f);
+
+        world->ClearForceField();
+        float vBefore = d->GetLinearVelocity().x;
+        for (int i = 0; i < 30; i++) {
+            world->Step(1.0f / 60.0f);
+        }
+        Check(std::fabs(d->GetLinearVelocity().x - vBefore) < 1e-5f,
+              "ClearForceField 後速度不再增長",
+              d->GetLinearVelocity().x, vBefore);
+        mgr.DestroyWorld("force_field_gate");
+    }
+
+    // [24] GustField 實接：間歇陣風驅動物體,產生有限位移且非 NaN
+    {
+        PhysicsManager& mgr = PhysicsManager::GetInstance();
+        PhysicsWorld* world = mgr.CreateWorld("force_field_gust");
+        world->Initialize();
+        world->SetGravity(Vector3::Zero());
+
+        Quasi::TurbulenceField flow(4, 7, 0.05f);
+        Quasi::GustField gust(4, 7, 0.05f, 0.7f);
+
+        PhysicsBody* b = world->CreateBody();
+        b->SetMass(0.5f); // 輕物體對陣風敏感
+        b->SetPosition(Vector3::Zero());
+        b->SetGravityEnabled(false);
+        b->SetCollisionMask(0);
+
+        world->SetForceField([&](const PhysicsBody& body, float t) {
+            return gust.Sample(body.GetPosition(), t, flow) * 2.0f;
+        });
+
+        for (int i = 0; i < 120; i++) {
+            world->Step(1.0f / 60.0f);
+        }
+        const Vector3 p = b->GetPosition();
+        const Vector3 v = b->GetLinearVelocity();
+        bool finite = std::isfinite(p.x + p.y + p.z + v.x + v.y + v.z);
+        Check(finite, "GustField 驅動 2s 狀態有限（非 NaN)");
+        Check(p.Length() > 0.01f, "GustField 產生非零位移", p.Length(), 0.01f);
+        mgr.DestroyWorld("force_field_gust");
     }
 
     printf("\n=== 結果: %d PASS, %d FAIL ===\n", g_pass, g_fail);
