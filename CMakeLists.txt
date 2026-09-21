@@ -304,6 +304,11 @@ target_link_libraries(PhysicsMathTest PotatoEngine)
 target_link_libraries(PhysicsTest PotatoEngine)
 
 # 安全模組紅隊測試（對抗性驗證 Security/ 的偵測能力）
+# 內容掃毒測試：EICAR/黑名單/啟發式/隔離（headless,純引擎層）
+add_executable(ContentScannerTest Examples/ContentScannerTest.cpp)
+target_include_directories(ContentScannerTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(ContentScannerTest PotatoEngine)
+
 add_executable(SecurityRedTeamTest Examples/SecurityRedTeamTest.cpp)
 target_include_directories(SecurityRedTeamTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(SecurityRedTeamTest PotatoEngine)
@@ -506,6 +511,7 @@ set(POTATO_TESTS
     NeuralGraphicsTest
     GLSmokeTest
     SecurityRedTeamTest
+    ContentScannerTest
     AITestSuite
     MediaPipeTest
     RenderTargetTest
