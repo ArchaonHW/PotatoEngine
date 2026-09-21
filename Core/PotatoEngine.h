@@ -18,6 +18,7 @@ namespace Potato {
     class ILogger;
     class IMemoryManager;
     class IFileSystem;
+    class JobSystem;
 }
 
 namespace Potato {
@@ -137,6 +138,10 @@ public:
     
     // Configuration access
     const EngineConfig& GetConfig() const { return config; }
+
+    // Job system（EngineConfig::enableJobSystem=true 時由 Initialize 建立,
+    // workerThreads 指定工人數;關閉或停用時回 nullptr）
+    JobSystem* GetJobSystem() const { return jobSystem.get(); }
     
     // Callback functions
     using UpdateCallback = std::function<void(float)>;
@@ -226,6 +231,7 @@ private:
     std::unique_ptr<ILogger> logger;
     std::unique_ptr<IMemoryManager> memoryManager;
     std::unique_ptr<IFileSystem> fileSystem;
+    std::unique_ptr<JobSystem> jobSystem;
     
     // Callback functions
     UpdateCallback updateCallback;

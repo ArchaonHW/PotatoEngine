@@ -1,4 +1,5 @@
 #include "PotatoEngine.h"
+#include "JobSystem.h"
 #include "Interfaces/IRenderer.h"
 #include "Interfaces/IPhysics.h"
 #include "Interfaces/IAudio.h"
@@ -7,6 +8,7 @@
 #include "Interfaces/ILogger.h"
 #include "Interfaces/IMemoryManager.h"
 #include "Interfaces/IFileSystem.h"
+#include <algorithm>
 #include <iostream>
 
 namespace Potato {
@@ -184,7 +186,10 @@ bool PotatoEngine::InitializeSubsystems()
     }
     
     if (config.enableJobSystem) {
-        std::cout << "  Job system enabled" << std::endl;
+        jobSystem = std::make_unique<JobSystem>(
+            static_cast<uint32_t>(std::max(0, config.workerThreads)));
+        std::cout << "  Job system enabled (" << jobSystem->WorkerCount()
+                  << " workers)" << std::endl;
     }
     
     if (config.enableProfiling) {
@@ -198,7 +203,9 @@ bool PotatoEngine::InitializeSubsystems()
 void PotatoEngine::ShutdownSubsystems()
 {
     std::cout << "Shutting down subsystems..." << std::endl;
-    // In a real implementation, this would shutdown all subsystems
+    // Job system 先收：排空佇列並 join workers，避免工作中的
+    // 回呼觸碰已拆解的子系統
+    jobSystem.reset();
     std::cout << "Subsystems shutdown complete" << std::endl;
 }
 

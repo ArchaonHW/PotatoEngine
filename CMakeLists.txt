@@ -319,6 +319,11 @@ add_executable(AntiTamperTest Examples/AntiTamperTest.cpp)
 target_include_directories(AntiTamperTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(AntiTamperTest PotatoEngine)
 
+# JobSystem 工作池契約測試（headless：投遞/批次/help-run/巢狀/析構排空）
+add_executable(JobSystemTest Examples/JobSystemTest.cpp)
+target_include_directories(JobSystemTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(JobSystemTest PotatoEngine)
+
 add_executable(SecurityRedTeamTest Examples/SecurityRedTeamTest.cpp)
 target_include_directories(SecurityRedTeamTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(SecurityRedTeamTest PotatoEngine)
@@ -524,6 +529,7 @@ set(POTATO_TESTS
     ContentScannerTest
     SecurityDataTest
     AntiTamperTest
+    JobSystemTest
     AITestSuite
     MediaPipeTest
     RenderTargetTest
