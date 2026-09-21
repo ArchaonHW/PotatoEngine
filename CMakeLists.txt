@@ -412,6 +412,11 @@ add_executable(QuasiModelsTest Examples/QuasiModelsTest.cpp)
 target_include_directories(QuasiModelsTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(QuasiModelsTest PotatoEngine)
 
+# 未解決問題第三批引擎件驗證（GustField/GolombRuler 等,headless）
+add_executable(UnsolvedBatch3Test Examples/UnsolvedBatch3Test.cpp)
+target_include_directories(UnsolvedBatch3Test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(UnsolvedBatch3Test PotatoEngine)
+
 # GL 煙霧測試：需要顯示環境,無顯示時自行 SKIP
 add_executable(GLSmokeTest Examples/GLSmokeTest.cpp)
 target_include_directories(GLSmokeTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -503,6 +508,7 @@ set(POTATO_TESTS
     SpriteAtlasTest
     SynthDataDemo
     QuasiModelsTest
+    UnsolvedBatch3Test
 )
 foreach(test_name IN LISTS POTATO_TESTS)
     if(TARGET ${test_name})
