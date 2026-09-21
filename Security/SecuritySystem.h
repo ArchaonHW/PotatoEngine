@@ -81,6 +81,33 @@ uint32_t ComputeCRC32(const void* data, size_t size);
 // 用於清除密鑰、token 等敏感資料
 void SecureZeroMemory(void* ptr, size_t size);
 
+// 計算 HMAC-SHA256（RFC 2104）訊息鑑別碼，回傳 64 字元小寫 hex。
+// 供「攻擊者不知金鑰即無法偽造」的完整性場景（存檔簽章、資料鑑別）
+std::string ComputeHMACSHA256(const void* key, size_t keyLen,
+                              const void* data, size_t dataLen);
+
+// 產生密碼學安全隨機位元組（Windows BCryptGenRandom / POSIX /dev/urandom；
+// 兩者皆失效時退回多來源混合 xorshift——僅為最後備援，非密碼學級）
+std::vector<uint8_t> GenerateRandomBytes(size_t len);
+
+// ---- 資料簽章（存檔/設定檔竄改防護）----
+// blob 格式：[原始資料 || HMAC-SHA256(key, data) 32B 尾]。
+// 金鑰保管責任在呼叫端（例：首啟 GenerateRandomBytes(32) 存於使用者目錄）。
+// 驗證使用常數時間比對；blob 短於 32B 或 MAC 不符一律回 false。
+std::vector<uint8_t> SignData(const void* key, size_t keyLen,
+                              const void* data, size_t dataLen);
+// out 非空時驗證通過才寫回原始資料；只驗不取可傳 nullptr
+bool VerifySignedData(const void* key, size_t keyLen,
+                      const std::vector<uint8_t>& blob,
+                      std::vector<uint8_t>* out = nullptr);
+// 檔案版：讀 srcPath → 簽章 blob 寫入 destPath
+bool SignFile(const std::string& srcPath, const std::string& destPath,
+              const void* key, size_t keyLen);
+// 驗證簽章檔並取出原始內容（out 可為 nullptr 只驗證）
+bool VerifySignedFile(const std::string& filePath,
+                      const void* key, size_t keyLen,
+                      std::vector<uint8_t>* out = nullptr);
+
 // ============================================================================
 // SecurityManager - 安全檢查管理器
 // ============================================================================

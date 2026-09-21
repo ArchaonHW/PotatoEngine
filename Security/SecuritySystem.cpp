@@ -8,6 +8,8 @@
 #include <fstream>
 #include <algorithm>
 #include <filesystem>
+#include <iterator>
+#include <random>
 
 #ifdef _WIN32
     #include <windows.h>
@@ -296,6 +298,123 @@ void SecureZeroMemory(void* ptr, size_t size) {
         *p++ = 0;
     }
 #endif
+}
+
+// ============================================================================
+// HMAC-SHA256 / 隨機金鑰 / 資料簽章
+// ============================================================================
+std::string ComputeHMACSHA256(const void* key, size_t keyLen,
+                              const void* data, size_t dataLen) {
+    uint8_t mac[32];
+    HmacSha256(static_cast<const uint8_t*>(key), keyLen, data, dataLen, mac);
+    static const char* hex = "0123456789abcdef";
+    std::string out;
+    out.reserve(64);
+    for (int i = 0; i < 32; i++) {
+        out += hex[mac[i] >> 4];
+        out += hex[mac[i] & 0x0F];
+    }
+    return out;
+}
+
+std::vector<uint8_t> GenerateRandomBytes(size_t len) {
+    std::vector<uint8_t> out(len);
+    if (len == 0) return out;
+#ifdef _WIN32
+    if (SUCCEEDED(::BCryptGenRandom(nullptr, out.data(),
+                                  static_cast<unsigned long>(len),
+                                  BCRYPT_USE_SYSTEM_PREFERRED_RNG))) {
+        return out;
+    }
+#else
+    {
+        std::ifstream urandom("/dev/urandom", std::ios::binary);
+        if (urandom.read(reinterpret_cast<char*>(out.data()),
+                         static_cast<std::streamsize>(len))) {
+            return out;
+        }
+    }
+#endif
+    // 最後備援：多來源混合 xorshift64（非密碼學級，僅在 OS RNG 失效時）
+    uint64_t seed = static_cast<uint64_t>(
+        std::chrono::high_resolution_clock::now().time_since_epoch().count());
+    seed ^= static_cast<uint64_t>(reinterpret_cast<uintptr_t>(out.data()));
+    std::random_device rd;
+    for (int i = 0; i < 4; i++) seed = (seed << 8) ^ rd();
+#ifdef _WIN32
+    seed ^= static_cast<uint64_t>(::GetCurrentProcessId()) << 32;
+#else
+    seed ^= static_cast<uint64_t>(::getpid()) << 32;
+#endif
+    for (size_t i = 0; i < len; i++) {
+        seed ^= seed << 13; seed ^= seed >> 7; seed ^= seed << 17;
+        out[i] = static_cast<uint8_t>(seed);
+    }
+    return out;
+}
+
+std::vector<uint8_t> SignData(const void* key, size_t keyLen,
+                              const void* data, size_t dataLen) {
+    const uint8_t* p = static_cast<const uint8_t*>(data);
+    std::vector<uint8_t> blob(p, p + dataLen);
+    uint8_t mac[32];
+    HmacSha256(static_cast<const uint8_t*>(key), keyLen, p, dataLen, mac);
+    blob.insert(blob.end(), mac, mac + 32);
+    return blob;
+}
+
+bool VerifySignedData(const void* key, size_t keyLen,
+                      const std::vector<uint8_t>& blob,
+                      std::vector<uint8_t>* out) {
+    if (blob.size() < 32) return false;
+    const size_t dataLen = blob.size() - 32;
+    uint8_t mac[32];
+    HmacSha256(static_cast<const uint8_t*>(key), keyLen,
+               blob.data(), dataLen, mac);
+    // 常數時間比對：不提前中斷，避免 timing side-channel
+    uint8_t diff = 0;
+    for (int i = 0; i < 32; i++)
+        diff |= static_cast<uint8_t>(mac[i] ^ blob[dataLen + i]);
+    if (diff != 0) return false;
+    if (out) out->assign(blob.begin(), blob.begin() + dataLen);
+    return true;
+}
+
+bool SignFile(const std::string& srcPath, const std::string& destPath,
+              const void* key, size_t keyLen) {
+#ifdef _WIN32
+    std::ifstream f(std::filesystem::path(Utf8ToWide(srcPath)), std::ios::binary);
+#else
+    std::ifstream f(srcPath, std::ios::binary);
+#endif
+    if (!f) return false;
+    std::vector<uint8_t> data((std::istreambuf_iterator<char>(f)),
+                              std::istreambuf_iterator<char>());
+    std::vector<uint8_t> blob = SignData(key, keyLen, data.data(), data.size());
+#ifdef _WIN32
+    std::ofstream o(std::filesystem::path(Utf8ToWide(destPath)),
+                    std::ios::binary | std::ios::trunc);
+#else
+    std::ofstream o(destPath, std::ios::binary | std::ios::trunc);
+#endif
+    if (!o) return false;
+    o.write(reinterpret_cast<const char*>(blob.data()),
+            static_cast<std::streamsize>(blob.size()));
+    return o.good();
+}
+
+bool VerifySignedFile(const std::string& filePath,
+                      const void* key, size_t keyLen,
+                      std::vector<uint8_t>* out) {
+#ifdef _WIN32
+    std::ifstream f(std::filesystem::path(Utf8ToWide(filePath)), std::ios::binary);
+#else
+    std::ifstream f(filePath, std::ios::binary);
+#endif
+    if (!f) return false;
+    std::vector<uint8_t> blob((std::istreambuf_iterator<char>(f)),
+                              std::istreambuf_iterator<char>());
+    return VerifySignedData(key, keyLen, blob, out);
 }
 
 // ============================================================================

@@ -304,10 +304,20 @@ target_link_libraries(PhysicsMathTest PotatoEngine)
 target_link_libraries(PhysicsTest PotatoEngine)
 
 # 安全模組紅隊測試（對抗性驗證 Security/ 的偵測能力）
+# 資料防護層測試：ProtectedValue 混淆容器 + SignData 簽章（headless）
+add_executable(SecurityDataTest Examples/SecurityDataTest.cpp)
+target_include_directories(SecurityDataTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(SecurityDataTest PotatoEngine)
+
 # 內容掃毒測試：EICAR/黑名單/啟發式/隔離（headless,純引擎層）
 add_executable(ContentScannerTest Examples/ContentScannerTest.cpp)
 target_include_directories(ContentScannerTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(ContentScannerTest PotatoEngine)
+
+# 記憶體混淆/資料簽章防竄改測試（headless,純引擎層）
+add_executable(AntiTamperTest Examples/AntiTamperTest.cpp)
+target_include_directories(AntiTamperTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(AntiTamperTest PotatoEngine)
 
 add_executable(SecurityRedTeamTest Examples/SecurityRedTeamTest.cpp)
 target_include_directories(SecurityRedTeamTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -512,6 +522,8 @@ set(POTATO_TESTS
     GLSmokeTest
     SecurityRedTeamTest
     ContentScannerTest
+    SecurityDataTest
+    AntiTamperTest
     AITestSuite
     MediaPipeTest
     RenderTargetTest
