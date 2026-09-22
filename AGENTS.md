@@ -9,7 +9,7 @@
 AI（僅 NeuralNetwork）、Audio、Core、ECS、Events、FileSystem、GameObject、
 Input、Logging、MathUtils、Media、Memory、Physics、Platform、Quantum、
 Rendering、Resources、Scene、Security、Serialization、Time、build-video、
-external（vendored：glad_gen/tinygltf/imgui submodule）
+external（vendored：glad_gen/tinygltf/miniaudio/imgui submodule）
 
 ## 消費關係（重要）
 

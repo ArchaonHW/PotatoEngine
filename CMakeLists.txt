@@ -203,10 +203,11 @@ target_include_directories(PotatoEngine PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/MathUtils
 )
 
-# tinygltf 實作單元（Rendering/TinyGltfImpl.cpp）只需私有 include 路徑；
+# tinygltf/miniaudio 實作單元只需私有 include 路徑；
 # PUBLIC 會把 header-only 庫的 include 污染給所有下游 target
 target_include_directories(PotatoEngine PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/external/tinygltf
+    ${CMAKE_CURRENT_SOURCE_DIR}/external/miniaudio
 )
 
 target_link_libraries(PotatoEngine
@@ -329,6 +330,11 @@ add_executable(ProfilerTest Examples/ProfilerTest.cpp)
 target_include_directories(ProfilerTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(ProfilerTest PotatoEngine)
 
+# 簽章存檔包裝測試（headless:寫讀回圈/竄改/錯金鑰/截斷/版本）
+add_executable(SignedSaveFileTest Examples/SignedSaveFileTest.cpp)
+target_include_directories(SignedSaveFileTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(SignedSaveFileTest PotatoEngine)
+
 add_executable(SecurityRedTeamTest Examples/SecurityRedTeamTest.cpp)
 target_include_directories(SecurityRedTeamTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(SecurityRedTeamTest PotatoEngine)
@@ -408,6 +414,11 @@ target_link_libraries(InputTest PotatoEngine)
 add_executable(AudioTest Examples/AudioTest.cpp)
 target_include_directories(AudioTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(AudioTest PotatoEngine)
+
+# F-4 miniaudio 後端降級契約測試（ma_backend_null 全無頭;缺檔/無裝置/冪等)
+add_executable(MiniaudioBackendTest Examples/MiniaudioBackendTest.cpp)
+target_include_directories(MiniaudioBackendTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(MiniaudioBackendTest PotatoEngine)
 
 add_executable(TimeTest Examples/TimeTest.cpp)
 target_include_directories(TimeTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -525,6 +536,7 @@ set(POTATO_TESTS
     VrmLoadTest
     InputTest
     AudioTest
+    MiniaudioBackendTest
     TimeTest
     ImageCodecTest
     CoreSystemsTest
@@ -536,6 +548,7 @@ set(POTATO_TESTS
     AntiTamperTest
     JobSystemTest
     ProfilerTest
+    SignedSaveFileTest
     AITestSuite
     MediaPipeTest
     RenderTargetTest

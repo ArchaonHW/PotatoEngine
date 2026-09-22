@@ -1,4 +1,5 @@
 #include "AudioSystem.h"
+#include "MiniaudioBackend.h"
 #include "Logging/Logger.h"
 #include <fstream>
 #include <cstring>
@@ -413,9 +414,9 @@ bool InitializeAudioManager() {
         gAudioManager = &AudioManager::GetInstance();
     }
     
-    // 設置 OpenAL 實現
-    auto openALManager = MakeUnique<OpenALAudioManager>();
-    gAudioManager->SetImplementation(std::move(openALManager));
+    // F-4：預設 miniaudio 實後端；無裝置時自行靜音降級,Initialize 不擋遊戲
+    auto miniaudioManager = MakeUnique<MiniaudioAudioManager>();
+    gAudioManager->SetImplementation(std::move(miniaudioManager));
     
     return gAudioManager->Initialize();
 }
