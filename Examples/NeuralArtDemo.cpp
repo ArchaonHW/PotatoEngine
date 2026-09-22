@@ -123,6 +123,25 @@ int main(int argc, char** argv) {
         }
     }
 
+    // 4b) 其餘風格紋理場:列舉 dir 內所有 *_texfield.pnn(核心檔除外)
+    for (const auto& e : std::filesystem::directory_iterator(dir)) {
+        const std::string name = e.path().filename().string();
+        if (name.size() < 13 ||
+            name.compare(name.size() - 13, 13, "_texfield.pnn") != 0 ||
+            name == "h3_texfield.pnn") {
+            continue;
+        }
+        NeuralFieldImage gen; gen.Build();
+        Check(LoadNetFromFile(gen.Net(), e.path().string()),
+              ("載入 " + name).c_str());
+        if (gen.Ready()) {
+            FImage tex = gen.Generate(
+                std::vector<float>(gen.LatentDim(), 0.0f), 64, 64);
+            Check(tex.Valid(), (name + " 輸出有效").c_str());
+            SavePNG(out + "/demo_" + e.path().stem().string() + ".png", tex);
+        }
+    }
+
     // 5) 神經地形(latent 全零)+ 高度場→網格
     std::vector<float> heights;
     {
