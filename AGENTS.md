@@ -41,9 +41,10 @@ external（vendored：glad_gen/tinygltf/miniaudio/imgui submodule）
   GL 依賴測試無顯示環境自行 SKIP）。
 - 本地驗證標準：MSVC 與 MinGW 皆建置+ctest 全綠。
 - `assets/neural/` 為 gitignore 排除的本機產物：`NeuralArtTool`
-  以 MiniMax-H3 示範影片抽幀重訓六個 `.pnn`（sr2x/denoise/colorize/
-  texfield/terrain/normalmap）；`NeuralArtDemo` 從 repo 根目錄執行，
-  載入權重各跑一次推論並輸出 PNG 至 `neural_demo_out/`。
+  以 MiniMax-H3 示範影片/風格 GIF 抽幀重訓 `.pnn`（sr2x/denoise/
+  colorize/terrain/normalmap + 六種 INR 紋理場含 papercraft/handdrawn/
+  3danim 風格變體）；`NeuralArtDemo` 從 repo 根目錄執行載入推論。
+  分析與產物清單見 `docs/MiniMax-H3-Analysis.md`。
 
 ## 規範
 
