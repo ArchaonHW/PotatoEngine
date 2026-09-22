@@ -19,6 +19,7 @@ namespace Potato {
     class IMemoryManager;
     class IFileSystem;
     class JobSystem;
+    class Profiler;
 }
 
 namespace Potato {
@@ -142,6 +143,10 @@ public:
     // Job system（EngineConfig::enableJobSystem=true 時由 Initialize 建立,
     // workerThreads 指定工人數;關閉或停用時回 nullptr）
     JobSystem* GetJobSystem() const { return jobSystem.get(); }
+
+    // Profiler（enableProfiling=true 時建立並設為全域啟用點;
+    // POTATO_PROFILE_SCOPE 巨集才有作用對象）
+    Profiler* GetProfiler() const { return profiler.get(); }
     
     // Callback functions
     using UpdateCallback = std::function<void(float)>;
@@ -232,6 +237,7 @@ private:
     std::unique_ptr<IMemoryManager> memoryManager;
     std::unique_ptr<IFileSystem> fileSystem;
     std::unique_ptr<JobSystem> jobSystem;
+    std::unique_ptr<Profiler> profiler;
     
     // Callback functions
     UpdateCallback updateCallback;

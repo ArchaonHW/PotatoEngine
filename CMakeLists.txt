@@ -324,6 +324,11 @@ add_executable(JobSystemTest Examples/JobSystemTest.cpp)
 target_include_directories(JobSystemTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(JobSystemTest PotatoEngine)
 
+# Profiler 區段計時/聚合/追蹤匯出測試（headless,純引擎層）
+add_executable(ProfilerTest Examples/ProfilerTest.cpp)
+target_include_directories(ProfilerTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(ProfilerTest PotatoEngine)
+
 add_executable(SecurityRedTeamTest Examples/SecurityRedTeamTest.cpp)
 target_include_directories(SecurityRedTeamTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(SecurityRedTeamTest PotatoEngine)
@@ -530,6 +535,7 @@ set(POTATO_TESTS
     SecurityDataTest
     AntiTamperTest
     JobSystemTest
+    ProfilerTest
     AITestSuite
     MediaPipeTest
     RenderTargetTest

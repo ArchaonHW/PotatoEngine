@@ -1,5 +1,6 @@
 #include "PotatoEngine.h"
 #include "JobSystem.h"
+#include "Profiler.h"
 #include "Interfaces/IRenderer.h"
 #include "Interfaces/IPhysics.h"
 #include "Interfaces/IAudio.h"
@@ -193,6 +194,8 @@ bool PotatoEngine::InitializeSubsystems()
     }
     
     if (config.enableProfiling) {
+        profiler = std::make_unique<Profiler>();
+        Profiler::SetActive(profiler.get());
         std::cout << "  Profiling enabled" << std::endl;
     }
     
@@ -206,6 +209,10 @@ void PotatoEngine::ShutdownSubsystems()
     // Job system 先收：排空佇列並 join workers，避免工作中的
     // 回呼觸碰已拆解的子系統
     jobSystem.reset();
+    // Profiler 在 jobs 排空後才關：進行中的 ScopedProfileZone
+    // 持有裸指標,先 SetActive(nullptr) 擋新區段再解構
+    Profiler::SetActive(nullptr);
+    profiler.reset();
     std::cout << "Subsystems shutdown complete" << std::endl;
 }
 
