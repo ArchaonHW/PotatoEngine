@@ -167,6 +167,7 @@ file(GLOB_RECURSE ENGINE_SOURCES
     "Resources/*.cpp"
     "ECS/*.cpp"
     "GameObject/*.cpp"
+    "Networking/*.cpp"
     # "GUI/*.cpp"      # AgentGUI 依賴遊戲側 AIAgentSystem,不進引擎
     # "MathUtils/*.cpp"      # 全 header-only
     # "AI/*.cpp"      # AI 模組另有獨立靜態庫目標,避免重複編譯
@@ -191,6 +192,8 @@ file(GLOB_RECURSE ENGINE_HEADERS
     "Time/*.h"
     "AI/*.h"
     "MathUtils/*.h"
+    "Security/*.h"
+    "Networking/*.h"
 )
 
 # 創建引擎庫
@@ -220,8 +223,11 @@ target_link_libraries(PotatoEngine
 
 # Windows: psapi.lib（Security 模組的模組枚舉用；MSVC 由 #pragma comment 處理，MinGW 需顯式連結）
 # wintrust: Authenticode 簽章驗證;bcrypt: BCryptGenRandom 隨機數
+# ws2_32: Networking UdpSocket 的 Winsock2
 if(WIN32 AND NOT MSVC)
-    target_link_libraries(PotatoEngine psapi wintrust bcrypt)
+    target_link_libraries(PotatoEngine psapi wintrust bcrypt ws2_32)
+elseif(MSVC)
+    target_link_libraries(PotatoEngine ws2_32)
 endif()
 
 target_compile_definitions(PotatoEngine PRIVATE POTATO_ENGINE_VERSION="${PROJECT_VERSION}")
@@ -339,6 +345,11 @@ target_link_libraries(SignedSaveFileTest PotatoEngine)
 add_executable(ParticleSystemTest Examples/ParticleSystemTest.cpp)
 target_include_directories(ParticleSystemTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(ParticleSystemTest PotatoEngine)
+
+# UDP + lockstep 同步測試（headless,localhost loopback）
+add_executable(NetworkingTest Examples/NetworkingTest.cpp)
+target_include_directories(NetworkingTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(NetworkingTest PotatoEngine)
 
 add_executable(SecurityRedTeamTest Examples/SecurityRedTeamTest.cpp)
 target_include_directories(SecurityRedTeamTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -519,6 +530,8 @@ install(DIRECTORY Scene/ DESTINATION include/PotatoEngine FILES_MATCHING PATTERN
 install(DIRECTORY Serialization/ DESTINATION include/PotatoEngine FILES_MATCHING PATTERN "*.h")
 install(DIRECTORY Time/ DESTINATION include/PotatoEngine FILES_MATCHING PATTERN "*.h")
 install(DIRECTORY AI/ DESTINATION include/PotatoEngine FILES_MATCHING PATTERN "*.h")
+install(DIRECTORY Security/ DESTINATION include/PotatoEngine FILES_MATCHING PATTERN "*.h")
+install(DIRECTORY Networking/ DESTINATION include/PotatoEngine FILES_MATCHING PATTERN "*.h")
 
 # ============================================================================
 # CTest - 非互動測試可用 ctest 一鍵執行
@@ -555,6 +568,7 @@ set(POTATO_TESTS
     ProfilerTest
     SignedSaveFileTest
     ParticleSystemTest
+    NetworkingTest
     AITestSuite
     MediaPipeTest
     RenderTargetTest
