@@ -335,6 +335,11 @@ add_executable(SignedSaveFileTest Examples/SignedSaveFileTest.cpp)
 target_include_directories(SignedSaveFileTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(SignedSaveFileTest PotatoEngine)
 
+# CPU 粒子模擬測試（headless:發射/壽命/積分/流場/決定性）
+add_executable(ParticleSystemTest Examples/ParticleSystemTest.cpp)
+target_include_directories(ParticleSystemTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(ParticleSystemTest PotatoEngine)
+
 add_executable(SecurityRedTeamTest Examples/SecurityRedTeamTest.cpp)
 target_include_directories(SecurityRedTeamTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(SecurityRedTeamTest PotatoEngine)
@@ -549,6 +554,7 @@ set(POTATO_TESTS
     JobSystemTest
     ProfilerTest
     SignedSaveFileTest
+    ParticleSystemTest
     AITestSuite
     MediaPipeTest
     RenderTargetTest
