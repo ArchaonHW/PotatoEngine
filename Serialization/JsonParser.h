@@ -14,6 +14,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <cmath>
+#include <limits>
 
 namespace Potato {
 
@@ -70,7 +71,19 @@ public:
         return def;
     }
     float AsFloat(float def = 0.0f) const { return static_cast<float>(AsNumber(def)); }
-    int AsInt(int def = 0) const { return static_cast<int>(AsNumber(def)); }
+    int AsInt(int def = 0) const {
+        // double→int 超範圍/NaN 是 UB——先夾取再轉型;
+        // NaN(如 AsNumber 走字串 strtod 路徑)回 def
+        const double d = AsNumber(def);
+        if (std::isnan(d)) return def;
+        constexpr double kMax =
+            static_cast<double>((std::numeric_limits<int>::max)());
+        constexpr double kMin =
+            static_cast<double>((std::numeric_limits<int>::min)());
+        if (d >= kMax) return (std::numeric_limits<int>::max)();
+        if (d <= kMin) return (std::numeric_limits<int>::min)();
+        return static_cast<int>(d);
+    }
     bool AsBool(bool def = false) const {
         if (type == Type::Bool) return boolValue;
         if (type == Type::Number) return numberValue != 0.0;

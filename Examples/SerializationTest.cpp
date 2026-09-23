@@ -7,6 +7,7 @@
 #include <cstring>
 #include <fstream>
 #include <filesystem>
+#include <limits>
 
 using namespace Potato;
 using namespace Potato::SerializableTypes;
@@ -34,6 +35,20 @@ int main() {
         Check(v["c"].IsNull(), "parser: null");
         Check(v["missing"].IsNull(), "parser: 缺 key 回傳 Null");
         Check(!JsonValue::ParseOk("{bad json", v), "parser: 壞輸入拒絕");
+        // AsInt 邊界：double→int 超範圍原為 UB——改夾取 int 極值;
+        // NaN(字串 strtod 路徑可產生)回 def
+        constexpr int kIMax = (std::numeric_limits<int>::max)();
+        constexpr int kIMin = (std::numeric_limits<int>::min)();
+        Check(JsonValue::Number(1e20).AsInt() == kIMax,
+              "AsInt: 1e20 夾取 INT_MAX");
+        Check(JsonValue::Number(-1e20).AsInt() == kIMin,
+              "AsInt: -1e20 夾取 INT_MIN");
+        Check(JsonValue::Number(
+                  std::numeric_limits<double>::quiet_NaN())
+                  .AsInt(42) == 42,
+              "AsInt: NaN 回 def");
+        Check(JsonValue::Number(3.9).AsInt() == 3,
+              "AsInt: 3.9 截斷為 3");
     }
 
     // [2] JsonParser escape/unicode
