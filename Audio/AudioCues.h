@@ -44,16 +44,20 @@ public:
         if (mgr_) mgr_->SetSeepageLevel(level);
     }
 
-    // 預設對照表——音檔放 assets/audio/,缺檔靜音降級
-    static AudioCues Defaults(MiniaudioAudioManager* mgr) {
+    // 預設對照表——音檔放 <assetsRoot>/audio/,缺檔靜音降級。
+    // assetsRoot 由呼叫端給定（例:DemoAssets::Root() 以 exe 定位
+    // 資產根）;預設 "assets" 維持 cwd 相對的舊行為。
+    static AudioCues Defaults(MiniaudioAudioManager* mgr,
+                              const std::string& assetsRoot = "assets") {
+        const std::string dir = assetsRoot + "/audio/";
         AudioCues c(mgr);
-        c.Map("doctrine",    "assets/audio/doctrine.wav");
-        c.Map("morale_rout", "assets/audio/rout.wav");
-        c.Map("seepage_up",  "assets/audio/seepage_up.wav");
-        c.Map("ui_click",    "assets/audio/ui_click.wav");
+        c.Map("doctrine",    dir + "doctrine.wav");
+        c.Map("morale_rout", dir + "rout.wav");
+        c.Map("seepage_up",  dir + "seepage_up.wav");
+        c.Map("ui_click",    dir + "ui_click.wav");
         if (mgr) {
-            mgr->SetSeepagePaths("assets/audio/seepage_bed.wav",
-                                 "assets/audio/seepage_layer.wav");
+            mgr->SetSeepagePaths(dir + "seepage_bed.wav",
+                                 dir + "seepage_layer.wav");
         }
         return c;
     }
