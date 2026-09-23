@@ -351,6 +351,21 @@ add_executable(NetworkingTest Examples/NetworkingTest.cpp)
 target_include_directories(NetworkingTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(NetworkingTest PotatoEngine)
 
+# Tween 插值/Ease 曲線測試（headless）
+add_executable(TweenTest Examples/TweenTest.cpp)
+target_include_directories(TweenTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(TweenTest PotatoEngine)
+
+# SpatialHash + A*/FlowField 測試（headless,純 MathUtils）
+add_executable(SpatialPathTest Examples/SpatialPathTest.cpp)
+target_include_directories(SpatialPathTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(SpatialPathTest PotatoEngine)
+
+# FileWatcher 輪詢監視測試（headless,temp dir）
+add_executable(FileWatcherTest Examples/FileWatcherTest.cpp)
+target_include_directories(FileWatcherTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(FileWatcherTest PotatoEngine)
+
 add_executable(SecurityRedTeamTest Examples/SecurityRedTeamTest.cpp)
 target_include_directories(SecurityRedTeamTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(SecurityRedTeamTest PotatoEngine)
@@ -569,6 +584,9 @@ set(POTATO_TESTS
     SignedSaveFileTest
     ParticleSystemTest
     NetworkingTest
+    TweenTest
+    SpatialPathTest
+    FileWatcherTest
     AITestSuite
     MediaPipeTest
     RenderTargetTest
