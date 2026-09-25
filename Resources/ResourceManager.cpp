@@ -3,6 +3,7 @@
 #include "Audio/AudioSystem.h"       // AudioBuffer 定義
 #include <iostream>
 #include <algorithm>
+#include <cctype>
 #include <filesystem>
 
 // 注意：LoadX/GetX 回傳的 SharedPtr 使用 no-op deleter —
@@ -271,7 +272,7 @@ void ResourceManager::Shutdown() {
 
 SharedPtr<Texture> ResourceManager::LoadTexture(const std::string& path) {
     std::string resolvedPath = ResolveResourcePath(path);
-    void* resource = cache->LoadRaw(resolvedPath, ResourceType::Texture);
+    void* resource = LoadRawScanned(resolvedPath, ResourceType::Texture);
     
     if (resource) {
         return SharedPtr<Texture>(static_cast<Texture*>(resource), [](Texture*){});
@@ -287,7 +288,7 @@ void ResourceManager::UnloadTexture(const std::string& path) {
 
 SharedPtr<Texture> ResourceManager::GetTexture(const std::string& path) {
     std::string resolvedPath = ResolveResourcePath(path);
-    void* resource = cache->LoadRaw(resolvedPath, ResourceType::Texture);
+    void* resource = LoadRawScanned(resolvedPath, ResourceType::Texture);
     
     if (resource) {
         return SharedPtr<Texture>(static_cast<Texture*>(resource), [](Texture*){});
@@ -298,7 +299,7 @@ SharedPtr<Texture> ResourceManager::GetTexture(const std::string& path) {
 
 SharedPtr<Mesh> ResourceManager::LoadMesh(const std::string& path) {
     std::string resolvedPath = ResolveResourcePath(path);
-    void* resource = cache->LoadRaw(resolvedPath, ResourceType::Mesh);
+    void* resource = LoadRawScanned(resolvedPath, ResourceType::Mesh);
     
     if (resource) {
         return SharedPtr<Mesh>(static_cast<Mesh*>(resource), [](Mesh*){});
@@ -314,7 +315,7 @@ void ResourceManager::UnloadMesh(const std::string& path) {
 
 SharedPtr<Mesh> ResourceManager::GetMesh(const std::string& path) {
     std::string resolvedPath = ResolveResourcePath(path);
-    void* resource = cache->LoadRaw(resolvedPath, ResourceType::Mesh);
+    void* resource = LoadRawScanned(resolvedPath, ResourceType::Mesh);
     
     if (resource) {
         return SharedPtr<Mesh>(static_cast<Mesh*>(resource), [](Mesh*){});
@@ -326,9 +327,18 @@ SharedPtr<Mesh> ResourceManager::GetMesh(const std::string& path) {
 SharedPtr<Shader> ResourceManager::LoadShader(const std::string& vertexPath, const std::string& fragmentPath) {
     std::string resolvedVertexPath = ResolveResourcePath(vertexPath);
     std::string resolvedFragmentPath = ResolveResourcePath(fragmentPath);
-    
+
     // 組合路徑作為唯一標識
     std::string combinedPath = resolvedVertexPath + "|" + resolvedFragmentPath;
+
+    // 已快取就不重掃（掃描守的是檔案→記憶體邊界）；
+    // 組合 key 不是實體路徑,兩個檔案各自過掃描閘門
+    if (!cache->IsLoaded(combinedPath) &&
+        (!PassesContentScan(resolvedVertexPath) ||
+         !PassesContentScan(resolvedFragmentPath))) {
+        return nullptr;
+    }
+
     void* resource = cache->LoadRaw(combinedPath, ResourceType::Shader);
     
     if (resource) {
@@ -343,6 +353,13 @@ void ResourceManager::UnloadShader(const std::string& name) {
 }
 
 SharedPtr<Shader> ResourceManager::GetShader(const std::string& name) {
+    // name 是 LoadShader 的組合 key "vert|frag"——拆回兩路徑分別掃描
+    auto sep = name.find('|');
+    if (sep != std::string::npos && !cache->IsLoaded(name) &&
+        (!PassesContentScan(name.substr(0, sep)) ||
+         !PassesContentScan(name.substr(sep + 1)))) {
+        return nullptr;
+    }
     void* resource = cache->LoadRaw(name, ResourceType::Shader);
     
     if (resource) {
@@ -354,7 +371,7 @@ SharedPtr<Shader> ResourceManager::GetShader(const std::string& name) {
 
 SharedPtr<AudioBuffer> ResourceManager::LoadAudio(const std::string& path) {
     std::string resolvedPath = ResolveResourcePath(path);
-    void* resource = cache->LoadRaw(resolvedPath, ResourceType::Audio);
+    void* resource = LoadRawScanned(resolvedPath, ResourceType::Audio);
     
     if (resource) {
         return SharedPtr<AudioBuffer>(static_cast<AudioBuffer*>(resource), [](AudioBuffer*){});
@@ -370,7 +387,7 @@ void ResourceManager::UnloadAudio(const std::string& path) {
 
 SharedPtr<AudioBuffer> ResourceManager::GetAudio(const std::string& path) {
     std::string resolvedPath = ResolveResourcePath(path);
-    void* resource = cache->LoadRaw(resolvedPath, ResourceType::Audio);
+    void* resource = LoadRawScanned(resolvedPath, ResourceType::Audio);
     
     if (resource) {
         return SharedPtr<AudioBuffer>(static_cast<AudioBuffer*>(resource), [](AudioBuffer*){});
@@ -447,6 +464,83 @@ std::string ResourceManager::ResolvePath(const std::string& path) const {
     }
     
     return path;
+}
+
+// ============================================================================
+// 內容掃毒（Security::ContentScanner 整合）
+// ============================================================================
+
+void ResourceManager::SetContentScanPolicy(ResourceScanPolicy policy) {
+    scanPolicy = policy;
+}
+
+void ResourceManager::AddUntrustedPath(const std::string& dirPath) {
+    std::error_code ec;
+    std::filesystem::path p = std::filesystem::absolute(dirPath, ec);
+    if (ec) p = std::filesystem::path(dirPath);
+    std::string norm = p.lexically_normal().generic_string();
+    for (auto& c : norm)
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    while (!norm.empty() && norm.back() == '/') norm.pop_back();
+    if (!norm.empty()) untrustedDirs.push_back(std::move(norm));
+}
+
+void ResourceManager::SetResourceScanCallback(Security::ScanCallback cb) {
+    scanCallback = std::move(cb);
+}
+
+bool ResourceManager::IsUntrustedPath(const std::string& resolvedPath) const {
+    std::error_code ec;
+    std::filesystem::path p = std::filesystem::absolute(resolvedPath, ec);
+    if (ec) p = std::filesystem::path(resolvedPath);
+    std::string norm = p.lexically_normal().generic_string();
+    for (auto& c : norm)
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    for (const auto& dir : untrustedDirs) {
+        // 前綴比對 + 邊界：dir 本身或 dir/ 開頭才算
+        if (norm == dir ||
+            (norm.size() > dir.size() && norm.compare(0, dir.size(), dir) == 0 &&
+             norm[dir.size()] == '/')) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool ResourceManager::PassesContentScan(const std::string& resolvedPath) {
+    if (scanPolicy == ResourceScanPolicy::Off) return true;
+    if (scanPolicy == ResourceScanPolicy::UntrustedOnly &&
+        !IsUntrustedPath(resolvedPath)) {
+        return true;
+    }
+
+    Security::FileScanResult r = scanner.ScanFile(resolvedPath);
+    if (scanCallback) scanCallback(r);
+
+    const bool blocked =
+        r.verdict == Security::ScanVerdict::Malicious ||
+        (blockSuspicious && r.verdict == Security::ScanVerdict::Suspicious);
+    if (blocked) {
+        std::cerr << "Resource blocked by content scan ("
+                  << Security::ScanVerdictToString(r.verdict) << "): "
+                  << resolvedPath << std::endl;
+        for (const auto& f : r.findings) {
+            std::cerr << "  [" << Security::ScanSeverityToString(f.severity)
+                      << "] " << f.ruleId << ": " << f.description << std::endl;
+        }
+    }
+    return !blocked;
+}
+
+void* ResourceManager::LoadRawScanned(const std::string& resolvedPath,
+                                      ResourceType type) {
+    // 已在快取中的資源不重掃：掃描守的是「檔案→記憶體」載入邊界,
+    // 每次 Get* 都重算 SHA-256 會變成效能災難
+    if (!cache->IsLoaded(resolvedPath) &&
+        !PassesContentScan(resolvedPath)) {
+        return nullptr;
+    }
+    return cache->LoadRaw(resolvedPath, type);
 }
 
 // ============================================================================

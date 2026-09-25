@@ -56,6 +56,8 @@ struct SecurityReport {
 // 違規事件回呼
 using ViolationCallback = std::function<void(const SecurityReport&)>;
 
+class AuditLedger;  // Security/AuditLedger.h——防竄改稽核帳本
+
 // 模組掃描結果（含不受信任原因，供診斷用）
 struct ModuleScanResult {
     std::string name;    // 模組檔名（小寫）
@@ -122,6 +124,13 @@ public:
     // 設定違規事件回呼（例如：記錄 log、通知伺服器、終止程式）
     void SetViolationCallback(ViolationCallback callback);
 
+    // 設定稽核帳本（nullptr 解除）。設定後每次違規事件除回呼外,
+    // 亦以 hash 鏈記錄入帳（category="violation",eventType=違規類型名,
+    // payload 存 details 的 SHA-256,原文不落帳）——日誌層級的
+    // tamper-evident 揭露：作弊者刪改本地違規紀錄會讓鏈斷裂。
+    // 呼叫端持有 ledger 生命週期,並應定期取出 HeadHash 外部錨定。
+    void SetAuditLedger(AuditLedger* ledger);
+
     // ---- 反除錯 ----
     // 偵測是否有除錯器附加（IsDebuggerPresent / CheckRemoteDebuggerPresent / TracerPid）
     bool CheckDebugger();
@@ -180,6 +189,15 @@ public:
     // ---- 完整性校驗 ----
     // 驗證檔案 SHA-256 是否符合預期值
     bool VerifyFileIntegrity(const std::string& filePath, const std::string& expectedSha256Hex);
+    // 啟動期自身完整性：依 manifest（GenerateIntegrityManifest 產生的
+    // SHA-256 白名單）逐檔驗證 baseDir 下的引擎/遊戲檔案。
+    // hmacKey 非空時要求 manifest 帶相符簽章（見 IntegrityManifest.h）。
+    // 每筆失敗（竄改/消失/不可讀/清單異常）觸發一次 IntegrityMismatch 回呼。
+    // 回傳是否全部通過；manifest 無法讀取/解析/簽章不符也回 false。
+    bool CheckIntegrityManifest(const std::string& manifestPath,
+                                const std::string& baseDir,
+                                const void* hmacKey = nullptr,
+                                size_t hmacKeyLen = 0);
     // 為記憶體區域建立完整性快照（keyed HMAC-SHA256），回傳快照 ID。
     // 受保護位址會被記錄，監控執行緒會定期自動驗證（VerifyAllGuards）。
     // 注意：data 指標在 UnguardRegion 前必須保持有效。
@@ -240,6 +258,7 @@ private:
     // 監控心跳（steady_clock 毫秒時間戳，MonitorLoop 每週期更新）
     std::atomic<int64_t> monitorHeartbeatMs{0};
     ViolationCallback violationCallback;
+    AuditLedger* auditLedger = nullptr;   // 可選：違規事件同時入帳（非擁有）
     std::mutex callbackMutex;
 
     // 系統模組清單（小寫檔名）：必須位於系統目錄且通過 Authenticode 簽章驗證

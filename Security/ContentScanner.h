@@ -67,6 +67,15 @@ struct ScanSummary {
     int clean = 0, suspicious = 0, malicious = 0, errors = 0;
 };
 
+// 隔離區清單條目（ListQuarantine 回傳；對應 <sha256>.json 內容）
+struct QuarantineEntry {
+    std::string sha256;
+    std::string originalPath;
+    std::string verdict;
+    std::string quarantinedAt;
+    uint64_t size = 0;
+};
+
 // 掃描進度/發現回呼（每掃完一個檔案呼叫一次）
 using ScanCallback = std::function<void(const FileScanResult&)>;
 
@@ -80,14 +89,24 @@ public:
     // ---- 特徵庫 ----
     // 加入單筆 SHA-256 黑名單（64 字元 hex，大小寫不拘）
     void AddBlacklistedHash(const std::string& sha256Hex);
+    // 加入單筆 SHA-256 白名單：已知良性檔（官方模組/更新包）命中後
+    // 直接判定 Clean 並跳過啟發式——但壓不過黑名單
+    // （同時在兩份名單的檔案仍判 Malicious，黑名單優先）
+    void AddWhitelistedHash(const std::string& sha256Hex);
     // 加入位元組特徵：hex 字串（"4d5a"）代表檔案內容中要搜尋的位元序列
     void AddByteSignature(const std::string& ruleId, const std::string& hexPattern,
                           const std::string& description);
     // 從 JSON 檔載入特徵庫：
     // {"hashes": ["<sha256>", ...],
+    //  "whitelist": ["<sha256>", ...],
     //  "patterns": [{"id": "...", "hex": "4d5a...", "description": "..."}]}
     // 回傳成功載入的條目數；-1 表示檔案/格式錯誤
     int LoadSignatureDB(const std::string& jsonPath);
+    // 載入 HMAC 簽章的特徵庫（SignFile 產生的 blob：JSON || MAC 尾）。
+    // 特徵庫本身是攻擊面——被替換成空庫等於盲化掃描器；
+    // 簽章驗證失敗（竄改/錯金鑰/非簽章檔）一律回 -1 且不加載任何條目。
+    int LoadSignedSignatureDB(const std::string& signedPath,
+                              const void* key, size_t keyLen);
     size_t SignatureCount() const;
 
     // ---- 掃描 ----
@@ -108,6 +127,14 @@ public:
     // result 可為 nullptr（會自行先掃描）。失敗回 false 並填 err。
     bool QuarantineFile(const std::string& filePath, const std::string& quarantineDir,
                         const FileScanResult* result, std::string* err) const;
+    // 列出隔離區：讀 quarantineDir 下全部 <sha256>.json 清單
+    std::vector<QuarantineEntry> ListQuarantine(const std::string& quarantineDir) const;
+    // 還原隔離檔到 destPath。還原前重算檔案 SHA-256 必須等於 sha256Hex
+    // （隔離區檔案本身被竄改則拒絕還原）；清單檔保留供稽核。
+    bool RestoreFromQuarantine(const std::string& quarantineDir,
+                               const std::string& sha256Hex,
+                               const std::string& destPath,
+                               std::string* err) const;
 
     // ---- 設定 ----
     void SetMaxScanBytes(uint64_t bytes) { maxScanBytes = bytes; }
@@ -128,6 +155,9 @@ private:
     void RunContentChecks(FileScanResult& r,
                           const std::vector<uint8_t>& content) const;
 
+    // LoadSignatureDB/LoadSignedSignatureDB 共用的 JSON 解析
+    int LoadSignatureDbFromText(const std::string& text);
+
     // 各啟發式檢查，命中時 push finding
     void CheckFilename(const std::string& filePath, FileScanResult& r) const;
     void CheckMagicVsExtension(const std::string& filePath,
@@ -144,6 +174,7 @@ private:
     void FinalizeVerdict(FileScanResult& r) const;
 
     std::unordered_set<std::string> hashBlacklist;   // 小寫 sha256 hex
+    std::unordered_set<std::string> hashWhitelist;   // 小寫 sha256 hex
     std::vector<ByteSig> byteSigs;
     uint64_t maxScanBytes = 32ull * 1024 * 1024;     // 內容掃描上限
     bool detectEicar = true;

@@ -49,6 +49,13 @@
   - 雜湊釘選（`AddTrustedModuleHash`）：額外比對檔案 SHA-256，可阻擋同路徑替換
 - **即時載入攔截**：`EnableImageLoadNotify()`（LdrRegisterDllNotification）消除輪詢掃描的 TOCTOU 空窗
 - **檔案完整性**：`VerifyFileIntegrity()`（SHA-256）驗證資源/執行檔未被竄改
+- **自身完整性白名單**：`CheckIntegrityManifest()` + `Security/IntegrityManifest.h`
+  的 `GenerateIntegrityManifest()` — 打包期遞迴雜湊安裝目錄產生 manifest，
+  啟動期逐檔比對，竄改/消失/不可讀逐筆觸發 `IntegrityMismatch` 回呼
+  （fail-closed：manifest 本身不可讀不算通過）。
+  支援 HMAC-SHA256 簽章：帶金鑰產生的清單附 `hmac` 欄位，
+  攻擊者竄改檔案後無法重算合法清單（金鑰策略雙向 fail-closed：
+  有金鑰驗未簽章清單、無金鑰驗簽章清單皆拒絕）
 - **記憶體防竄改**：`GuardRegion()` / `VerifyRegion()` / `VerifyAllGuards()` — keyed HMAC-SHA256（每行程隨機金鑰，攻擊者無法重算校驗值），監控執行緒自動定期驗證
 - **自身程式碼完整性**：`GuardOwnCode()` / `VerifyOwnCode()` 對 .text 區段建立 HMAC 快照，偵測 inline patch / hook
 - **背景監控**：`StartMonitoring()` 定期執行全部檢查
@@ -58,6 +65,38 @@
 （模擬注入、冒名 DLL、記憶體竄改、雜湊釘選繞過、硬體中斷點、shellcode 執行緒、
 .text patch、即時載入攔截、隱藏模組、RWX 記憶體、IAT hook、外部 handle、
 syscall stub hook、作弊工具行程、RIP 稽核），目前 **39 PASS / 0 FAIL / 0 BYPASS**。
+
+### 內容掃毒（ContentScanner / DownloadGuard / 載入閘門）
+
+`Security/ContentScanner.h` 提供檔案內容掃毒：SHA-256 黑名單、位元組特徵庫
+（JSON 可擴充、內建 EICAR）、啟發式（雙重副檔名、資料副檔名藏執行檔頭、
+內嵌 PE payload、腳本危險 API）、隔離（`QuarantineFile` + JSON 清單）。
+判定分 `Clean / Suspicious / Malicious / Error` 四級——Suspicious 為
+啟發式命中，有誤報可能，處置由呼叫端決定。
+
+特徵庫防護：`LoadSignedSignatureDB()` 載入 `SignFile` 簽章的特徵庫
+（HMAC blob），防止攻擊者以空庫/篡改庫盲化掃描器——驗證失敗整庫不載。
+隔離管理：`ListQuarantine()` 列出清單、`RestoreFromQuarantine()`
+還原前重算雜湊驗身，隔離檔被竄改即拒絕還原。
+
+三個整合點：
+
+- **資源載入閘門**：`ResourceManager::SetContentScanPolicy()`
+  （`Off`/`UntrustedOnly`/`All`）— `LoadTexture/LoadMesh/LoadShader/LoadAudio`
+  及對應 `GetX` 在檔案進入 loader 前先掃描；Malicious 一律拒載，
+  Suspicious 由 `SetScanBlockSuspicious` 決定；已快取資源不重掃。
+  `AddUntrustedPath()` 註記 mod/下載等不授信目錄。
+- **落盤即掃**：`Security/DownloadGuard.h` 監視目錄（FileWatcher 輪詢），
+  新檔/修改自動掃描，可選 Malicious 自動隔離；
+  `SetAuditLedger()` 可將非 Clean 判定與隔離動作寫入防竄改稽核帳本
+  （`Security/AuditLedger.h` hash 鏈）。
+- **啟動自檢**：`Security/IntegrityManifest.h` 的
+  `GenerateIntegrityManifest()`（打包期，可帶 HMAC 金鑰簽章）+
+  `VerifyIntegrityManifest()` 或 `SecurityManager::CheckIntegrityManifest()`
+  （啟動期）。
+
+驗證：`Examples/ContentScannerTest.cpp`（24 項）+
+`Examples/SecurityPipelineTest.cpp`（65 項）皆納入 ctest。
 
 使用範例：
 

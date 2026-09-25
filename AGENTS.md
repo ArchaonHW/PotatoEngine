@@ -38,7 +38,7 @@ external（vendored：glad_gen/tinygltf/miniaudio/imgui submodule）
 - MinGW：`cmake -B build-mingw -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release`
   ；`if(MINGW)` 已加 `-static-libgcc -static-libstdc++ -static`。
 - MSVC：`cmake -B build -G "Visual Studio 18 2026" -A x64`。
-- 測試：`ctest -C Release`（白名單 `POTATO_TESTS`，38 項引擎層測試；
+- 測試：`ctest -C Release`（白名單 `POTATO_TESTS`，40 項引擎層測試；
   GL 依賴測試無顯示環境自行 SKIP）。
 - 本地驗證標準：MSVC 與 MinGW 皆建置+ctest 全綠。
 - `assets/neural/` 為 gitignore 排除的本機產物：`NeuralArtTool`

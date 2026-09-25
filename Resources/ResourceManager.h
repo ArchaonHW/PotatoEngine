@@ -2,11 +2,13 @@
 
 #include "Core/CoreTypes.h"
 #include "Core/Interfaces/IResourceManager.h"
+#include "Security/ContentScanner.h"
 #include <string>
 #include <unordered_map>
 #include <memory>
 #include <functional>
 #include <mutex>
+#include <vector>
 
 namespace Potato {
 
@@ -135,6 +137,20 @@ private:
 };
 
 /**
+ * 資源載入內容掃描策略
+ *
+ * 判定處置（Security::ContentScanner 結果）：
+ * - Malicious  → 一律拒載（LoadX/GetX 回 nullptr）
+ * - Suspicious → 預設放行但觸發回呼；SetScanBlockSuspicious(true) 改為拒載
+ * - Clean/Error → 放行（Error 表示檔案不存在等，由 loader 自行回報失敗）
+ */
+enum class ResourceScanPolicy {
+    Off,            // 不掃描（預設,向後相容：引擎自有資產視為信任）
+    UntrustedOnly,  // 只掃描 AddUntrustedPath 目錄下的檔案（mod/下載區）
+    All             // 掃描所有載入檔案
+};
+
+/**
  * 資源管理器實現
  */
 class ResourceManager : public IResourceManager {
@@ -179,15 +195,43 @@ public:
     // 異步加載
     void EnableAsyncLoading(bool enable);
     bool IsAsyncLoadingEnabled() const;
-    
+
+    // ---- 內容掃毒（Security::ContentScanner 整合）----
+    // 掃描在路徑解析之後、loader 載入之前執行；掃描開銷只落在
+    // LoadX/GetX 的檔案載入路徑上。直接呼叫 GetCache().LoadRaw()
+    // 屬於底層 API,會繞過掃描——不授信內容請走 LoadX/GetX。
+    void SetContentScanPolicy(ResourceScanPolicy policy);
+    ResourceScanPolicy GetContentScanPolicy() const { return scanPolicy; }
+    // 註記不授信來源目錄（模組/玩家上傳/下載區）,供 UntrustedOnly 策略比對
+    void AddUntrustedPath(const std::string& dirPath);
+    // Suspicious 判定也拒載（預設 false：放行 + 回呼,誤報由遊戲層複查）
+    void SetScanBlockSuspicious(bool on) { blockSuspicious = on; }
+    // 每個實際執行掃描的檔案觸發一次（含 Clean；用於稽核/上報）
+    void SetResourceScanCallback(Security::ScanCallback cb);
+    // 存取內部掃描器——供遊戲層加黑名單雜湊/位元組特徵/載入特徵庫
+    Security::ContentScanner& GetContentScanner() { return scanner; }
+    // 存取底層快取（註冊 loader 用）；注意 LoadRaw 繞過內容掃描
+    ResourceCache& GetCache() { return *cache; }
+
 private:
     std::string ResolvePath(const std::string& path) const;
-    
+    // 掃描閘門：依策略決定是否掃描,回傳 false 表示拒載
+    bool PassesContentScan(const std::string& resolvedPath);
+    bool IsUntrustedPath(const std::string& resolvedPath) const;
+    void* LoadRawScanned(const std::string& resolvedPath, ResourceType type);
+
 private:
     UniquePtr<ResourceCache> cache;
     std::vector<std::string> resourcePaths;
     bool asyncLoadingEnabled;
     bool initialized;
+
+    // ---- 內容掃毒 ----
+    Security::ContentScanner scanner;
+    ResourceScanPolicy scanPolicy = ResourceScanPolicy::Off;
+    bool blockSuspicious = false;
+    std::vector<std::string> untrustedDirs;  // 正規化:小寫、'/' 分隔、無尾分隔符
+    Security::ScanCallback scanCallback;
 };
 
 // 全局資源管理器

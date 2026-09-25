@@ -1,4 +1,6 @@
 #include "SecuritySystem.h"
+#include "Security/IntegrityManifest.h"
+#include "Security/AuditLedger.h"
 
 #include <chrono>
 #include <cstring>
@@ -534,8 +536,18 @@ void SecurityManager::SetViolationCallback(ViolationCallback callback) {
     violationCallback = std::move(callback);
 }
 
+void SecurityManager::SetAuditLedger(AuditLedger* ledger) {
+    std::lock_guard<std::mutex> lock(callbackMutex);
+    auditLedger = ledger;
+}
+
 void SecurityManager::ReportViolation(ViolationType type, const std::string& details) {
     std::lock_guard<std::mutex> lock(callbackMutex);
+    if (auditLedger) {
+        // 揭露層紀律：帳本只存 details 的 SHA-256,原文留在回呼路徑
+        auditLedger->Append("violation", ViolationTypeToString(type),
+                            details, "security_manager");
+    }
     if (violationCallback) {
         SecurityReport report;
         report.type = type;
@@ -908,6 +920,19 @@ bool SecurityManager::VerifyFileIntegrity(const std::string& filePath,
         return false;
     }
     return true;
+}
+
+bool SecurityManager::CheckIntegrityManifest(const std::string& manifestPath,
+                                             const std::string& baseDir,
+                                             const void* hmacKey,
+                                             size_t hmacKeyLen) {
+    ManifestVerifyResult res =
+        VerifyIntegrityManifest(manifestPath, baseDir, hmacKey, hmacKeyLen);
+    for (const auto& failure : res.failures) {
+        ReportViolation(ViolationType::IntegrityMismatch,
+            "Manifest check: " + failure);
+    }
+    return res.Passed() && res.Total() > 0;
 }
 
 uint32_t SecurityManager::GuardRegion(const void* data, size_t size) {
