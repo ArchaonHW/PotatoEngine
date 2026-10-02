@@ -64,9 +64,9 @@ echo.
 echo Executables can be found in: build\bin\Release\
 echo.
 echo Main executables:
-echo   - SimpleExample.exe
+echo   - EngineExample.exe
 echo   - PlatformTest.exe
-echo   - AIAgentGUIExample.exe
+echo   - UltimateAIAgentDemo.exe
 echo.
 
 pause

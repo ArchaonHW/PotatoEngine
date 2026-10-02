@@ -6,10 +6,12 @@
 
 ## 模組清單
 
-AI（僅 NeuralNetwork）、Audio、Core、ECS、Events、FileSystem、GameObject、
-Input、Logging、MathUtils、Media、Memory、Networking、Physics、Platform、
-Quantum、Rendering、Resources、Scene、Security、Serialization、Time、
-build-video、
+AI（NeuralNetwork + Agent 平台：AIAgentSystem/LLMIntegration/RAGSystem/
+AgentChain/ToolFramework/NaturalLanguageProcessing/ReinforcementLearning/
+IntelligentDevelopmentSystem）、Audio、Core、ECS、Events、FileSystem、
+GameObject、Input、Logging、MathUtils、Media、Memory、Networking、Physics、
+Platform、Quantum、Rendering、Resources、Scene、Security、Serialization、
+Time、build-video、
 external（vendored：glad_gen/tinygltf/miniaudio/imgui submodule）
 
 ## 消費關係（重要）
@@ -20,8 +22,11 @@ external（vendored：glad_gen/tinygltf/miniaudio/imgui submodule）
   **本 repo 不得引用 Gameplay/Campaign/MingGoRTS_IDE 的檔案或標頭**。
 - 引擎測試範例全在 standalone 守衛
   `if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)` 內：
-  被消費時只產出 `PotatoEngine`/`NeuralNetwork`/`Quantum`/`Media`/`glad`/`glfw`
-  這些 lib target；examples/tests/install/CPack 只在獨立建置時註冊。
+  被消費時只產出 `PotatoEngine`/`NeuralNetwork`/`ReinforcementLearning`/
+  `NaturalLanguageProcessing`/`AIAgentSystem`/`LLMIntegration`/`RAGSystem`/
+  `AgentChain`/`ToolFramework`/`IntelligentDevelopmentSystem`/`Quantum`/
+  `Media`/`glad`/`glfw` 這些 lib target；examples/tests/install/CPack
+  只在獨立建置時註冊。
 - `glfw` 為 imported target 時必須 `GLOBAL`——imported target 預設是
   目錄範圍，不提升則消費端看不到（會退化成 `-lglfw` 裸連結失敗）。
 - 消費端直編引擎源碼的路徑一律寫 `${POTATO_ENGINE_ROOT}/...`。

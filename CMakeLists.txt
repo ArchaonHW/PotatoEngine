@@ -168,7 +168,7 @@ file(GLOB_RECURSE ENGINE_SOURCES
     "ECS/*.cpp"
     "GameObject/*.cpp"
     "Networking/*.cpp"
-    # "GUI/*.cpp"      # AgentGUI 依賴遊戲側 AIAgentSystem,不進引擎
+    # "GUI/*.cpp"      # GUI/ 屬遊戲側（MingGoRTS_IDE），不在本 repo
     # "MathUtils/*.cpp"      # 全 header-only
     # "AI/*.cpp"      # AI 模組另有獨立靜態庫目標,避免重複編譯
 )
@@ -243,6 +243,41 @@ target_compile_definitions(PotatoEngine PUBLIC GLFW_INCLUDE_NONE)
 add_library(NeuralNetwork STATIC AI/NeuralNetwork.cpp)
 target_include_directories(NeuralNetwork PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/AI)
 
+# AI 增強模塊 - 大數據學習
+add_library(ReinforcementLearning STATIC AI/ReinforcementLearning.cpp)
+target_include_directories(ReinforcementLearning PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/AI)
+target_link_libraries(ReinforcementLearning NeuralNetwork)
+
+# AI 增強模塊 - 自然語言處理
+add_library(NaturalLanguageProcessing STATIC AI/NaturalLanguageProcessing.cpp)
+target_include_directories(NaturalLanguageProcessing PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/AI)
+
+# AI Agent 系統
+add_library(AIAgentSystem STATIC AI/AIAgentSystem.cpp)
+target_include_directories(AIAgentSystem PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/AI)
+
+# AI 增強模塊 - LLM 整合
+add_library(LLMIntegration STATIC AI/LLMIntegration.cpp)
+target_include_directories(LLMIntegration PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/AI)
+
+# AI 增強模塊 - RAG 系統
+add_library(RAGSystem STATIC AI/RAGSystem.cpp)
+target_include_directories(RAGSystem PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/AI)
+
+# AI 增強模塊 - Agent 鏈
+add_library(AgentChain STATIC AI/AgentChain.cpp)
+target_include_directories(AgentChain PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/AI)
+target_link_libraries(AgentChain LLMIntegration)
+
+# AI 增強模塊 - 工具框架
+add_library(ToolFramework STATIC AI/ToolFramework.cpp)
+target_include_directories(ToolFramework PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/AI)
+
+# AI 增強模塊 - 智能開發系統
+add_library(IntelligentDevelopmentSystem STATIC AI/IntelligentDevelopmentSystem.cpp)
+target_include_directories(IntelligentDevelopmentSystem PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/AI)
+target_link_libraries(IntelligentDevelopmentSystem LLMIntegration RAGSystem AgentChain ToolFramework AIAgentSystem NeuralNetwork NaturalLanguageProcessing)
+
 # 量子模擬層 - 態向量暫存器/qudit（疊加態/糾纏/Born rule 測量）
 add_library(Quantum STATIC
     Quantum/QubitRegister.cpp
@@ -294,6 +329,29 @@ target_link_libraries(OptimizedAIDemo)
 # AI 測試套件（完整測試驗證）
 add_executable(AITestSuite Examples/AITestSuite.cpp)
 target_link_libraries(AITestSuite)
+
+# 簡易 AI 演示程序
+add_executable(SimpleAIDemo Examples/SimpleAIDemo.cpp)
+target_link_libraries(SimpleAIDemo)
+
+# 增強 AI Agent 範例
+add_executable(EnhancedAIAgentExample Examples/EnhancedAIAgentExample.cpp)
+target_link_libraries(EnhancedAIAgentExample)
+
+# AI 增強演示程序
+add_executable(AIEnhancedDemo Examples/AIEnhancedDemo.cpp)
+target_include_directories(AIEnhancedDemo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(AIEnhancedDemo NeuralNetwork ReinforcementLearning NaturalLanguageProcessing)
+
+# 終極 AI Agent 演示程序
+add_executable(UltimateAIAgentDemo Examples/UltimateAIAgentDemo.cpp)
+target_include_directories(UltimateAIAgentDemo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(UltimateAIAgentDemo AIAgentSystem LLMIntegration RAGSystem AgentChain ToolFramework NeuralNetwork NaturalLanguageProcessing)
+
+# 智能開發系統演示
+add_executable(IntelligentDevelopmentDemo Examples/IntelligentDevelopmentDemo.cpp)
+target_include_directories(IntelligentDevelopmentDemo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(IntelligentDevelopmentDemo IntelligentDevelopmentSystem LLMIntegration AIAgentSystem)
 
 # 數學測試程序
 add_executable(MathTest Examples/MathTest.cpp)
