@@ -166,3 +166,28 @@ output/videos/
 output/video_ds_test/
 *_test_save.json
 output/vds_hq/
+
+# BMAD-METHOD 產物（屬其他專案，不入版控）
+.bmad/
+.bmad-core/
+_bmad/
+_bmad-*/
+bmad/
+bmad-agent/
+web-bundles/
+
+# AI 工具紀錄/狀態（對話歷史、記憶、本機設定，不入版控）
+.windsurf/
+.codeium/
+.claude/
+.cursor/
+.codex/
+.gemini/
+.cline/
+.roo/
+.kiro/
+.ai/
+.aider*
+.aiexclude
+memories/
+ai_logs/
