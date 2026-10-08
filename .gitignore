@@ -27,10 +27,10 @@
 *.cache
 *.pfx
 
-# CMake build outputs
-build/
-build-mingw/
-build-msvc/
+# CMake build outputs（/build*/ 涵蓋 build-mingw/build-msvc/build-ninja 等所有建置目錄）
+/build*/
+# build-video/ 是引擎模組目錄，非建置輸出——排除於 /build*/ 之外
+!/build-video/
 CMakeFiles/
 CMakeCache.txt
 CMakeScripts/
@@ -175,6 +175,9 @@ _bmad-*/
 bmad/
 bmad-agent/
 web-bundles/
+
+# posters/ — 海報工作檔，本機保留不入版控
+posters/
 
 # AI 工具紀錄/狀態（對話歷史、記憶、本機設定，不入版控）
 .windsurf/
