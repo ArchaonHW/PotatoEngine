@@ -42,10 +42,11 @@ public:
     
     // 投影設置
     void SetProjection(CameraProjection projection);
-    void SetPerspective(float fov, float aspect, float nearPlane, float farPlane);
+    // fovDegrees 為角度制垂直視角（Matrix4::Perspective 吃弧度，本 API 收角度）
+    void SetPerspective(float fovDegrees, float aspect, float nearPlane, float farPlane);
     void SetOrthographic(float left, float right, float bottom, float top, float nearPlane, float farPlane);
     
-    // 視錐體設置
+    // 視錐體設置（fov 為角度制，同 SetPerspective）
     void SetFOV(float fov) { this->fov = fov; updateProjection = true; }
     void SetAspectRatio(float aspect) { this->aspect = aspect; updateProjection = true; }
     void SetNearPlane(float nearPlane) { this->nearPlane = nearPlane; updateProjection = true; }

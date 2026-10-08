@@ -99,7 +99,7 @@ int main() {
     // Camera::SetViewport 拒絕非法尺寸（width<=0 不得污染 aspect）
     {
         Camera cam;
-        cam.SetPerspective(60.0f * 3.14159265f / 180.0f, 16.0f / 9.0f, 0.1f, 100.0f);
+        cam.SetPerspective(60.0f, 16.0f / 9.0f, 0.1f, 100.0f);
         float goodAspect = cam.GetAspectRatio();
 
         cam.SetViewport(0, 0, 0, 720);  // width=0

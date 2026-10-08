@@ -88,7 +88,7 @@ int main() {
     Camera cam;
     cam.SetPosition(Vector3(0, 0, 0));
     cam.SetTarget(Vector3(0, 0, -1));
-    cam.SetPerspective(60.0f * 3.14159265f / 180.0f, 16.0f / 9.0f, 0.1f, 100.0f);
+    cam.SetPerspective(60.0f, 16.0f / 9.0f, 0.1f, 100.0f);
 
     SceneRenderer renderer;
     auto items = renderer.CollectRenderList(scene, cam);
