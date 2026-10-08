@@ -573,6 +573,11 @@ add_executable(ShadowTest Examples/ShadowTest.cpp)
 target_include_directories(ShadowTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(ShadowTest PotatoEngine glad glfw)
 
+# HDR/Bloom/ToneMap 後處理鏈測試（headless 權重/ACES；GL 段 SKIP）
+add_executable(PostProcessTest Examples/PostProcessTest.cpp)
+target_include_directories(PostProcessTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(PostProcessTest PotatoEngine glad glfw)
+
 # 人物立繪產生器：VRM/glTF → 離屏渲染 → PNG（需 GL 環境，屬工具非測試）
 add_executable(PortraitRenderer Examples/PortraitRenderer.cpp)
 target_include_directories(PortraitRenderer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -678,6 +683,7 @@ set(POTATO_TESTS
     UnsolvedBatch3Test
     SSAOTest
     ShadowTest
+    PostProcessTest
 )
 foreach(test_name IN LISTS POTATO_TESTS)
     if(TARGET ${test_name})

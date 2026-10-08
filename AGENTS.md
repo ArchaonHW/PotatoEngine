@@ -43,7 +43,7 @@ external（vendored：glad_gen/tinygltf/miniaudio/imgui submodule）
 - MinGW：`cmake -B build-mingw -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release`
   ；`if(MINGW)` 已加 `-static-libgcc -static-libstdc++ -static`。
 - MSVC：`cmake -B build -G "Visual Studio 18 2026" -A x64`。
-- 測試：`ctest -C Release`（白名單 `POTATO_TESTS`，41 項引擎層測試；
+- 測試：`ctest -C Release`（白名單 `POTATO_TESTS`，43 項引擎層測試；
   GL 依賴測試無顯示環境自行 SKIP）。
 - 本地驗證標準：MSVC 與 MinGW 皆建置+ctest 全綠。
 - 注意：repo 路徑含 CJK 時 `mingw32-make`（`Illegal byte sequence`）與
