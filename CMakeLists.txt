@@ -353,6 +353,11 @@ add_executable(IntelligentDevelopmentDemo Examples/IntelligentDevelopmentDemo.cp
 target_include_directories(IntelligentDevelopmentDemo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(IntelligentDevelopmentDemo IntelligentDevelopmentSystem LLMIntegration AIAgentSystem)
 
+# 本地 AI Agent 訓練器（Q-Learning GridWorld，輸出可重載模型檔；headless）
+add_executable(AIAgentTrainer Examples/AIAgentTrainer.cpp)
+target_include_directories(AIAgentTrainer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(AIAgentTrainer ReinforcementLearning)
+
 # 數學測試程序
 add_executable(MathTest Examples/MathTest.cpp)
 target_include_directories(MathTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -578,6 +583,16 @@ add_executable(PostProcessTest Examples/PostProcessTest.cpp)
 target_include_directories(PostProcessTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(PostProcessTest PotatoEngine glad glfw)
 
+# 延遲光照 pass 測試（headless 光源打包；GL 段 SKIP）
+add_executable(DeferredLightingTest Examples/DeferredLightingTest.cpp)
+target_include_directories(DeferredLightingTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(DeferredLightingTest PotatoEngine glad glfw)
+
+# 延遲渲染管線 facade 整合測試（GL 段無顯示自行 SKIP）
+add_executable(DeferredRendererTest Examples/DeferredRendererTest.cpp)
+target_include_directories(DeferredRendererTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(DeferredRendererTest PotatoEngine glad glfw)
+
 # 人物立繪產生器：VRM/glTF → 離屏渲染 → PNG（需 GL 環境，屬工具非測試）
 add_executable(PortraitRenderer Examples/PortraitRenderer.cpp)
 target_include_directories(PortraitRenderer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -684,6 +699,8 @@ set(POTATO_TESTS
     SSAOTest
     ShadowTest
     PostProcessTest
+    DeferredLightingTest
+    DeferredRendererTest
 )
 foreach(test_name IN LISTS POTATO_TESTS)
     if(TARGET ${test_name})
