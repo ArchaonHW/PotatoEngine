@@ -197,7 +197,9 @@ void Camera::UpdateVectors() {
 
 void Camera::UpdateProjectionMatrix() {
     if (projectionType == CameraProjection::Perspective) {
-        projectionMatrix = Matrix4::Perspective(fov, aspect, nearPlane, farPlane);
+        // SetPerspective 收角度；Matrix4::Perspective 吃弧度（Tan(fov*0.5)）
+        projectionMatrix =
+            Matrix4::Perspective(fov * DEG_TO_RAD, aspect, nearPlane, farPlane);
     } else {
         projectionMatrix = Matrix4::Orthographic(orthoLeft, orthoRight, orthoBottom, orthoTop, nearPlane, farPlane);
     }
