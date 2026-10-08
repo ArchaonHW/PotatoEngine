@@ -439,6 +439,9 @@ protected:
     void ProcessPerceptionQueue();
     void UpdateMemoryAccessibility();
     float CalculateKnowledgeUsefulness(const std::string& knowledge);
+    // taskMutex 已持有時的任務完成路徑——ProcessCurrentTask 系列在鎖內
+    // 必須走這裡，不能呼叫會再上鎖的 CompleteTask（std::mutex 非遞歸）。
+    void CompleteTaskUnlocked(const std::string& result);
 };
 
 /**

@@ -69,7 +69,10 @@ void AIAgent::AssignTask(const AgentTask& task) {
 
 void AIAgent::CompleteTask(const std::string& result) {
     std::lock_guard<std::mutex> lock(taskMutex);
-    
+    CompleteTaskUnlocked(result);
+}
+
+void AIAgent::CompleteTaskUnlocked(const std::string& result) {
     if (currentTaskIndex >= 0 && currentTaskIndex < static_cast<int>(tasks.size())) {
         tasks[currentTaskIndex].status = TaskStatus::Completed;
         tasks[currentTaskIndex].result = result;
@@ -145,7 +148,7 @@ void AIAgent::ProcessCurrentTask() {
         
         if (task.progress >= 1.0f) {
             task.progress = 1.0f;
-            CompleteTask("任務完成");
+            CompleteTaskUnlocked("任務完成");
         }
     }
 }
@@ -1848,7 +1851,7 @@ void DeveloperAgent::ProcessCurrentTask() {
         if (task.status == TaskStatus::InProgress && task.category == "Code Generation") {
             std::string code = GenerateCode(task.description);
             if (!code.empty()) {
-                CompleteTask("生成代碼: " + code);
+                CompleteTaskUnlocked("生成代碼: " + code);
             }
         }
     }
@@ -1896,7 +1899,7 @@ void DesignerAgent::ProcessCurrentTask() {
         if (task.status == TaskStatus::InProgress && task.category == "Design") {
             std::string design = GenerateDesign(task.description);
             if (!design.empty()) {
-                CompleteTask("生成設計: " + design);
+                CompleteTaskUnlocked("生成設計: " + design);
             }
         }
     }
@@ -1950,7 +1953,7 @@ void AnalystAgent::ProcessCurrentTask() {
         if (task.status == TaskStatus::InProgress && task.category == "Analysis") {
             std::string analysis = AnalyzeData(task.description);
             if (!analysis.empty()) {
-                CompleteTask("分析結果: " + analysis);
+                CompleteTaskUnlocked("分析結果: " + analysis);
             }
         }
     }
