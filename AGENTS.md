@@ -43,9 +43,14 @@ external（vendored：glad_gen/tinygltf/miniaudio/imgui submodule）
 - MinGW：`cmake -B build-mingw -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release`
   ；`if(MINGW)` 已加 `-static-libgcc -static-libstdc++ -static`。
 - MSVC：`cmake -B build -G "Visual Studio 18 2026" -A x64`。
-- 測試：`ctest -C Release`（白名單 `POTATO_TESTS`，40 項引擎層測試；
+- 測試：`ctest -C Release`（白名單 `POTATO_TESTS`，41 項引擎層測試；
   GL 依賴測試無顯示環境自行 SKIP）。
 - 本地驗證標準：MSVC 與 MinGW 皆建置+ctest 全綠。
+- 注意：repo 路徑含 CJK 時 `mingw32-make`（`Illegal byte sequence`）與
+  ninja 的 ANSI stat 都會失敗——用 junction 指到 ASCII 路徑再 configure：
+  `mklink /J F:\potato_pe F:\民國史詩\HWC\PotatoEngine`，
+  `cmake -S F:\potato_pe -B F:\potato_pe\build-ninja -G Ninja`
+  （GLFW 可重用 `-DFETCHCONTENT_SOURCE_DIR_GLFW=.../_deps/glfw-src`）。
 - `assets/neural/` 為 gitignore 排除的本機產物：`NeuralArtTool`
   以 MiniMax-H3 示範影片/風格 GIF 抽幀重訓 `.pnn`（sr2x/denoise/
   colorize/terrain/normalmap + 六種 INR 紋理場含 papercraft/handdrawn/

@@ -563,6 +563,16 @@ add_executable(GLSmokeTest Examples/GLSmokeTest.cpp)
 target_include_directories(GLSmokeTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(GLSmokeTest PotatoEngine glad glfw)
 
+# SSAO/G-Buffer 測試（headless kernel/noise；GL 段無顯示自行 SKIP）
+add_executable(SSAOTest Examples/SSAOTest.cpp)
+target_include_directories(SSAOTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(SSAOTest PotatoEngine glad glfw)
+
+# 方向光陰影貼圖/PCF 測試（headless light-space 矩陣；GL 段 SKIP）
+add_executable(ShadowTest Examples/ShadowTest.cpp)
+target_include_directories(ShadowTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(ShadowTest PotatoEngine glad glfw)
+
 # 人物立繪產生器：VRM/glTF → 離屏渲染 → PNG（需 GL 環境，屬工具非測試）
 add_executable(PortraitRenderer Examples/PortraitRenderer.cpp)
 target_include_directories(PortraitRenderer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -666,6 +676,8 @@ set(POTATO_TESTS
     SynthDataDemo
     QuasiModelsTest
     UnsolvedBatch3Test
+    SSAOTest
+    ShadowTest
 )
 foreach(test_name IN LISTS POTATO_TESTS)
     if(TARGET ${test_name})
