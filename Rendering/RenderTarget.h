@@ -46,6 +46,9 @@ public:
     bool IsValid() const { return fbo != 0; }
     int GetWidth() const { return width; }
     int GetHeight() const { return height; }
+    // FBO id——供 DeferredRenderer::RenderFrame 等「輸出到指定 framebuffer」
+    // 的管線端點直接綁定
+    uint32 GetFBO() const { return fbo; }
     // color attachment 的 GL texture id（後處理採樣/跨 pass 輸入）
     uint32 GetColorTexture() const { return colorTex; }
     uint32 GetDepthRenderbuffer() const { return depthRb; }
