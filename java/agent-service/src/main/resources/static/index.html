@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Potato Engine AI Agent</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: "Microsoft JhengHei", "Segoe UI", sans-serif;
+         background: #14171c; color: #dfe3ea; padding: 16px; }
+  h1 { font-size: 18px; margin-bottom: 12px; }
+  .layout { display: flex; gap: 16px; flex-wrap: wrap; }
+  .panel { background: #1c2129; border: 1px solid #2c3440; border-radius: 8px;
+           padding: 12px; }
+  .controls { width: 250px; }
+  .controls label { display: block; font-size: 12px; color: #9aa5b5;
+                    margin-top: 8px; }
+  .controls input, .controls select { width: 100%; background: #14171c;
+      color: #dfe3ea; border: 1px solid #3a4353; border-radius: 4px;
+      padding: 5px 6px; margin-top: 2px; }
+  .controls .row { display: flex; gap: 8px; }
+  button { width: 100%; margin-top: 8px; padding: 7px; border: 0;
+           border-radius: 4px; cursor: pointer; font-weight: bold; }
+  .primary { background: #2f7d4f; color: #fff; }
+  .secondary { background: #31517c; color: #fff; }
+  .danger { background: #8c3a3a; color: #fff; }
+  button:disabled { opacity: .4; cursor: default; }
+  canvas { background: #10131a; border: 1px solid #2c3440; border-radius: 8px; }
+  #stats { font-size: 12px; line-height: 1.7; min-width: 210px; }
+  #status { font-size: 12px; color: #9aa5b5; margin-bottom: 8px; }
+  #status.ok { color: #6fcF97; }
+  #status.err { color: #e07a7a; }
+  .bar-row { display: flex; align-items: center; gap: 6px; font-size: 11px;
+             margin-top: 3px; }
+  .bar-row span { width: 34px; }
+  .bar { height: 10px; background: #31517c; border-radius: 2px; min-width: 1px; }
+</style>
+</head>
+<body>
+<h1>Potato Engine AI Agent — Spring Cloud 呈現層</h1>
+<div id="status">連線中…</div>
+<div class="layout">
+  <div class="panel controls">
+    <label>演算法
+      <select id="algo">
+        <option value="dqn" selected>DQN</option>
+        <option value="qlearning">Q-Learning</option>
+        <option value="pg">Policy Gradient</option>
+        <option value="ac">Actor-Critic</option>
+      </select></label>
+    <div class="row">
+      <label style="flex:1">地圖邊長<input id="gridSize" type="number" value="6" min="2" max="20"></label>
+      <label style="flex:1">Seed<input id="seed" type="number" value="-1"></label>
+    </div>
+    <label><input id="randMaps" type="checkbox" style="width:auto"> 每回合隨機地圖（泛化）</label>
+    <div class="row">
+      <label style="flex:1">回合數<input id="episodes" type="number" value="50" min="1"></label>
+      <label style="flex:1">每回合步數上限<input id="maxSteps" type="number" value="100" min="1"></label>
+    </div>
+    <label>每步間隔 ms<input id="delayMs" type="number" value="80" min="0"></label>
+    <label>模型路徑<input id="modelPath" placeholder="trained_agent.pdqn"></label>
+    <button class="secondary" id="btnCreate">建立 Session</button>
+    <button class="primary" id="btnTrain" disabled>開始訓練</button>
+    <button class="secondary" id="btnEval" disabled>評估演示</button>
+    <button class="danger" id="btnStop" disabled>停止</button>
+    <button class="secondary" id="btnSave" disabled>儲存模型</button>
+    <button class="secondary" id="btnLoad" disabled>載入模型</button>
+  </div>
+  <div>
+    <canvas id="cv" width="520" height="520"></canvas>
+  </div>
+  <div class="panel">
+    <div id="stats">尚無資料</div>
+    <canvas id="chart" width="210" height="110"></canvas>
+    <div id="values"></div>
+  </div>
+</div>
+<script>
+let sessionId = null, ws = null, grid = null, agent = {x:0,y:0};
+let rewards = [], successes = 0, episodesDone = 0, running = false;
+const $ = id => document.getElementById(id);
+const cv = $('cv'), ctx = cv.getContext('2d');
+const statusEl = $('status');
+
+function setStatus(msg, cls) { statusEl.textContent = msg; statusEl.className = cls || ''; }
+
+async function api(path, opts) {
+  const r = await fetch('/api/agent' + path, opts);
+  if (!r.ok) { const e = await r.json().catch(()=>({error:r.statusText})); throw new Error(e.error); }
+  return r.json();
+}
+const post = (p, body) => api(p, {method:'POST', headers:{'Content-Type':'application/json'},
+                                  body: body === undefined ? '{}' : JSON.stringify(body)});
+
+async function init() {
+  try {
+    const st = await api('/status');
+    setStatus(st.nativeLoaded ? '原生引擎已載入 — 請建立 Session'
+                              : 'PotatoAgentJni.dll 未載入', st.nativeLoaded ? 'ok' : 'err');
+  } catch(e) { setStatus('agent-service 連線失敗: ' + e.message, 'err'); }
+  connectWs();
+}
+
+function connectWs() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  ws = new WebSocket(proto + '://' + location.host + '/ws/agent');
+  ws.onmessage = ev => onWs(JSON.parse(ev.data));
+  ws.onclose = () => { setStatus('WebSocket 斷線，2 秒後重連', 'err');
+                      setTimeout(connectWs, 2000); };
+}
+
+$('btnCreate').onclick = async () => {
+  try {
+    const r = await post('/sessions', {
+      algo: $('algo').value,
+      gridSize: +$('gridSize').value,
+      randMaps: $('randMaps').checked,
+      seed: +$('seed').value,
+      modelPath: $('modelPath').value || null
+    });
+    sessionId = r.id;
+    rewards = []; successes = 0; episodesDone = 0;
+    applyGrid(r.grid);
+    setStatus('Session 已建立: ' + r.id.slice(0,8) + '…', 'ok');
+    for (const id of ['btnTrain','btnEval','btnSave','btnLoad']) $(id).disabled = false;
+  } catch(e) { setStatus(e.message, 'err'); }
+};
+
+$('btnTrain').onclick = () => sendRun(true, true);
+$('btnEval').onclick  = () => sendRun(false, $('algo').value === 'pg');
+$('btnStop').onclick  = () => { if (ws && ws.readyState === 1) ws.send(JSON.stringify({cmd:'stop'})); };
+$('btnSave').onclick = async () => {
+  try { const r = await post(`/sessions/${sessionId}/model/save`, {path: $('modelPath').value || 'model.bin'});
+        setStatus(r.ok ? '模型已儲存' : '儲存失敗', r.ok ? 'ok' : 'err'); }
+  catch(e){ setStatus(e.message,'err'); }
+};
+$('btnLoad').onclick = async () => {
+  try { const r = await post(`/sessions/${sessionId}/model/load`, {path: $('modelPath').value || 'model.bin'});
+        setStatus(r.ok ? '模型已載入' : '載入失敗', r.ok ? 'ok' : 'err'); }
+  catch(e){ setStatus(e.message,'err'); }
+};
+
+function sendRun(learn, explore) {
+  if (!sessionId || !ws || ws.readyState !== 1) return;
+  ws.send(JSON.stringify({cmd:'run', sessionId,
+    episodes:+$('episodes').value, maxSteps:+$('maxSteps').value,
+    learn, explore, delayMs:+$('delayMs').value}));
+  running = true;
+  $('btnStop').disabled = false;
+}
+
+function onWs(m) {
+  switch (m.type) {
+    case 'runStart': rewards = []; successes = 0; episodesDone = 0; break;
+    case 'grid': applyGrid(m); break;
+    case 'step':
+      agent = {x:m.x, y:m.y};
+      draw(); drawValues(m.values);
+      break;
+    case 'episodeEnd':
+      episodesDone++;
+      if (m.success) successes++;
+      rewards.push(m.reward);
+      if (rewards.length > 300) rewards.shift();
+      updateStats(m.epsilon);
+      drawChart();
+      break;
+    case 'runEnd':
+      running = false; $('btnStop').disabled = true;
+      setStatus(`完成：${m.successes}/${m.episodes} 成功（${m.successRate.toFixed(1)}%）` +
+                (m.stopped ? ' — 已手動停止' : ''), 'ok');
+      break;
+    case 'error': setStatus(m.message, 'err'); break;
+  }
+}
+
+function applyGrid(g) {
+  grid = g; agent = {x:g.x, y:g.y};
+  draw();
+}
+
+function draw() {
+  if (!grid) return;
+  const cell = cv.width / grid.w;
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  ctx.strokeStyle = '#2c3440';
+  for (let i = 0; i <= grid.w; i++) {
+    ctx.beginPath(); ctx.moveTo(i*cell,0); ctx.lineTo(i*cell,cv.height); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0,i*cell); ctx.lineTo(cv.width,i*cell); ctx.stroke();
+  }
+  ctx.fillStyle = '#39414f';
+  for (const [ox,oy] of grid.obstacles) ctx.fillRect(ox*cell+1, oy*cell+1, cell-2, cell-2);
+  ctx.fillStyle = '#c9a227';
+  ctx.fillRect(grid.goalX*cell+cell*0.15, grid.goalY*cell+cell*0.15, cell*0.7, cell*0.7);
+  ctx.fillStyle = '#6fcf97';
+  ctx.beginPath();
+  ctx.arc(agent.x*cell+cell/2, agent.y*cell+cell/2, cell*0.3, 0, Math.PI*2);
+  ctx.fill();
+}
+
+function drawValues(v) {
+  const names = ['up','down','left','right'];
+  const max = Math.max(1e-6, ...v.map(Math.abs));
+  $('values').innerHTML = v.map((x,i) =>
+    `<div class="bar-row"><span>${names[i]}</span>` +
+    `<div class="bar" style="width:${(Math.abs(x)/max*140).toFixed(0)}px"></div>` +
+    `<span>${x.toFixed(3)}</span></div>`).join('');
+}
+
+function updateStats(eps) {
+  const rate = episodesDone ? (100*successes/episodesDone).toFixed(1) : '0.0';
+  const last = rewards.length ? rewards[rewards.length-1].toFixed(2) : '-';
+  $('stats').innerHTML =
+    `回合：${episodesDone}<br>成功：${successes}（${rate}%）<br>` +
+    `本回合 reward：${last}<br>` +
+    (eps >= 0 ? `ε：${eps.toFixed(3)}` : '');
+}
+
+function drawChart() {
+  const c = $('chart'), g = c.getContext('2d');
+  g.clearRect(0,0,c.width,c.height);
+  g.strokeStyle = '#2c3440'; g.strokeRect(0,0,c.width,c.height);
+  if (rewards.length < 2) return;
+  const lo = Math.min(...rewards), hi = Math.max(...rewards), span = hi-lo || 1;
+  g.strokeStyle = '#6fcf97'; g.beginPath();
+  rewards.forEach((r,i) => {
+    const x = i/(rewards.length-1)*(c.width-4)+2;
+    const y = c.height-4 - (r-lo)/span*(c.height-8);
+    i ? g.lineTo(x,y) : g.moveTo(x,y);
+  });
+  g.stroke();
+}
+
+init();
+</script>
+</body>
+</html>

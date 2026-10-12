@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>com.potato</groupId>
+    <artifactId>potato-agent-parent</artifactId>
+    <version>1.0.0</version>
+    <packaging>pom</packaging>
+    <name>potato-agent-parent</name>
+    <description>Potato Engine AI Agent 的 Spring Boot/Spring Cloud 呈現層</description>
+
+    <modules>
+        <module>discovery-server</module>
+        <module>api-gateway</module>
+        <module>agent-service</module>
+    </modules>
+
+    <!-- 注意：~/.m2/settings.xml 的 minggo-rts profile 會覆寫
+         spring-boot.version/spring-cloud.version/maven.compiler.release，
+         故此專案使用自有屬性名並在 compiler plugin 直接固定 release -->
+    <properties>
+        <potato.java.version>25</potato.java.version>
+        <potato.boot.version>4.1.1</potato.boot.version>
+        <potato.cloud.version>2025.1.3</potato.cloud.version>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-dependencies</artifactId>
+                <version>${potato.boot.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.springframework.cloud</groupId>
+                <artifactId>spring-cloud-dependencies</artifactId>
+                <version>${potato.cloud.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <build>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-compiler-plugin</artifactId>
+                    <version>3.14.1</version>
+                    <configuration>
+                        <release>${potato.java.version}</release>
+                    </configuration>
+                </plugin>
+                <plugin>
+                    <groupId>org.springframework.boot</groupId>
+                    <artifactId>spring-boot-maven-plugin</artifactId>
+                    <version>${potato.boot.version}</version>
+                    <!-- 自訂 parent 不繼承 starter-parent 的 repackage 綁定，需自行宣告 -->
+                    <executions>
+                        <execution>
+                            <goals>
+                                <goal>repackage</goal>
+                            </goals>
+                        </execution>
+                    </executions>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+    </build>
+</project>

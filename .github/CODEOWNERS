@@ -1,0 +1,161 @@
+# MingGoRTS CODEOWNERS
+# 代碼審查者配置 - 定義各路徑的負責審查者
+# 格式: <pattern> <reviewer1> [<reviewer2> ...]
+
+# ============================================
+# 全局默認審查者
+# ============================================
+* @project-lead @tech-lead
+
+# ============================================
+# 核心系統
+# ============================================
+/Source/MingGoRTS/Core/ @core-team @project-lead
+/Source/MingGoRTS/GameFramework/ @core-team
+/Source/MingGoRTS/Player/ @core-team
+/Source/MingGoRTS/GameMode/ @core-team
+
+# ============================================
+# 至聖者指揮學系統
+# ============================================
+/Source/MingGoRTS/SageCommand/ @sage-team @project-lead
+/Source/MingGoRTS/SageCommand/MingRoleSystem.* @sage-team
+/Source/MingGoRTS/SageCommand/MingAuthoritySystem.* @sage-team
+/Source/MingGoRTS/SageCommand/MingStrategySystem.* @sage-team
+/Source/MingGoRTS/SageCommand/MingAntiFallSystem.* @sage-team
+
+# ============================================
+# 智能大腦系統
+# ============================================
+/Source/MingGoRTS/SageBrain/ @ai-team @sage-team
+/Source/MingGoRTS/Private/SageBrain/ @ai-team
+/Source/MingGoRTS/Public/SageBrain/ @ai-team
+
+# ============================================
+# AI 插件系統
+# ============================================
+/Plugins/MingAI/ @ai-team
+/Plugins/MingAI/Source/ @ai-team
+/Plugins/MingAI/Source/MingAI/ @ai-team
+
+# ============================================
+# 音頻系統
+# ============================================
+/Plugins/MingAudio/ @audio-team
+/Source/MingGoRTS/Audio/ @audio-team
+/Content/Audio/ @audio-team
+
+# ============================================
+# UI 系統
+# ============================================
+/Source/UI/ @ui-team
+/Plugins/MingUI/ @ui-team
+/Content/Art/UI/ @ui-team
+
+# ============================================
+# 區塊鏈系統
+# ============================================
+/Plugins/MingBlockchain/ @blockchain-team
+/Source/MingGoRTS/Blockchain/ @blockchain-team
+
+# ============================================
+# 成就系統
+# ============================================
+/Plugins/MingAchievements/ @gameplay-team
+/Source/MingGoRTS/Achievements/ @gameplay-team
+
+# ============================================
+# 任務系統
+# ============================================
+/Plugins/MingQuest/ @gameplay-team
+/Source/MingGoRTS/Quest/ @gameplay-team
+
+# ============================================
+# 記憶優化系統
+# ============================================
+/Source/MingGoRTS/Memory/ @core-team @optimization-team
+/Source/MingGoRTS/Public/MingMemoryOptimization.* @core-team
+/Source/MingGoRTS/Private/MingMemoryOptimization.* @core-team
+
+# ============================================
+# 網絡系統
+# ============================================
+/Source/MingGoRTS/Network/ @network-team @core-team
+/Source/MingGoRTS/Replication/ @network-team
+
+# ============================================
+# 工具與開發流程
+# ============================================
+/Tools/ @devops-team @tools-team
+/Tools/build/ @devops-team
+/Tools/workflow/ @devops-team @project-lead
+/Tools/test/ @qa-team @devops-team
+/Tools/api/ @api-team
+
+# ============================================
+# CI/CD 配置
+# ============================================
+/.github/workflows/ @devops-team
+/.github/ @project-lead @devops-team
+
+# ============================================
+# 文檔
+# ============================================
+/docs/ @docs-team @project-lead
+/docs/01_Project_Management/ @project-lead
+/docs/02_Development_Guides/ @tech-lead @docs-team
+/docs/03_Game_Design/ @design-team @project-lead
+
+# ============================================
+# 配置檔案
+# ============================================
+/Config/ @devops-team @core-team
+*.ini @devops-team
+*.uplugin @devops-team @plugin-team
+
+# ============================================
+# 報告與任務追蹤
+# ============================================
+/Reports/ @project-lead @pm-team
+/Tasks/ @project-lead @devops-team
+/SprintCompletion/ @project-lead @pm-team
+
+# ============================================
+# 特定重要文件
+# ============================================
+/MingGoRTS.uproject @project-lead @tech-lead
+*.Target.cs @devops-team @tech-lead
+*.Build.cs @devops-team
+/Source/MingGoRTS/MingGoRTS.Build.cs @core-team @devops-team
+
+# ============================================
+# 第三方庫與插件 (需要額外審查)
+# ============================================
+/ThirdParty/ @tech-lead @security-team
+/Plugins/*/ThirdParty/ @tech-lead
+
+# ============================================
+# 資源文件
+# ============================================
+/Content/Art/ @art-lead @asset-team
+/Content/AR/ @ar-team
+
+# ============================================
+# 測試文件
+# ============================================
+/Source/MingGoRTS/Tests/ @qa-team
+/Plugins/*/Tests/ @qa-team
+*Test*.cpp @qa-team
+*Test*.h @qa-team
+
+# ============================================
+# 安全相關
+# ============================================
+/Source/MingGoRTS/Security/ @security-team @project-lead
+/Source/MingGoRTS/Encryption/ @security-team
+
+# ============================================
+# 數據庫與存儲
+# ============================================
+/Source/MingGoRTS/Database/ @database-team @core-team
+/Source/MingGoRTS/SaveGame/ @gameplay-team @core-team

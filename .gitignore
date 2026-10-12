@@ -1,0 +1,196 @@
+# Potato Engine Git ignore
+
+# Compiled binary files
+*.dll
+*.exe
+*.so
+*.dylib
+*.o
+*.obj
+*.pdb
+*.ilk
+*.log
+*.vspscc
+*.vssscc
+*_i.c
+*_p.c
+*.idb
+*.suo
+*.user
+*.sln
+*.vcxproj*
+*.vcproj*
+*.ncb
+*.opensdf
+*.sdf
+*.sln.docstates
+*.cache
+*.pfx
+
+# CMake build outputs（/build*/ 涵蓋 build-mingw/build-msvc/build-ninja 等所有建置目錄）
+/build*/
+# build-video/ 是引擎模組目錄，非建置輸出——排除於 /build*/ 之外
+!/build-video/
+CMakeFiles/
+CMakeCache.txt
+CMakeScripts/
+cmake_install.cmake
+install_manifest.txt
+compile_commands.json
+CTestTestfile.cmake
+_deps/
+*.cmake
+
+# CMake build directories
+bin/
+lib/
+*.a
+*.lib
+
+# Rider/Visual Studio
+.idea/
+.vscode/
+.vs/
+*.sln.iml
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.orig
+
+# Secrets & credentials - NEVER commit these
+.env
+.env.*
+!.env.example
+!.env.sample
+*.pem
+*.key
+*.p12
+*.keystore
+*.jks
+id_rsa
+id_rsa.*
+id_ed25519
+id_ed25519.*
+*.asc
+*.gpg
+credentials*
+secrets.*
+*.secret
+*.token
+
+# Crash reports
+*.crashdump
+*.dmp
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Potato Engine specific
+Logs/
+TestReports/
+Generated/
+Temp/
+Backup_*
+
+# Allow specific JSON files
+!tasks.json
+!**/tasks.json
+
+# Allow GitHub config files
+!.github/**/*.json
+!.github/**/*.yml
+!.github/**/*.md
+# 演示程式執行輸出（replay/roster 等）
+duanqiao_replay.json
+duanqiao_roster.json
+*_replay.json
+*_roster.json
+audiotest_*.wav
+
+# VRM avatar binaries (downloaded from github.com/tary159951123/my-vrm-models*)
+# 正典目錄為 assets/avatars/（已入版控的三支模型）；assets/vrm/ 是重複副本，
+# 已移除並忽略以防再次誤存
+assets/avatars/
+assets/vrm/
+Testing/
+
+# SynthDataDemo 產生的訓練資料集（量大可再生，不入版控）
+output/synth_dataset/
+
+# PortraitRenderer 產生的立繪輸出（可再生）
+output/portraits/
+
+# Java services: Maven build output and embedded H2 database files
+**/target/
+services/data/
+
+# VrmLoadTest/訓練管線產生的資料集（可再生）
+output/vrm_dataset/
+
+# VideoDataDemo 影格資料集與影音管線產物（可再生，不入版控）
+output/video_ds/
+output/media_test/
+output/media_pipeline/
+
+# 臨時 patch/除錯檔
+*.patch
+nul
+
+# NeuralArt/NeuralGraphics 測試產物（可再生）
+.tmp_neural/
+assets/neural/
+neural_demo_out/
+
+# 測試/訓練輸出落盤與 IDE 狀態
+imgui.ini
+*_test.json
+trained_*.json
+
+# 打包輸出與影音/資料集產物
+dist/
+output/videos/
+output/video_ds_test/
+*_test_save.json
+output/vds_hq/
+
+# BMAD-METHOD 產物（屬其他專案，不入版控）
+.bmad/
+.bmad-core/
+_bmad/
+_bmad-*/
+bmad/
+bmad-agent/
+web-bundles/
+
+# posters/ — 海報工作檔，本機保留不入版控
+posters/
+
+# AI 工具紀錄/狀態（對話歷史、記憶、本機設定，不入版控）
+.windsurf/
+.codeium/
+.claude/
+.cursor/
+.codex/
+.gemini/
+.cline/
+.roo/
+.kiro/
+.ai/
+.aider*
+.aiexclude
+memories/
+ai_logs/

@@ -1,0 +1,671 @@
+// SynthDataDemo - 渲染 → 訓練資料產生 → 神經網路學習 端到端驗證
+//
+// 驗證「引擎渲染管線能產出可用於深度學習的標註資料」：
+//   1. 隱藏 GLFW 窗口 + FBO 離屏渲染（64x64 RGBA8）
+//   2. 正交相機俯視 3x3 格子，種子化 RNG 把著色立方體放進某格
+//      （含格內位置 / Y 軸旋轉 / 顏色 jitter）→ label = 格子編號 0-8
+//   3. glReadPixels 抓幀 → output/synth_dataset/ 寫出
+//      img_XXXX.png + img_XXXX_depth.png + img_XXXX_mask.png
+//      + labels.csv + dataset.json
+//      （C-1：depth renderbuffer 讀回，正交投影下深度為線性，
+//       PNG 灰階 = (1-depth)*255——近亮遠暗、背景為黑；
+//       C-2：第二 pass 以 instance-id 平色重渲染同場景，
+//       像素色 = instance id，背景黑）
+//   4. 每幀縮樣到 16x16 灰階（256 維輸入），餵進 AI::NeuralNetwork
+//      （256→48→9, sigmoid 輸出, MSE），144 train / 36 test
+//   5. 測試準確率 ≥ 0.80 → [PASS]
+//   6. 深度圖回歸驗證：16x16 深度 → (posX, posZ) 連續回歸
+//      （linear 輸出層），平均誤差 < 閾值 → [PASS]
+//
+// 無顯示環境：[SKIP] 並 exit 0（GLSmokeTest 慣例，CI/headless 不失敗）
+
+#include "Rendering/OpenGLRenderer.h"
+#include "Rendering/Shader.h"
+#include "Rendering/ImageCodec.h"
+#include "Rendering/RenderTarget.h"
+#include "AI/NeuralNetwork.h"
+#include "MathUtils/Matrix4.h"
+#include "MathUtils/Vector3.h"
+#include "Platform/GLFWSharedContext.h"
+
+#ifndef GLFW_INCLUDE_NONE
+#define GLFW_INCLUDE_NONE
+#endif
+#include <glad/glad.h>
+#include <GLFW/glfw3.h>
+
+#include <algorithm>
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <numeric>
+#include <random>
+#include <string>
+#include <vector>
+
+using namespace Potato;
+
+namespace {
+
+constexpr int kImageSize = 64;        // 渲染解析度 64x64
+constexpr int kFeatSize = 16;         // 特徵圖 16x16（4x4 區塊降採樣）
+constexpr int kInputDim = kFeatSize * kFeatSize;
+constexpr int kGridSide = 3;          // 3x3 格子
+constexpr int kNumClasses = kGridSide * kGridSide;
+constexpr int kNumSamples = 180;      // 每格 20 筆
+constexpr int kTrainPerClass = 16;    // 每格 16 train / 4 test
+constexpr unsigned int kSeed = 20260917u;
+constexpr float kCellSize = 1.0f;
+constexpr float kCubeHalf = 0.30f;
+constexpr const char* kOutDir = "output/synth_dataset";
+
+const char* kVertSrc = R"GLSL(
+#version 330 core
+layout(location=0) in vec3 aPos;
+layout(location=1) in vec3 aNormal;
+uniform mat4 model;
+uniform mat4 view;
+uniform mat4 projection;
+out vec3 vNormal;
+void main() {
+    vNormal = mat3(model) * aNormal;
+    gl_Position = projection * view * model * vec4(aPos, 1.0);
+}
+)GLSL";
+
+const char* kFragSrc = R"GLSL(
+#version 330 core
+in vec3 vNormal;
+uniform vec3 baseColor;
+out vec4 FragColor;
+void main() {
+    vec3 L = normalize(vec3(0.4, 0.85, 0.35));
+    float d = max(dot(normalize(vNormal), L), 0.0);
+    FragColor = vec4(baseColor * (0.35 + 0.65 * d), 1.0);
+}
+)GLSL";
+
+// C-2：instance-id 平色 pass——不做光照，像素直接輸出 instance 色
+const char* kMaskFragSrc = R"GLSL(
+#version 330 core
+uniform vec3 idColor;
+out vec4 FragColor;
+void main() {
+    FragColor = vec4(idColor, 1.0);
+}
+)GLSL";
+
+// 立方體（6 面 x 2 三角 = 36 頂點，非索引），半徑 kCubeHalf
+std::vector<Vertex> BuildCubeVertices() {
+    const float h = kCubeHalf;
+    const float p[6][4][3] = {
+        // +Y 頂面
+        {{-h, h,-h}, { h, h,-h}, { h, h, h}, {-h, h, h}},
+        // -Y 底面
+        {{-h,-h,-h}, {-h,-h, h}, { h,-h, h}, { h,-h,-h}},
+        // +Z 前面
+        {{-h,-h, h}, {-h, h, h}, { h, h, h}, { h,-h, h}},
+        // -Z 後面
+        {{ h,-h,-h}, { h, h,-h}, {-h, h,-h}, {-h,-h,-h}},
+        // +X 右面
+        {{ h,-h, h}, { h, h, h}, { h, h,-h}, { h,-h,-h}},
+        // -X 左面
+        {{-h,-h,-h}, {-h, h,-h}, {-h, h, h}, {-h,-h, h}},
+    };
+    const Vector3 n[6] = {
+        Vector3(0, 1, 0),  Vector3(0,-1, 0), Vector3(0, 0, 1),
+        Vector3(0, 0,-1),  Vector3(1, 0, 0), Vector3(-1,0, 0),
+    };
+    // 四邊形頂點順序為順時針（自外向內看），反轉三角形繞序使幾何法線朝外
+    const int tri[2][3] = {{0,2,1},{0,3,2}};
+
+    std::vector<Vertex> verts;
+    verts.reserve(36);
+    for (int f = 0; f < 6; ++f) {
+        for (const auto& t : tri) {
+            for (int k = 0; k < 3; ++k) {
+                Vertex v{};
+                v.position = Vector3(p[f][t[k]][0], p[f][t[k]][1], p[f][t[k]][2]);
+                v.normal = n[f];
+                verts.push_back(v);
+            }
+        }
+    }
+    return verts;
+}
+
+// 離屏渲染走 Rendering/RenderTarget（原手寫 FBO 已由引擎類取代）
+
+struct Sample {
+    int label = 0;
+    int cellCol = 0;
+    int cellRow = 0;
+    float posX = 0.0f;
+    float posZ = 0.0f;
+    float yawDeg = 0.0f;
+    float tint = 1.0f;
+    std::vector<unsigned char> rgba;   // 64*64*4，已翻轉為頂端列優先
+    std::vector<unsigned char> mask;   // 64*64*4，instance-id 色（同列序）
+    std::vector<float> depth;          // 64*64，glDepth [0,1]，同列序
+};
+
+// instance id → 平色（1 起；0 = 背景黑）。目前每幀只有一個 mesh，
+// 仍走完整 id→色映射，多物件場景直接沿用。
+Vector3 InstanceColor(int instanceId) {
+    // 高對比調色盤（取整到 8-bit 可辨色階）
+    static const Vector3 palette[] = {
+        Vector3(0.90f, 0.10f, 0.10f),  // 1 紅
+        Vector3(0.10f, 0.75f, 0.20f),  // 2 綠
+        Vector3(0.15f, 0.35f, 0.95f),  // 3 藍
+        Vector3(0.95f, 0.80f, 0.10f),  // 4 黃
+        Vector3(0.85f, 0.35f, 0.90f),  // 5 紫
+        Vector3(0.20f, 0.85f, 0.85f),  // 6 青
+        Vector3(0.95f, 0.55f, 0.15f),  // 7 橘
+        Vector3(0.65f, 0.65f, 0.65f),  // 8 灰
+    };
+    const int n = static_cast<int>(sizeof(palette) / sizeof(palette[0]));
+    return palette[(instanceId - 1) % n];
+}
+
+// 深度 float 圖 → 灰階 RGBA（近亮遠暗，背景=黑）
+void DepthToGray(const std::vector<float>& depth,
+                 std::vector<unsigned char>& outRGBA) {
+    const size_t n = depth.size();
+    outRGBA.resize(n * 4);
+    for (size_t i = 0; i < n; ++i) {
+        float g = 1.0f - depth[i];      // depth=1（far/背景）→ 黑
+        g = g < 0.0f ? 0.0f : (g > 1.0f ? 1.0f : g);
+        const unsigned char v = static_cast<unsigned char>(g * 255.0f);
+        outRGBA[i * 4 + 0] = v;
+        outRGBA[i * 4 + 1] = v;
+        outRGBA[i * 4 + 2] = v;
+        outRGBA[i * 4 + 3] = 255;
+    }
+}
+
+// 深度 float 圖 → 16x16 特徵（4x4 區塊平均「反轉深度」=1-d：
+// 背景 0、物體正訊號——輸入調節與亮度特徵一致，避免全 1 輸入
+// 使 relu 層壞死）
+std::vector<float> DepthToFeatures(const std::vector<float>& depth) {
+    std::vector<float> feat(kInputDim);
+    const int block = kImageSize / kFeatSize;
+    for (int fy = 0; fy < kFeatSize; ++fy) {
+        for (int fx = 0; fx < kFeatSize; ++fx) {
+            float sum = 0.0f;
+            for (int by = 0; by < block; ++by)
+                for (int bx = 0; bx < block; ++bx)
+                    sum += 1.0f - depth[static_cast<size_t>(fy * block + by) *
+                                        kImageSize + fx * block + bx];
+            feat[fy * kFeatSize + fx] = sum / (block * block);
+        }
+    }
+    return feat;
+}
+
+// RGBA → 16x16 灰階特徵（4x4 區塊平均亮度，正規化 [0,1]）
+std::vector<float> FrameToFeatures(const std::vector<unsigned char>& rgba) {
+    std::vector<float> feat(kInputDim);
+    const int block = kImageSize / kFeatSize;
+    for (int fy = 0; fy < kFeatSize; ++fy) {
+        for (int fx = 0; fx < kFeatSize; ++fx) {
+            float sum = 0.0f;
+            for (int by = 0; by < block; ++by) {
+                for (int bx = 0; bx < block; ++bx) {
+                    size_t px = (static_cast<size_t>(fy * block + by) *
+                                 kImageSize + fx * block + bx) * 4;
+                    sum += 0.299f * rgba[px] + 0.587f * rgba[px + 1] +
+                           0.114f * rgba[px + 2];
+                }
+            }
+            feat[fy * kFeatSize + fx] = sum / (block * block * 255.0f);
+        }
+    }
+    return feat;
+}
+
+} // namespace
+
+int main() {
+    printf("=== SynthDataDemo：渲染 -> 訓練資料 -> 神經網路 ===\n\n");
+
+    // ---- GL context（隱藏窗口），無顯示環境 SKIP ----
+    if (!glfwInit()) {
+        printf("  [SKIP] glfwInit 失敗——無顯示環境\n");
+        return 0;
+    }
+    glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+    GLFWwindow* win = glfwCreateWindow(64, 64, "synthdata", nullptr, nullptr);
+    if (!win) {
+        printf("  [SKIP] glfwCreateWindow 失敗\n");
+        glfwTerminate();
+        return 0;
+    }
+    glfwMakeContextCurrent(win);
+    if (!gladLoadGLLoader(reinterpret_cast<GLADloadproc>(glfwGetProcAddress))) {
+        printf("  [SKIP] gladLoadGLLoader 失敗\n");
+        DestroyGLFWWindow(win);
+        glfwTerminate();
+        return 0;
+    }
+
+    int exitCode = 1;
+    do {
+        // ---- 輸出目錄 ----
+        std::error_code ec;
+        std::filesystem::create_directories(kOutDir, ec);
+        if (ec) {
+            printf("  [FAIL] 無法建立輸出目錄 %s: %s\n", kOutDir,
+                   ec.message().c_str());
+            break;
+        }
+
+        // ---- 渲染資源 ----
+        Mesh cube;
+        cube.SetVertices(BuildCubeVertices());
+
+        AdvancedShader shader;
+        if (!shader.LoadFromSource(kVertSrc, kFragSrc)) {
+            printf("  [FAIL] shader 編譯失敗\n");
+            break;
+        }
+        AdvancedShader maskShader;
+        if (!maskShader.LoadFromSource(kVertSrc, kMaskFragSrc)) {
+            printf("  [FAIL] mask shader 編譯失敗\n");
+            break;
+        }
+
+        RenderTarget rt;
+        if (!rt.Create(kImageSize, kImageSize)) {
+            printf("  [FAIL] FBO 建立失敗\n");
+            break;
+        }
+
+        // 俯視帶小傾角（看得到 3D 體感，格子仍可分離）
+        Matrix4 view = Matrix4::LookAt(Vector3(0, 9.0f, 2.2f),
+                                       Vector3(0, 0, 0),
+                                       Vector3(0, 1, 0));
+        Matrix4 proj = Matrix4::Orthographic(-1.7f, 1.7f, -1.7f, 1.7f,
+                                             0.1f, 20.0f);
+
+        rt.Bind();
+        glEnable(GL_DEPTH_TEST);
+        glEnable(GL_CULL_FACE);
+        glClearColor(0.10f, 0.11f, 0.13f, 1.0f);
+
+        // ---- 產生 180 筆標註樣本 ----
+        std::mt19937 rng(kSeed);
+        std::uniform_real_distribution<float> jitPos(-0.28f, 0.28f);
+        std::uniform_real_distribution<float> jitYaw(0.0f, 360.0f);
+        std::uniform_real_distribution<float> jitTint(0.75f, 1.0f);
+
+        std::vector<Sample> samples(kNumSamples);
+        std::ofstream csv(std::string(kOutDir) + "/labels.csv");
+        if (!csv) {
+            printf("  [FAIL] labels.csv 無法開啟\n");
+            rt.Unbind();
+            break;
+        }
+        csv << "filename,depth_file,mask_file,label,cell_col,cell_row,pos_x,pos_z,yaw_deg\n";
+
+        bool renderFailed = false;
+        const size_t rowBytes = static_cast<size_t>(kImageSize) * 4;
+        for (int i = 0; i < kNumSamples; ++i) {
+            Sample& s = samples[i];
+            s.label = i % kNumClasses;
+            s.cellCol = s.label % kGridSide;
+            s.cellRow = s.label / kGridSide;
+            s.posX = (s.cellCol - 1) * kCellSize + jitPos(rng);
+            s.posZ = (s.cellRow - 1) * kCellSize + jitPos(rng);
+            s.yawDeg = jitYaw(rng);
+            s.tint = jitTint(rng);
+            s.rgba.resize(static_cast<size_t>(kImageSize) * kImageSize * 4);
+
+            // 渲染立方體
+            glClearColor(0.10f, 0.11f, 0.13f, 1.0f);
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+            Matrix4 model = Matrix4::Translation(s.posX, kCubeHalf, s.posZ) *
+                            Matrix4::RotationY(s.yawDeg * 3.14159265f / 180.0f);
+            shader.Bind();
+            shader.SetMat4("model", model);
+            shader.SetMat4("view", view);
+            shader.SetMat4("projection", proj);
+            float warm = s.tint;
+            shader.SetVec3("baseColor", Vector3(warm, warm * 0.92f,
+                                                warm * 0.80f));
+            cube.Draw();
+
+            // 讀回 + 翻轉列序
+            std::vector<unsigned char> raw;
+            glFinish();
+            rt.ReadColor(raw);
+            for (int y = 0; y < kImageSize; ++y) {
+                std::memcpy(s.rgba.data() + static_cast<size_t>(y) * rowBytes,
+                            raw.data() + static_cast<size_t>(kImageSize - 1 - y)
+                                           * rowBytes,
+                            rowBytes);
+            }
+
+            // 深度讀回（C-1）：GL_DEPTH_COMPONENT float [0,1]，同列序翻轉
+            s.depth.resize(static_cast<size_t>(kImageSize) * kImageSize);
+            {
+                std::vector<float> draw;
+                rt.ReadDepth(draw);
+                for (int y = 0; y < kImageSize; ++y) {
+                    std::memcpy(s.depth.data() +
+                                    static_cast<size_t>(y) * kImageSize,
+                                draw.data() +
+                                    static_cast<size_t>(kImageSize - 1 - y) *
+                                        kImageSize,
+                                static_cast<size_t>(kImageSize) *
+                                    sizeof(float));
+                }
+            }
+
+            // instance-seg 讀回（C-2）：同場景以 id 平色重渲染，
+            // 背景黑、物體像素 = instance 色
+            s.mask.resize(s.rgba.size());
+            {
+                glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+                glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+                maskShader.Bind();
+                maskShader.SetMat4("model", model);
+                maskShader.SetMat4("view", view);
+                maskShader.SetMat4("projection", proj);
+                maskShader.SetVec3("idColor", InstanceColor(1));
+                cube.Draw();
+
+                std::vector<unsigned char> mraw;
+                glFinish();
+                rt.ReadColor(mraw);
+                for (int y = 0; y < kImageSize; ++y) {
+                    std::memcpy(s.mask.data() +
+                                    static_cast<size_t>(y) * rowBytes,
+                                mraw.data() +
+                                    static_cast<size_t>(kImageSize - 1 - y) *
+                                        rowBytes,
+                                rowBytes);
+                }
+            }
+
+            // 寫 RGB PNG + 深度 PNG + CSV
+            char name[32];
+            std::snprintf(name, sizeof(name), "img_%04d.png", i);
+            std::string full = std::string(kOutDir) + "/" + name;
+            std::string err;
+            if (!ImageCodec::WritePNGFile(full, kImageSize, kImageSize,
+                                          s.rgba.data(), &err)) {
+                printf("  [FAIL] PNG 寫出失敗 %s: %s\n", full.c_str(),
+                       err.c_str());
+                renderFailed = true;
+                break;
+            }
+            char dname[40];
+            std::snprintf(dname, sizeof(dname), "img_%04d_depth.png", i);
+            std::vector<unsigned char> depthRGBA;
+            DepthToGray(s.depth, depthRGBA);
+            if (!ImageCodec::WritePNGFile(std::string(kOutDir) + "/" + dname,
+                                          kImageSize, kImageSize,
+                                          depthRGBA.data(), &err)) {
+                printf("  [FAIL] 深度 PNG 寫出失敗 %s: %s\n", dname,
+                       err.c_str());
+                renderFailed = true;
+                break;
+            }
+            char mname[40];
+            std::snprintf(mname, sizeof(mname), "img_%04d_mask.png", i);
+            if (!ImageCodec::WritePNGFile(std::string(kOutDir) + "/" + mname,
+                                          kImageSize, kImageSize,
+                                          s.mask.data(), &err)) {
+                printf("  [FAIL] mask PNG 寫出失敗 %s: %s\n", mname,
+                       err.c_str());
+                renderFailed = true;
+                break;
+            }
+            csv << name << ',' << dname << ',' << mname << ',' << s.label
+                << ',' << s.cellCol << ',' << s.cellRow << ',' << s.posX
+                << ',' << s.posZ << ',' << s.yawDeg << '\n';
+        }
+        csv.close();
+        rt.Unbind();
+        if (renderFailed) break;
+
+        // ---- dataset.json ----
+        {
+            std::ofstream js(std::string(kOutDir) + "/dataset.json");
+            if (!js) {
+                printf("  [FAIL] dataset.json 無法開啟\n");
+                break;
+            }
+            js << "{\n"
+               << "  \"name\": \"synth_grid_cube\",\n"
+               << "  \"task\": \"classification\",\n"
+               << "  \"seed\": " << kSeed << ",\n"
+               << "  \"image_width\": " << kImageSize << ",\n"
+               << "  \"image_height\": " << kImageSize << ",\n"
+               << "  \"samples\": " << kNumSamples << ",\n"
+               << "  \"num_classes\": " << kNumClasses << ",\n"
+               << "  \"class_names\": [\"cell_0\",\"cell_1\",\"cell_2\","
+                  "\"cell_3\",\"cell_4\",\"cell_5\",\"cell_6\",\"cell_7\","
+                  "\"cell_8\"],\n"
+               << "  \"label_format\": \"cell_index = row * 3 + col\",\n"
+               << "  \"feature_extract\": \"16x16 grayscale block-average\",\n"
+               << "  \"labels_file\": \"labels.csv\",\n"
+               << "  \"depth\": {\n"
+               << "    \"file_pattern\": \"img_XXXX_depth.png\",\n"
+               << "    \"format\": \"ortho linear depth, gray = (1-d)*255\",\n"
+               << "    \"near\": 0.1, \"far\": 20.0,\n"
+               << "    \"note\": \"near bright / far+background black\"\n"
+               << "  },\n"
+               << "  \"segmentation\": {\n"
+               << "    \"file_pattern\": \"img_XXXX_mask.png\",\n"
+               << "    \"format\": \"flat id color per instance, "
+                  "background black\",\n"
+               << "    \"instances_per_image\": 1,\n"
+               << "    \"instance_map\": {\n"
+               << "      \"1\": {\"mesh\": \"cube\", \"color_rgb\": "
+                  "[230, 26, 26], \"note\": \"foreground object; label in "
+                  "labels.csv\"}\n"
+               << "    }\n"
+               << "  }\n"
+               << "}\n";
+        }
+        // ---- C-2 驗證：每張 mask 有前景像素且色 = instance 1 ----
+        {
+            const Vector3 idc = InstanceColor(1);
+            const int er = static_cast<int>(idc.x * 255.0f + 0.5f);
+            const int eg = static_cast<int>(idc.y * 255.0f + 0.5f);
+            const int eb = static_cast<int>(idc.z * 255.0f + 0.5f);
+            int minFg = kImageSize * kImageSize, badColor = 0;
+            for (const auto& s : samples) {
+                int fg = 0;
+                for (size_t p = 0; p < s.mask.size(); p += 4) {
+                    const int r = s.mask[p], g = s.mask[p + 1],
+                              b = s.mask[p + 2];
+                    if (r == 0 && g == 0 && b == 0) continue;
+                    ++fg;
+                    if (std::abs(r - er) > 4 || std::abs(g - eg) > 4 ||
+                        std::abs(b - eb) > 4)
+                        ++badColor;
+                }
+                if (fg < minFg) minFg = fg;
+            }
+            printf("  [mask] 最小前景像素 %d，異色像素 %d\n", minFg,
+                   badColor);
+            if (minFg == 0 || badColor > 0) {
+                printf("  [FAIL] instance mask 驗證失敗\n");
+                break;
+            }
+        }
+
+        printf("  [OK] 資料集寫出：%d 筆 -> %s/\n", kNumSamples, kOutDir);
+
+        // ---- 特徵提取 + 分層 train/test 分割 ----
+        std::vector<std::vector<float>> feats(kNumSamples);
+        for (int i = 0; i < kNumSamples; ++i)
+            feats[i] = FrameToFeatures(samples[i].rgba);
+
+        std::vector<std::vector<float>> trainX, trainY, testX, testY;
+        std::mt19937 splitRng(kSeed ^ 0x5bd1e995u);
+        for (int c = 0; c < kNumClasses; ++c) {
+            std::vector<int> idx;
+            for (int i = 0; i < kNumSamples; ++i)
+                if (samples[i].label == c) idx.push_back(i);
+            std::shuffle(idx.begin(), idx.end(), splitRng);
+            for (size_t k = 0; k < idx.size(); ++k) {
+                std::vector<float> onehot(kNumClasses, 0.0f);
+                onehot[c] = 1.0f;
+                if (static_cast<int>(k) < kTrainPerClass) {
+                    trainX.push_back(feats[idx[k]]);
+                    trainY.push_back(onehot);
+                } else {
+                    testX.push_back(feats[idx[k]]);
+                    testY.push_back(onehot);
+                }
+            }
+        }
+        printf("  [OK] 分割：train %zu / test %zu（每類 %d/%d）\n",
+               trainX.size(), testX.size(), kTrainPerClass,
+               kNumSamples / kNumClasses - kTrainPerClass);
+
+        // ---- 訓練 ----
+        AI::NeuralNetwork net;
+        net.AddLayer(kInputDim, "relu");   // 層0：256->48, relu
+        net.AddLayer(48, "sigmoid");       // 層1：48->9, sigmoid
+        net.AddLayer(kNumClasses);
+        net.Build();
+        net.SetLossFunction("mse");
+
+        // NeuralLayer 內部以 random_device 播種（無法注入 seed）——
+        // 用本地 mt19937 產生 Xavier 初始化並覆寫，讓整個流程可重現
+        {
+            std::mt19937 initRng(kSeed ^ 0x853c49e6u);
+            for (const auto& layer : net.GetLayers()) {
+                const size_t in = layer->GetInputSize();
+                const size_t out = layer->GetOutputSize();
+                const float bound = std::sqrt(6.0f / (in + out));
+                std::uniform_real_distribution<float> wdist(-bound, bound);
+                std::vector<std::vector<float>> w(
+                    out, std::vector<float>(in));
+                for (auto& row : w)
+                    for (auto& v : row) v = wdist(initRng);
+                layer->SetWeights(w);
+                layer->SetBiases(std::vector<float>(out, 0.0f));
+            }
+        }
+
+        const int epochs = 200;
+        const float lr = 0.15f;
+        std::mt19937 trainRng(kSeed ^ 0x9e3779b9u);
+        for (int ep = 0; ep < epochs; ++ep) {
+            std::vector<size_t> order(trainX.size());
+            std::iota(order.begin(), order.end(), 0);
+            std::shuffle(order.begin(), order.end(), trainRng);
+            float loss = 0.0f;
+            for (size_t idx : order)
+                loss += net.TrainStep(trainX[idx], trainY[idx], lr);
+            if (ep % 20 == 0 || ep == epochs - 1)
+                printf("  epoch %3d  loss %.4f\n", ep,
+                       loss / trainX.size());
+        }
+
+        // ---- 評估 ----
+        int correct = 0;
+        for (size_t i = 0; i < testX.size(); ++i) {
+            int pred = net.PredictClass(testX[i]);
+            int truth = 0;
+            for (int c = 1; c < kNumClasses; ++c)
+                if (testY[i][c] > testY[i][truth]) truth = c;
+            if (pred == truth) ++correct;
+        }
+        float acc = static_cast<float>(correct) / testX.size();
+        printf("\n  測試準確率：%d/%zu = %.1f%%（門檻 80%%）\n",
+               correct, testX.size(), acc * 100.0f);
+
+        if (acc < 0.80f) {
+            printf("  [FAIL] 準確率不足——渲染資料未能被學習\n");
+            break;
+        }
+        printf("  [PASS] 渲染 -> 資料 -> 學習 端到端通路驗證成功\n");
+
+        // ---- C-1：深度圖回歸驗證 ----
+        // 16x16 深度特徵 → (posX, posZ) 連續回歸（linear 輸出）。
+        // 座標範圍 [-1.28, 1.28]，正規化到 [0,1]。
+        {
+            std::vector<std::vector<float>> dTrainX, dTrainY,
+                                            dTestX, dTestY;
+            const float kNorm = 2.56f; // posX/Z ∈ [-1.28,1.28] → [0,1]
+            for (int c = 0; c < kNumClasses; ++c) {
+                std::vector<int> idx;
+                for (int i = 0; i < kNumSamples; ++i)
+                    if (samples[i].label == c) idx.push_back(i);
+                std::shuffle(idx.begin(), idx.end(), splitRng);
+                for (size_t k = 0; k < idx.size(); ++k) {
+                    const Sample& s = samples[idx[k]];
+                    std::vector<float> y = {
+                        (s.posX + 1.28f) / kNorm,
+                        (s.posZ + 1.28f) / kNorm};
+                    if (static_cast<int>(k) < kTrainPerClass) {
+                        dTrainX.push_back(DepthToFeatures(s.depth));
+                        dTrainY.push_back(y);
+                    } else {
+                        dTestX.push_back(DepthToFeatures(s.depth));
+                        dTestY.push_back(y);
+                    }
+                }
+            }
+
+            AI::NeuralNetwork dnet;
+            dnet.AddLayer(kInputDim, "relu");   // 與分類器同構：
+            dnet.AddLayer(48, "sigmoid");       // 256→48 sigmoid→2
+            // 輸出層必須 linear——預設 relu 會在加權和 <0 時梯度歸零，
+            // 網路塌縮成預測常數（loss 躺平）
+            dnet.AddLayer(2, "linear");
+            dnet.Build(kSeed ^ 0x51ab3f9du);
+            dnet.SetLossFunction("mse");
+
+            std::mt19937 dTrainRng(kSeed ^ 0x165667b1u);
+            const int dEpochs = 200;
+            const float dLr = 0.1f;
+            for (int ep = 0; ep < dEpochs; ++ep) {
+                std::vector<size_t> order(dTrainX.size());
+                std::iota(order.begin(), order.end(), 0);
+                std::shuffle(order.begin(), order.end(), dTrainRng);
+                float loss = 0.0f;
+                for (size_t idx : order)
+                    loss += dnet.TrainStep(dTrainX[idx], dTrainY[idx], dLr);
+                if (ep % 50 == 0 || ep == dEpochs - 1)
+                    printf("  depth epoch %3d  loss %.5f\n", ep,
+                           loss / dTrainX.size());
+            }
+
+            // 評估：世界座標平均誤差（格寬 1.0）
+            double errSum = 0.0;
+            for (size_t i = 0; i < dTestX.size(); ++i) {
+                const auto pred = dnet.Predict(dTestX[i]);
+                errSum += std::fabs(pred[0] - dTestY[i][0]) * kNorm +
+                          std::fabs(pred[1] - dTestY[i][1]) * kNorm;
+            }
+            const double meanErr = errSum / (dTestX.size() * 2);
+            printf("  深度回歸平均誤差：%.4f（格寬 1.0，門檻 0.15）\n",
+                   meanErr);
+            if (meanErr < 0.15) {
+                printf("  [PASS] 深度圖可回歸空間位置（C-1 驗證）\n");
+            } else {
+                printf("  [FAIL] 深度回歸誤差過大\n");
+                break;
+            }
+        }
+
+        exitCode = 0;
+    } while (false);
+
+    DestroyGLFWWindow(win);
+    glfwTerminate();
+    return exitCode;
+}

@@ -1,0 +1,714 @@
+/**
+ * Potato Engine Neural Network Implementation
+ */
+
+#include "NeuralNetwork.h"
+#include <algorithm>
+#include <sstream>
+#include <stdexcept>
+
+namespace Potato {
+namespace AI {
+
+// ============================================================================
+// Activation Functions
+// ============================================================================
+
+std::vector<float> Activation::Softmax(const std::vector<float>& x) {
+    std::vector<float> result(x.size());
+    
+    // Find max for numerical stability
+    float maxVal = *std::max_element(x.begin(), x.end());
+    
+    // Compute exp(x - max) and sum
+    float sum = 0.0f;
+    for (size_t i = 0; i < x.size(); i++) {
+        result[i] = std::exp(x[i] - maxVal);
+        sum += result[i];
+    }
+    
+    // Normalize
+    for (size_t i = 0; i < result.size(); i++) {
+        result[i] /= sum;
+    }
+    
+    return result;
+}
+
+// ============================================================================
+// Loss Functions
+// ============================================================================
+
+float Loss::MSE(const std::vector<float>& predicted, const std::vector<float>& target) {
+    float sum = 0.0f;
+    for (size_t i = 0; i < predicted.size(); i++) {
+        float diff = predicted[i] - target[i];
+        sum += diff * diff;
+    }
+    return sum / static_cast<float>(predicted.size());
+}
+
+std::vector<float> Loss::MSEGradient(const std::vector<float>& predicted, 
+                                       const std::vector<float>& target) {
+    std::vector<float> gradient(predicted.size());
+    for (size_t i = 0; i < predicted.size(); i++) {
+        gradient[i] = 2.0f * (predicted[i] - target[i]) / static_cast<float>(predicted.size());
+    }
+    return gradient;
+}
+
+float Loss::CrossEntropy(const std::vector<float>& predicted, const std::vector<float>& target) {
+    float sum = 0.0f;
+    for (size_t i = 0; i < predicted.size(); i++) {
+        sum -= target[i] * std::log(predicted[i] + 1e-10f);
+    }
+    return sum;
+}
+
+std::vector<float> Loss::CrossEntropyGradient(const std::vector<float>& predicted,
+                                                const std::vector<float>& target) {
+    std::vector<float> gradient(predicted.size());
+    for (size_t i = 0; i < predicted.size(); i++) {
+        gradient[i] = -target[i] / (predicted[i] + 1e-10f);
+    }
+    return gradient;
+}
+
+float Loss::BinaryCrossEntropy(float predicted, float target) {
+    return -(target * std::log(predicted + 1e-10f) + 
+             (1.0f - target) * std::log(1.0f - predicted + 1e-10f));
+}
+
+float Loss::BinaryCrossEntropyGradient(float predicted, float target) {
+    return -(target / (predicted + 1e-10f) - (1.0f - target) / (1.0f - predicted + 1e-10f));
+}
+
+float Loss::Huber(const std::vector<float>& predicted,
+                  const std::vector<float>& target, float delta) {
+    float sum = 0.0f;
+    for (size_t i = 0; i < predicted.size(); i++) {
+        float e = predicted[i] - target[i];
+        float ae = std::fabs(e);
+        sum += (ae <= delta) ? 0.5f * e * e : delta * (ae - 0.5f * delta);
+    }
+    return sum;
+}
+
+std::vector<float> Loss::HuberGradient(const std::vector<float>& predicted,
+                                       const std::vector<float>& target,
+                                       float delta) {
+    std::vector<float> grad(predicted.size());
+    for (size_t i = 0; i < predicted.size(); i++) {
+        float e = predicted[i] - target[i];
+        grad[i] = (std::fabs(e) <= delta) ? e : delta * (e > 0.0f ? 1.0f : -1.0f);
+    }
+    return grad;
+}
+
+// ============================================================================
+// Neural Layer
+// ============================================================================
+
+NeuralLayer::NeuralLayer(size_t inputSize, size_t outputSize, const std::string& activation)
+    : inputSize(inputSize)
+    , outputSize(outputSize)
+    , activationType(activation)
+    , rng(std::random_device{}()) {
+    
+    // Resize weights and biases
+    weights.resize(outputSize, std::vector<float>(inputSize));
+    biases.resize(outputSize);
+    
+    // Set activation function
+    if (activation == "sigmoid") {
+        this->activation = Activation::Sigmoid;
+        activationDerivative = Activation::SigmoidDerivative;
+    } else if (activation == "relu") {
+        this->activation = Activation::ReLU;
+        activationDerivative = Activation::ReLUDerivative;
+    } else if (activation == "tanh") {
+        this->activation = Activation::Tanh;
+        activationDerivative = Activation::TanhDerivative;
+    } else if (activation == "leaky_relu") {
+        this->activation = [](float x) { return Activation::LeakyReLU(x); };
+        activationDerivative = [](float x) { return Activation::LeakyReLUDerivative(x); };
+    } else if (activation == "elu") {
+        this->activation = [](float x) { return Activation::ELU(x); };
+        activationDerivative = [](float x) { return Activation::ELUDerivative(x); };
+    } else if (activation == "swish" || activation == "silu") {
+        this->activation = Activation::Swish;
+        activationDerivative = Activation::SwishDerivative;
+    } else if (activation == "linear" || activation == "none") {
+        // 恆等輸出——回歸型網路（高度/法線/RGB 連續值）需要無壓縮輸出層
+        this->activation = [](float x) { return x; };
+        activationDerivative = [](float) { return 1.0f; };
+    } else {
+        this->activation = Activation::ReLU;
+        activationDerivative = Activation::ReLUDerivative;
+    }
+    
+    // Initialize weights
+    InitializeWeights();
+}
+
+std::vector<float> NeuralLayer::Forward(const std::vector<float>& input) {
+    lastInput = input;
+    lastPreActivation.resize(outputSize);
+    lastOutput.resize(outputSize);
+
+    for (size_t i = 0; i < outputSize; i++) {
+        float sum = biases[i];
+        for (size_t j = 0; j < inputSize; j++) {
+            sum += weights[i][j] * input[j];
+        }
+        lastPreActivation[i] = sum;
+        lastOutput[i] = activation(sum);
+    }
+
+    return lastOutput;
+}
+
+std::vector<float> NeuralLayer::Backward(const std::vector<float>& gradient, float learningRate) {
+    std::vector<float> inputGradient(inputSize, 0.0f);
+
+    if (optimizer == "adam") {
+        // Adam：逐參數動量 + 變異數自適應。learningRate 當全域步長 α。
+        optStep++;
+        float bc1 = 1.0f - std::pow(optBeta1, static_cast<float>(optStep));
+        float bc2 = 1.0f - std::pow(optBeta2, static_cast<float>(optStep));
+        float lrHat = learningRate * std::sqrt(bc2) / bc1;
+        for (size_t i = 0; i < outputSize; i++) {
+            float delta = gradient[i] * activationDerivative(lastPreActivation[i]);
+            for (size_t j = 0; j < inputSize; j++) {
+                inputGradient[j] += weights[i][j] * delta;
+                float g = delta * lastInput[j];
+                optMW[i][j] = optBeta1 * optMW[i][j] + (1.0f - optBeta1) * g;
+                optVW[i][j] = optBeta2 * optVW[i][j] + (1.0f - optBeta2) * g * g;
+                weights[i][j] -= lrHat * optMW[i][j] / (std::sqrt(optVW[i][j]) + optEps);
+            }
+            float gb = delta;
+            optMB[i] = optBeta1 * optMB[i] + (1.0f - optBeta1) * gb;
+            optVB[i] = optBeta2 * optVB[i] + (1.0f - optBeta2) * gb * gb;
+            biases[i] -= lrHat * optMB[i] / (std::sqrt(optVB[i]) + optEps);
+        }
+        return inputGradient;
+    }
+
+    for (size_t i = 0; i < outputSize; i++) {
+        // 導數函數吃 pre-activation z——sigmoid/tanh 的導數定義在 z 上，
+        // 餵 lastOutput（已激活 y）會得到 σ(y)(1-σ(y)) 之類的錯誤梯度
+        float delta = gradient[i] * activationDerivative(lastPreActivation[i]);
+        
+        // Update weights
+        for (size_t j = 0; j < inputSize; j++) {
+            inputGradient[j] += weights[i][j] * delta;
+            weights[i][j] -= learningRate * delta * lastInput[j];
+        }
+        
+        // Update bias
+        biases[i] -= learningRate * delta;
+    }
+    
+    return inputGradient;
+}
+
+void NeuralLayer::SetOptimizer(const std::string& name,
+                               float beta1, float beta2, float eps) {
+    optimizer = name;
+    optBeta1 = beta1;
+    optBeta2 = beta2;
+    optEps = eps;
+    optStep = 0;
+    optMW.assign(outputSize, std::vector<float>(inputSize, 0.0f));
+    optVW.assign(outputSize, std::vector<float>(inputSize, 0.0f));
+    optMB.assign(outputSize, 0.0f);
+    optVB.assign(outputSize, 0.0f);
+}
+
+void NeuralLayer::SetSeed(unsigned int seed) {
+    rng.seed(seed);
+    InitializeWeights();
+}
+
+void NeuralLayer::SetWeights(const std::vector<std::vector<float>>& newWeights) {
+    weights = newWeights;
+}
+
+void NeuralLayer::SetBiases(const std::vector<float>& newBiases) {
+    biases = newBiases;
+}
+
+void NeuralLayer::InitializeWeights(float scale) {
+    std::normal_distribution<float> dist(0.0f, scale);
+    
+    for (size_t i = 0; i < outputSize; i++) {
+        for (size_t j = 0; j < inputSize; j++) {
+            weights[i][j] = dist(rng);
+        }
+        biases[i] = 0.0f;
+    }
+}
+
+// ============================================================================
+// Neural Network
+// ============================================================================
+
+NeuralNetwork::NeuralNetwork()
+    : built(false)
+    , lossFunction("mse")
+    , rng(std::random_device{}()) {
+    InitializeLossFunction();
+}
+
+void NeuralNetwork::AddLayer(size_t size, const std::string& activation) {
+    if (built) {
+        throw std::runtime_error("Cannot add layers after network is built");
+    }
+    layerSizes.push_back(size);
+    layerActivations.push_back(activation);
+}
+
+void NeuralNetwork::Build() {
+    if (layerSizes.size() < 2) {
+        throw std::runtime_error("Network must have at least 2 layers (input and output)");
+    }
+
+    for (size_t i = 0; i < layerSizes.size() - 1; i++) {
+        size_t inputSize = layerSizes[i];
+        size_t outputSize = layerSizes[i + 1];
+        std::string activation = layerActivations[i];
+
+        auto layer = std::make_unique<NeuralLayer>(inputSize, outputSize, activation);
+        // rng 每層各取一個 seed——Build(seed) 下各層初始化可重現且彼此獨立
+        layer->SetSeed(rng());
+        layers.push_back(std::move(layer));
+    }
+
+    built = true;
+}
+
+void NeuralNetwork::Build(unsigned int seed) {
+    rng.seed(seed);
+    Build();
+}
+
+std::vector<float> NeuralNetwork::Forward(const std::vector<float>& input) {
+    if (!built) {
+        throw std::runtime_error("Network must be built before forward pass");
+    }
+    // 輸入維度不符會越界讀 input——載入外部權重檔時尤其容易踩到
+    if (!layers.empty() && input.size() != layers.front()->GetInputSize()) {
+        throw std::runtime_error("Input size does not match network input layer");
+    }
+    
+    std::vector<float> current = input;
+    
+    for (auto& layer : layers) {
+        current = layer->Forward(current);
+    }
+    
+    return current;
+}
+
+float NeuralNetwork::TrainStep(const std::vector<float>& input,
+                                const std::vector<float>& target,
+                                float learningRate) {
+    // Forward pass
+    std::vector<float> predicted = Forward(input);
+    
+    // Compute loss gradient
+    std::vector<float> gradient = lossGradientFn(predicted, target);
+    
+    // Backward pass
+    for (int i = static_cast<int>(layers.size()) - 1; i >= 0; i--) {
+        gradient = layers[i]->Backward(gradient, learningRate);
+    }
+    
+    // Compute loss
+    return lossFn(predicted, target);
+}
+
+void NeuralNetwork::BackwardFromOutput(const std::vector<float>& input,
+                                       const std::vector<float>& outputGrad,
+                                       float learningRate) {
+    // Forward 只為填各層的 lastInput/lastPreActivation cache
+    Forward(input);
+
+    std::vector<float> gradient = outputGrad;
+    for (int i = static_cast<int>(layers.size()) - 1; i >= 0; i--) {
+        gradient = layers[i]->Backward(gradient, learningRate);
+    }
+}
+
+void NeuralNetwork::Train(const std::vector<std::vector<float>>& inputs,
+                          const std::vector<std::vector<float>>& targets,
+                          size_t epochs,
+                          float learningRate,
+                          size_t batchSize) {
+    if (!built) {
+        throw std::runtime_error("Network must be built before training");
+    }
+    
+    if (inputs.size() != targets.size()) {
+        throw std::runtime_error("Inputs and targets must have the same size");
+    }
+    
+    size_t datasetSize = inputs.size();
+    
+    for (size_t epoch = 0; epoch < epochs; epoch++) {
+        float totalLoss = 0.0f;
+        
+        // Shuffle indices
+        std::vector<size_t> indices(datasetSize);
+        for (size_t i = 0; i < datasetSize; i++) indices[i] = i;
+        std::shuffle(indices.begin(), indices.end(), rng);
+        
+        // Mini-batch training
+        for (size_t i = 0; i < datasetSize; i += batchSize) {
+            size_t batchEnd = std::min(i + batchSize, datasetSize);
+            
+            for (size_t j = i; j < batchEnd; j++) {
+                size_t idx = indices[j];
+                float loss = TrainStep(inputs[idx], targets[idx], learningRate);
+                totalLoss += loss;
+            }
+        }
+        
+        float avgLoss = totalLoss / static_cast<float>(datasetSize);
+        
+        // Could add logging here
+        if (epoch % 100 == 0) {
+            // Log progress
+        }
+    }
+}
+
+std::vector<float> NeuralNetwork::Predict(const std::vector<float>& input) {
+    return Forward(input);
+}
+
+int NeuralNetwork::PredictClass(const std::vector<float>& input) {
+    std::vector<float> output = Forward(input);
+    return std::distance(output.begin(), 
+                        std::max_element(output.begin(), output.end()));
+}
+
+float NeuralNetwork::Evaluate(const std::vector<std::vector<float>>& inputs,
+                               const std::vector<std::vector<float>>& targets) {
+    float totalLoss = 0.0f;
+    
+    for (size_t i = 0; i < inputs.size(); i++) {
+        std::vector<float> predicted = Forward(inputs[i]);
+        totalLoss += lossFn(predicted, targets[i]);
+    }
+    
+    return totalLoss / static_cast<float>(inputs.size());
+}
+
+std::string NeuralNetwork::Serialize() const {
+    std::stringstream ss;
+    
+    // 格式版本標頭：v1 起含激活類型行；無標頭的舊檔按 legacy 解析
+    ss << "PNNv1\n";
+    ss << built << "\n";
+    ss << lossFunction << "\n";
+    ss << layerSizes.size() << "\n";
+    
+    for (size_t size : layerSizes) {
+        ss << size << " ";
+    }
+    ss << "\n";
+    
+    // 每層的激活類型——Deserialize 需要還原，否則全部落成 relu
+    // 會讓 sigmoid/tanh/linear 輸出層在載入後行為改變
+    for (size_t i = 0; i < layers.size(); i++) {
+        ss << layers[i]->GetActivationType() << " ";
+    }
+    ss << "\n";
+    
+    for (size_t i = 0; i < layers.size(); i++) {
+        const auto& layer = layers[i];
+        const auto& weights = layer->GetWeights();
+        const auto& biases = layer->GetBiases();
+        
+        ss << layer->GetInputSize() << " " << layer->GetOutputSize() << "\n";
+        
+        for (const auto& row : weights) {
+            for (float w : row) {
+                ss << w << " ";
+            }
+            ss << "\n";
+        }
+        
+        for (float b : biases) {
+            ss << b << " ";
+        }
+        ss << "\n";
+    }
+    
+    return ss.str();
+}
+
+bool NeuralNetwork::Deserialize(const std::string& data) {
+    std::stringstream ss(data);
+    
+    std::string tok;
+    ss >> tok;
+    const bool v1 = (tok == "PNNv1");
+    if (!v1) {
+        // legacy 格式：第一個 token 就是 built（0/1）
+        built = (tok == "1" || tok == "true");
+    } else {
+        ss >> built;
+    }
+    ss >> lossFunction;
+    
+    size_t numLayers = 0;
+    ss >> numLayers;
+    if (!ss || numLayers > 4096) return false;
+    
+    layerSizes.resize(numLayers);
+    for (size_t i = 0; i < numLayers; i++) {
+        ss >> layerSizes[i];
+    }
+    if (!ss) return false;
+    
+    // 激活類型（每個轉換層一個）；legacy 檔沒有這行——退回 relu
+    std::vector<std::string> activations(numLayers > 0 ? numLayers - 1 : 0, "relu");
+    if (v1) {
+        for (size_t i = 0; i < activations.size(); i++) {
+            std::string act;
+            if (!(ss >> act)) return false;
+            activations[i] = act;
+        }
+    }
+    
+    // Rebuild network
+    layers.clear();
+    for (size_t i = 0; i + 1 < layerSizes.size(); i++) {
+        size_t inputSize = layerSizes[i];
+        size_t outputSize = layerSizes[i + 1];
+        layers.push_back(std::make_unique<NeuralLayer>(
+            inputSize, outputSize, activations[i]));
+    }
+    
+    // Load weights
+    for (size_t i = 0; i < layers.size(); i++) {
+        size_t inputSize, outputSize;
+        ss >> inputSize >> outputSize;
+        if (!ss) return false;
+        if (inputSize != layers[i]->GetInputSize() ||
+            outputSize != layers[i]->GetOutputSize()) return false;
+        
+        std::vector<std::vector<float>> weights(outputSize, std::vector<float>(inputSize));
+        for (size_t j = 0; j < outputSize; j++) {
+            for (size_t k = 0; k < inputSize; k++) {
+                ss >> weights[j][k];
+            }
+        }
+        
+        std::vector<float> biases(outputSize);
+        for (size_t j = 0; j < outputSize; j++) {
+            ss >> biases[j];
+        }
+        if (!ss) return false;
+        
+        layers[i]->SetWeights(weights);
+        layers[i]->SetBiases(biases);
+    }
+    
+    built = true;
+    InitializeLossFunction();
+    return true;
+}
+
+void NeuralNetwork::CopyWeightsFrom(const NeuralNetwork& other) {
+    if (layers.size() != other.layers.size()) {
+        throw std::runtime_error("Cannot copy weights: layer count mismatch");
+    }
+    
+    for (size_t i = 0; i < layers.size(); i++) {
+        layers[i]->SetWeights(other.layers[i]->GetWeights());
+        layers[i]->SetBiases(other.layers[i]->GetBiases());
+    }
+}
+
+void NeuralNetwork::SetLossFunction(const std::string& lossType) {
+    lossFunction = lossType;
+    InitializeLossFunction();
+}
+
+void NeuralNetwork::SetOptimizer(const std::string& name,
+                                 float beta1, float beta2, float eps) {
+    for (auto& layer : layers) {
+        if (layer) layer->SetOptimizer(name, beta1, beta2, eps);
+    }
+}
+
+void NeuralNetwork::InitializeLossFunction() {
+    if (lossFunction == "mse") {
+        lossFn = Loss::MSE;
+        lossGradientFn = Loss::MSEGradient;
+    } else if (lossFunction == "cross_entropy") {
+        lossFn = Loss::CrossEntropy;
+        lossGradientFn = Loss::CrossEntropyGradient;
+    } else if (lossFunction == "huber") {
+        lossFn = [](const std::vector<float>& p, const std::vector<float>& t) {
+            return Loss::Huber(p, t);
+        };
+        lossGradientFn = [](const std::vector<float>& p, const std::vector<float>& t) {
+            return Loss::HuberGradient(p, t);
+        };
+    } else {
+        lossFn = Loss::MSE;
+        lossGradientFn = Loss::MSEGradient;
+    }
+}
+
+// ============================================================================
+// ConvLayer
+// ============================================================================
+
+ConvLayer::ConvLayer(size_t inputChannels, size_t outputChannels,
+                     size_t kernelSize, size_t stride, size_t padding)
+    : inputChannels(inputChannels)
+    , outputChannels(outputChannels)
+    , kernelSize(kernelSize)
+    , stride(stride)
+    , padding(padding) {
+    
+    // Initialize kernels
+    kernels.resize(outputChannels);
+    for (size_t oc = 0; oc < outputChannels; oc++) {
+        kernels[oc].resize(inputChannels);
+        for (size_t ic = 0; ic < inputChannels; ic++) {
+            kernels[oc][ic].resize(kernelSize, std::vector<float>(kernelSize));
+        }
+    }
+    
+    biases.resize(outputChannels, 0.0f);
+}
+
+std::vector<std::vector<std::vector<float>>> ConvLayer::Forward(
+    const std::vector<std::vector<std::vector<float>>>& input) {
+    
+    // Simplified implementation - actual implementation would compute convolution
+    // This is a placeholder for the full convolution operation
+    
+    size_t outputHeight = (input[0].size() + 2 * padding - kernelSize) / stride + 1;
+    size_t outputWidth = (input[0][0].size() + 2 * padding - kernelSize) / stride + 1;
+    
+    std::vector<std::vector<std::vector<float>>> output(
+        outputChannels,
+        std::vector<std::vector<float>>(outputHeight, std::vector<float>(outputWidth, 0.0f))
+    );
+    
+    return output;
+}
+
+std::vector<std::vector<std::vector<float>>> ConvLayer::Backward(
+    const std::vector<std::vector<std::vector<float>>>& gradient,
+    float learningRate) {
+    
+    // Placeholder for backward pass
+    return gradient;
+}
+
+// ============================================================================
+// PoolLayer
+// ============================================================================
+
+PoolLayer::PoolLayer(size_t poolSize, size_t stride, PoolType type)
+    : poolSize(poolSize)
+    , stride(stride)
+    , type(type) {
+}
+
+std::vector<std::vector<std::vector<float>>> PoolLayer::Forward(
+    const std::vector<std::vector<std::vector<float>>>& input) {
+    
+    // Placeholder for pooling operation
+    return input;
+}
+
+std::vector<std::vector<std::vector<float>>> PoolLayer::Backward(
+    const std::vector<std::vector<std::vector<float>>>& gradient) {
+    
+    // Placeholder for backward pass
+    return gradient;
+}
+
+// ============================================================================
+// LSTMLayer
+// ============================================================================
+
+LSTMLayer::LSTMLayer(size_t inputSize, size_t hiddenSize)
+    : inputSize(inputSize)
+    , hiddenSize(hiddenSize) {
+    
+    hiddenState.resize(hiddenSize, 0.0f);
+    cellState.resize(hiddenSize, 0.0f);
+    
+    // Initialize weights
+    Wf.resize(hiddenSize, std::vector<float>(inputSize + hiddenSize));
+    Wi.resize(hiddenSize, std::vector<float>(inputSize + hiddenSize));
+    Wo.resize(hiddenSize, std::vector<float>(inputSize + hiddenSize));
+    Wc.resize(hiddenSize, std::vector<float>(inputSize + hiddenSize));
+    
+    bf.resize(hiddenSize, 0.0f);
+    bi.resize(hiddenSize, 0.0f);
+    bo.resize(hiddenSize, 0.0f);
+    bc.resize(hiddenSize, 0.0f);
+}
+
+std::vector<float> LSTMLayer::Forward(const std::vector<float>& input, bool resetHidden) {
+    if (resetHidden) {
+        ResetHiddenState();
+    }
+    
+    // Placeholder for LSTM forward pass
+    return hiddenState;
+}
+
+std::vector<float> LSTMLayer::Backward(const std::vector<float>& gradient, float learningRate) {
+    // Placeholder for LSTM backward pass
+    return std::vector<float>(inputSize, 0.0f);
+}
+
+void LSTMLayer::ResetHiddenState() {
+    std::fill(hiddenState.begin(), hiddenState.end(), 0.0f);
+    std::fill(cellState.begin(), cellState.end(), 0.0f);
+}
+
+// ============================================================================
+// AttentionLayer
+// ============================================================================
+
+AttentionLayer::AttentionLayer(size_t inputSize, size_t attentionSize)
+    : inputSize(inputSize)
+    , attentionSize(attentionSize) {
+    
+    Wq.resize(attentionSize, std::vector<float>(inputSize));
+    Wk.resize(attentionSize, std::vector<float>(inputSize));
+    Wv.resize(attentionSize, std::vector<float>(inputSize));
+    
+    bq.resize(attentionSize, 0.0f);
+    bk.resize(attentionSize, 0.0f);
+    bv.resize(attentionSize, 0.0f);
+}
+
+std::vector<float> AttentionLayer::Forward(const std::vector<std::vector<float>>& inputs) {
+    // Placeholder for attention mechanism
+    return std::vector<float>(attentionSize, 0.0f);
+}
+
+std::vector<std::vector<float>> AttentionLayer::Backward(
+    const std::vector<std::vector<float>>& gradient,
+    float learningRate) {
+    
+    // Placeholder for backward pass
+    return gradient;
+}
+
+} // namespace AI
+} // namespace Potato

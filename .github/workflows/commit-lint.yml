@@ -1,0 +1,157 @@
+name: Commit Message Lint
+
+on:
+  pull_request:
+    branches: [ main, develop ]
+    types: [ opened, synchronize, reopened, edited ]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  commitlint:
+    name: Check Commit Messages
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout PR
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        
+    - name: Check Commit Messages
+      uses: wagoid/commitlint-github-action@v5
+      with:
+        configFile: .github/commitlint.config.json
+        failOnWarnings: false
+        
+    - name: Validate PR Title
+      if: github.event_name == 'pull_request'
+      uses: amannn/action-semantic-pull-request@v5
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        types: |
+          feat
+          fix
+          docs
+          style
+          refactor
+          test
+          chore
+          perf
+          ci
+          build
+          revert
+        scopes: |
+          core
+          rendering
+          physics
+          audio
+          input
+          resources
+          ecs
+          gameobject
+          events
+          filesystem
+          logging
+          math
+          memory
+          platform
+          scene
+          serialization
+          time
+          ai
+          ide
+          engine
+          gameplay
+          security
+          bmad
+          build
+          ci
+          docs
+        requireScope: false
+        subjectPattern: '^.{5,100}$'
+        subjectPatternError: 'Subject must be between 5 and 100 characters.'
+        validateSingleCommit: true
+        validateSingleCommitMatchesPrTitle: false
+        
+    - name: Comment on Invalid Commits
+      if: failure()
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const body = `## ❌ Commit Message Validation Failed
+          
+          Your commit messages do not follow the [Conventional Commits](https://www.conventionalcommits.org/) specification.
+          
+          ### Required Format:
+          \`\`\`
+          <type>(<scope>): <subject>
+          
+          [optional body]
+          
+          [optional footer(s)]
+          \`\`\`
+          
+          ### Valid Types:
+          - \`feat\`: New feature
+          - \`fix\`: Bug fix
+          - \`docs\`: Documentation changes
+          - \`style\`: Code style changes (formatting, semicolons, etc)
+          - \`refactor\`: Code refactoring
+          - \`test\`: Adding or updating tests
+          - \`chore\`: Build process or auxiliary tool changes
+          - \`perf\`: Performance improvements
+          - \`ci\`: CI/CD changes
+          - \`build\`: Build system changes
+          - \`revert\`: Revert previous commit
+          
+          ### Valid Scopes (optional):
+          - \`core\`: Core Systems
+          - \`rendering\`: Rendering System
+          - \`physics\`: Physics System
+          - \`audio\`: Audio System
+          - \`input\`: Input System
+          - \`resources\`: Resource Management
+          - \`ecs\`: Entity Component System
+          - \`gameobject\`: Game Object System
+          - \`events\`: Event System
+          - \`filesystem\`: File System
+          - \`logging\`: Logging System
+          - \`math\`: Math Library
+          - \`memory\`: Memory Management
+          - \`platform\`: Platform Abstraction
+          - \`scene\`: Scene Management
+          - \`serialization\`: Serialization
+          - \`time\`: Time Management
+          - \`ai\`: AI System
+          - \`ide\`: MingGoRTS IDE
+          - \`engine\`: Engine-wide
+          - \`gameplay\`: Gameplay Systems
+          - \`security\`: Security Module
+          - \`bmad\`: BMAD Tooling
+          - \`build\`: Build system
+          - \`ci\`: CI/CD
+          - \`docs\`: Documentation
+          
+          ### Examples:
+          \`\`\`
+          feat(rendering): implement OpenGL renderer
+          
+          fix(physics): resolve collision detection bug
+          
+          docs: update README with installation steps
+          \`\`\`
+          
+          Please amend your commits to follow this format.
+          `;
+          
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: body
+          });

@@ -1,0 +1,17 @@
+server:
+  port: 8081
+
+spring:
+  application:
+    name: agent-service
+
+eureka:
+  client:
+    service-url:
+      defaultZone: http://localhost:8761/eureka/
+
+# PotatoAgentJni.dll 路徑；留空則由 NativeLibLoader 於
+# build-ninja/build-mingw/... 等建置輸出目錄自動搜尋
+potato:
+  jni:
+    dll: ${POTATO_JNI_DLL:}
