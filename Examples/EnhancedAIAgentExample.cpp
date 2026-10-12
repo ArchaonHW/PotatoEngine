@@ -8,6 +8,7 @@
 #include <string>
 #include <chrono>
 #include <thread>
+#include <unordered_map>
 
 // 簡化的 AI Agent 系統接口（實際應該包含完整的頭文件）
 namespace Potato {
@@ -242,8 +243,9 @@ namespace AI {
         }
 
         virtual void StoreMemory(const MemoryItem& memory) {
-            memory.timestamp = getCurrentTime();
-            memories.push_back(memory);
+            MemoryItem m = memory;
+            m.timestamp = getCurrentTime();
+            memories.push_back(m);
             std::cout << name << " 存儲記憶: " << memory.content.substr(0, 30) << "..." << std::endl;
         }
 
