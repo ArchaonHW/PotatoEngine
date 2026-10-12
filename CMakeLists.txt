@@ -247,9 +247,9 @@ add_library(NeuralNetwork STATIC AI/NeuralNetwork.cpp)
 target_include_directories(NeuralNetwork PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/AI)
 
 # AI 增強模塊 - 大數據學習
-add_library(ReinforcementLearning STATIC AI/ReinforcementLearning.cpp)
+add_library(ReinforcementLearning STATIC AI/ReinforcementLearning.cpp AI/QuantumSampler.cpp)
 target_include_directories(ReinforcementLearning PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/AI)
-target_link_libraries(ReinforcementLearning NeuralNetwork)
+target_link_libraries(ReinforcementLearning NeuralNetwork Quantum)
 
 # AI 增強模塊 - 自然語言處理
 add_library(NaturalLanguageProcessing STATIC AI/NaturalLanguageProcessing.cpp)

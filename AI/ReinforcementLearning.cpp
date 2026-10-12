@@ -1383,5 +1383,30 @@ Action RLPolicy::SelectAction(const State& state, bool explore) {
     return Action(-1, "no_policy");
 }
 
+const char* RLPolicy::AlgoName() const {
+    switch (algo) {
+        case Algo::QLearning: return "QLearning";
+        case Algo::DQN: return "DQN";
+        case Algo::PolicyGradient: return "PolicyGradient";
+        case Algo::ActorCritic: return "ActorCritic";
+        case Algo::PPO: return "PPO";
+        default: return "Unknown";
+    }
+}
+
+std::vector<float> RLPolicy::GetTabularScores(int state) const {
+    if (ql && state >= 0 && state < static_cast<int>(ql->GetQTable().size()))
+        return ql->GetQTable()[state];
+    return {};
+}
+
+std::vector<float> RLPolicy::GetActionScores(const State& state) const {
+    if (dqn) return dqn->GetQValues(state);
+    if (pg) return pg->GetProbabilities(state);
+    if (ac) return ac->GetProbabilities(state);
+    if (ppo) return ppo->GetProbabilities(state);
+    return {};
+}
+
 } // namespace AI
 } // namespace Potato
