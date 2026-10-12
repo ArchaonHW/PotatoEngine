@@ -434,21 +434,12 @@ public:
     bool LoadFromString(const std::string& data, Algo algo = Algo::Unknown);
 
     Algo GetAlgo() const { return algo; }
-    const char* AlgoName() const;
     // 神經網路演算法的輸入維度（QL 回 -1，它的「狀態」是離散索引）
     int GetStateSize() const;
     // QL 專用：離散狀態索引 → 動作
     int SelectTabularAction(int state, bool explore = false);
     // NN 演算法通用：feature 向量 → 動作
     Action SelectAction(const State& state, bool explore = false);
-
-    // 決策橋接用（confidence/margin 計算）：
-    // QL 專用——離散狀態索引 → 各動作 Q 值列
-    std::vector<float> GetTabularScores(int state) const;
-    // NN 演算法通用——feature 向量 → Q 值（DQN）或動作機率（PG/AC/PPO）
-    std::vector<float> GetActionScores(const State& state) const;
-    // 輸出層語義：PG/AC/PPO 為機率分佈，QL/DQN 為 Q 值
-    bool OutputsProbabilities() const { return pg || ac || ppo; }
 
 private:
     Algo algo = Algo::Unknown;

@@ -40,17 +40,5 @@ Mesh MakePlane(float width = 1.0f, float depth = 1.0f,
 // 正面 quad：XY 面 +Z 法線,w×h 居中——UI/公告板
 Mesh MakeQuad(float width = 1.0f, float height = 1.0f);
 
-// 環面：XZ 面躺平（軸向 Y）,majorRadius 環心半徑、
-// minorRadius 管半徑——碰撞體/甜甜圈/裝飾
-Mesh MakeTorus(float majorRadius = 0.7f,
-               float minorRadius = 0.3f,
-               int majorSegments = 32,
-               int minorSegments = 16);
-
-// 膠囊：軸向 Y 圓柱段 + 上下半球,總高 height（含帽）——
-// 角色碰撞體/物理形狀標配
-Mesh MakeCapsule(float radius = 0.5f, float height = 2.0f,
-                 int sectors = 24, int hemiStacks = 8);
-
 } // namespace PrimitiveMeshes
 } // namespace Potato

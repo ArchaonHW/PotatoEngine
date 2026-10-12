@@ -44,7 +44,6 @@ struct Tool {
     std::string name;
     std::string description;
     std::unordered_map<std::string, std::string> parameters;  // name -> description
-    std::vector<std::string> requiredParameters;              // 必填參數名（缺漏即拒絕執行）
     ToolFunction function;
     bool enabled;
     
@@ -96,21 +95,11 @@ public:
         const std::string& toolName,
         const std::unordered_map<std::string, std::string>& parameters);
     
-    // Execution with timeout——工具在 worker thread 執行,
-    // 逾時即回傳失敗（注意：逾時後工具執行緒仍會在背景
-    // 跑完,結果被丟棄——無法中斷任意使用者程式碼）
+    // Execution with timeout
     ToolResult ExecuteWithTimeout(
         const std::string& toolName,
         const std::unordered_map<std::string, std::string>& parameters,
         uint64_t timeoutMs);
-
-    // 重試：執行失敗（回傳 success=false）時指數退避重試;
-    // 參數驗證失敗與逾時不重試（重試也無意義）。
-    // 退避間隔 = initialBackoffMs * 2^attempt,上限 10s
-    ToolResult ExecuteWithRetry(
-        const std::string& toolName,
-        const std::unordered_map<std::string, std::string>& parameters,
-        int maxRetries, uint64_t initialBackoffMs = 100);
     
     // Validation
     bool ValidateParameters(
@@ -127,7 +116,6 @@ public:
         size_t successfulExecutions;
         size_t failedExecutions;
         size_t timeoutExecutions;
-        size_t retriedExecutions;   // 實際發生過重試的次數
         float averageExecutionTime;
     };
     ExecutorStats GetStats() const;
@@ -179,13 +167,8 @@ public:
     ToolChain(const std::string& name);
     ~ToolChain();
     
-    // Chain building——步驟參數值支援模板替換：
-    //   {{prev.output}} / {{prev.error}} / {{prev.metadata.<key>}}
-    // 會以上一步 ToolResult 展開（首步 prev 為空結果）
+    // Chain building
     void AddTool(const std::string& toolName, const std::unordered_map<std::string, std::string>& parameters);
-    // condition 支援："prev.success" / "prev.fail" /
-    // "prev.output.contains:<text>"——依上一步結果分流;
-    // 空字串或其他值預設走 true 分支
     void AddConditional(
         const std::string& condition,
         const std::string& trueTool,

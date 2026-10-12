@@ -9,8 +9,6 @@
 #include <fstream>
 #include <algorithm>
 #include <cstring>
-#include <future>
-#include <thread>
 
 namespace Potato {
 namespace AI {
@@ -132,11 +130,11 @@ ToolResult ToolExecutor::ExecuteWithTimeout(
     const std::string& toolName,
     const std::unordered_map<std::string, std::string>& parameters,
     uint64_t timeoutMs) {
-
+    
     auto startTime = std::chrono::high_resolution_clock::now();
-
+    
     stats.totalExecutions++;
-
+    
     // Get tool
     Tool* tool = registry->GetTool(toolName);
     if (!tool) {
@@ -146,99 +144,42 @@ ToolResult ToolExecutor::ExecuteWithTimeout(
         result.error = "Tool not found: " + toolName;
         return result;
     }
-
+    
     // Validate parameters
     if (safetyChecksEnabled && !ValidateParameters(*tool, parameters)) {
         stats.failedExecutions++;
         ToolResult result;
         result.success = false;
-        result.error = "Missing required parameter for tool: " + toolName;
+        result.error = "Invalid parameters for tool: " + toolName;
         return result;
     }
-
-    // Worker thread 執行——逾時即放棄等待。用 detached
-    // thread+promise 而非 std::async：async 的 future
-    // 解構會 join 執行緒,等於沒有超時。逾時後執行緒在
-    // 背景跑完,結果寫入孤兒 promise 被丟棄
-    ToolFunction fn = tool->function;
-    auto prom = std::make_shared<std::promise<ToolResult>>();
-    std::future<ToolResult> future = prom->get_future();
-    std::thread([fn, parameters, prom]() {
-        try {
-            prom->set_value(fn(parameters));
-        } catch (const std::exception& e) {
-            ToolResult r;
-            r.success = false;
-            r.error = std::string("Tool exception: ") + e.what();
-            prom->set_value(r);
-        } catch (...) {
-            ToolResult r;
-            r.success = false;
-            r.error = "Tool exception: unknown";
-            prom->set_value(r);
-        }
-    }).detach();
-
-    if (future.wait_for(std::chrono::milliseconds(timeoutMs))
-        == std::future_status::timeout) {
-        stats.failedExecutions++;
-        stats.timeoutExecutions++;
-        ToolResult result;
-        result.success = false;
-        result.error = "Execution timeout (" +
-            std::to_string(timeoutMs) + "ms): " + toolName;
-        return result;
-    }
-
-    ToolResult result = future.get();
-
+    
+    // Execute tool
+    ToolResult result = registry->ExecuteTool(toolName, parameters);
+    
     auto endTime = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime);
     result.executionTime = duration.count();
-
+    
     // Update stats
     if (result.success) {
         stats.successfulExecutions++;
     } else {
         stats.failedExecutions++;
     }
-
+    
     stats.averageExecutionTime = (stats.averageExecutionTime * (stats.totalExecutions - 1) + duration.count() / 1000.0f) / stats.totalExecutions;
-
-    return result;
-}
-
-ToolResult ToolExecutor::ExecuteWithRetry(
-    const std::string& toolName,
-    const std::unordered_map<std::string, std::string>& parameters,
-    int maxRetries, uint64_t initialBackoffMs) {
-
-    ToolResult result = Execute(toolName, parameters);
-    for (int attempt = 0;
-         !result.success && attempt < maxRetries; ++attempt) {
-        // 逾時與參數驗證錯誤重試無意義,直接放棄
-        if (result.error.find("timeout") != std::string::npos ||
-            result.error.find("required parameter")
-                != std::string::npos ||
-            result.error.find("not found") != std::string::npos) {
-            break;
-        }
-        stats.retriedExecutions++;
-        const uint64_t backoff =
-            std::min<uint64_t>(
-                initialBackoffMs * (1ULL << attempt), 10000);
-        std::this_thread::sleep_for(
-            std::chrono::milliseconds(backoff));
-        result = Execute(toolName, parameters);
-    }
+    
     return result;
 }
 
 bool ToolExecutor::ValidateParameters(
     const Tool& tool,
     const std::unordered_map<std::string, std::string>& parameters) {
-
-    return ToolUtils::ValidateRequiredParameters(tool, parameters);
+    
+    // Check if all required parameters are present
+    // For now, assume all parameters are optional
+    return true;
 }
 
 void ToolExecutor::EnableSafetyChecks(bool enable) {
@@ -727,82 +668,41 @@ void ToolChain::AddLoop(
     steps.push_back(step);
 }
 
-namespace {
-// {{prev.output}} / {{prev.error}} / {{prev.metadata.<key>}}
-// 模板替換——以上一步 ToolResult 展開
-std::string SubstitutePrev(const std::string& s,
-                           const ToolResult& prev) {
-    std::string out = s;
-    auto replaceAll = [&out](const std::string& token,
-                             const std::string& val) {
-        size_t pos = 0;
-        while ((pos = out.find(token, pos)) !=
-               std::string::npos) {
-            out.replace(pos, token.size(), val);
-            pos += val.size();
-        }
-    };
-    replaceAll("{{prev.output}}", prev.output);
-    replaceAll("{{prev.error}}", prev.error);
-    // metadata 逐鍵替換
-    for (const auto& kv : prev.metadata) {
-        replaceAll("{{prev.metadata." + kv.first + "}}",
-                   kv.second);
-    }
-    return out;
-}
-
-// 條件求值：prev.success / prev.fail /
-// prev.output.contains:<text>;空或未知 → true
-bool EvalCondition(const std::string& cond,
-                   const ToolResult& prev) {
-    if (cond == "prev.success") return prev.success;
-    if (cond == "prev.fail") return !prev.success;
-    const std::string prefix = "prev.output.contains:";
-    if (cond.compare(0, prefix.size(), prefix) == 0) {
-        return prev.output.find(cond.substr(prefix.size()))
-            != std::string::npos;
-    }
-    return true;
-}
-} // namespace
-
 ToolResult ToolChain::Execute(ToolExecutor* executor) {
     ToolResult finalResult;
     finalResult.success = true;
-    ToolResult prev; // 上一步結果——模板/條件的來源
-    bool abort = false;
-
+    
     for (const auto& step : steps) {
-        if (abort) break;
         if (step.isConditional) {
-            // 真條件分流：依上一步結果選 true/false 工具
-            const std::string& pick =
-                EvalCondition(step.condition, prev)
-                    ? step.trueTool : step.falseTool;
-            if (pick.empty()) continue;
-            prev = executor->Execute(pick, {});
-            finalResult = prev;
+            // Execute conditional
+            // Simplified - always execute true branch
+            ToolResult result = executor->Execute(step.trueTool, {});
+            if (!result.success && stopOnError) {
+                finalResult = result;
+                break;
+            }
         } else if (step.isLoop) {
-            for (int i = 0; i < step.maxIterations && !abort;
-                 ++i) {
-                auto params = step.parameters;
-                for (auto& kv : params)
-                    kv.second = SubstitutePrev(kv.second, prev);
-                prev = executor->Execute(step.toolName, params);
-                finalResult = prev;
-                abort = !prev.success && stopOnError;
+            // Execute loop
+            int iterations = 0;
+            while (iterations < step.maxIterations) {
+                ToolResult result = executor->Execute(step.toolName, step.parameters);
+                if (!result.success && stopOnError) {
+                    finalResult = result;
+                    break;
+                }
+                iterations++;
             }
         } else {
-            auto params = step.parameters;
-            for (auto& kv : params)
-                kv.second = SubstitutePrev(kv.second, prev);
-            prev = executor->Execute(step.toolName, params);
-            finalResult = prev;
+            // Execute normal tool
+            ToolResult result = executor->Execute(step.toolName, step.parameters);
+            if (!result.success && stopOnError) {
+                finalResult = result;
+                break;
+            }
+            finalResult = result;
         }
-        abort = abort || (!prev.success && stopOnError);
     }
-
+    
     return finalResult;
 }
 
@@ -823,13 +723,9 @@ namespace ToolUtils {
 bool ValidateRequiredParameters(
     const Tool& tool,
     const std::unordered_map<std::string, std::string>& parameters) {
-
-    for (const auto& name : tool.requiredParameters) {
-        auto it = parameters.find(name);
-        if (it == parameters.end() || it->second.empty()) {
-            return false;
-        }
-    }
+    
+    // For now, assume all parameters are optional
+    // In real implementation, would mark required parameters
     return true;
 }
 

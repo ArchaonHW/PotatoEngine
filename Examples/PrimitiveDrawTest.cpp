@@ -97,47 +97,6 @@ int main() {
         Check(pb.GetLineVertexCount() == 24,
               "FrustumBox = 24 頂點");
 
-        // Arrow：軸線 2 + headFins×2 頂點
-        pb.Clear();
-        pb.Arrow(Vector3(0, 0, 0), Vector3(0, 2, 0),
-                 white, 0.25f, 4);
-        Check(pb.GetLineVertexCount() == 2 + 4 * 2,
-              "Arrow(4 fins) = 10 頂點");
-        // 零長度箭頭不產生頂點
-        pb.Clear();
-        pb.Arrow(Vector3(1, 1, 1), Vector3(1, 1, 1), white);
-        Check(pb.GetLineVertexCount() == 0,
-              "零長 Arrow 不產生頂點");
-
-        // WireCylinder：2 圓 + 4 母線
-        pb.Clear();
-        pb.WireCylinder(Vector3(0, 0, 0), 1.0f, 2.0f,
-                        white, 8);
-        Check(pb.GetLineVertexCount() == 2 * 16 + 8,
-              "WireCylinder(8) = 40 頂點");
-
-        // WireCone：底圓 + 4 母線
-        pb.Clear();
-        pb.WireCone(Vector3(0, 2, 0), 1.0f, 2.0f,
-                    white, 8);
-        Check(pb.GetLineVertexCount() == 16 + 8,
-              "WireCone(8) = 24 頂點");
-
-        // Disc：三角扇 → 3·segments 三角頂點
-        pb.Clear();
-        pb.Disc(Vector3(0, 0, 0), 1.0f, Vector3(0, 1, 0),
-                white, 10);
-        Check(pb.GetTriangleVertexCount() == 30,
-              "Disc(10) = 30 三角頂點");
-
-        // Bezier：segments 段折線 = 2·segments 頂點
-        pb.Clear();
-        pb.Bezier(Vector3(0, 0, 0), Vector3(1, 1, 0),
-                  Vector3(2, 1, 0), Vector3(3, 0, 0),
-                  white, 16);
-        Check(pb.GetLineVertexCount() == 32,
-              "Bezier(16) = 32 頂點");
-
         // Triangle/Quad 走三角佇列
         pb.Clear();
         pb.Quad(Vector3(0, 0, 0), Vector3(1, 0, 0),
@@ -228,72 +187,6 @@ int main() {
         Check(cone.GetVertexCount() > 0 &&
                   cone.GetIndexCount() > 0,
               "cone 產生頂點/索引");
-
-        const Mesh torus =
-            PrimitiveMeshes::MakeTorus(0.7f, 0.3f, 32, 16);
-        Check(torus.GetVertexCount() == 33 * 17,
-              "torus(32,16) = 33×17 頂點");
-        Check(torus.GetIndexCount() == 32 * 16 * 6,
-              "torus = maj·min·6 索引");
-        {
-            // 環面方程：(√(x²+z²) − R)² + y² = r²；
-            // 法線 = 位置 − 管心方向
-            bool ok = true;
-            for (const Vertex& v : torus.GetVertices()) {
-                const float q = std::sqrt(
-                    v.position.x * v.position.x +
-                    v.position.z * v.position.z);
-                const float eq = (q - 0.7f) * (q - 0.7f) +
-                    v.position.y * v.position.y;
-                if (std::fabs(eq - 0.09f) > 1e-4f)
-                    ok = false;
-                // 法線朝外：與（位置−最近管心）同向
-                if (q > 1e-6f) {
-                    const Vector3 center(
-                        0.7f * v.position.x / q, 0.0f,
-                        0.7f * v.position.z / q);
-                    const Vector3 outward =
-                        (v.position - center).Normalized();
-                    if (v.normal.Dot(outward) < 0.999f)
-                        ok = false;
-                }
-            }
-            Check(ok, "torus 滿足環面方程且法線朝外");
-        }
-        Check(torus.HasBounds(), "torus 有 bounds");
-        {
-            const AABB& b = torus.GetLocalAABB();
-            Check(std::fabs(b.max.x - 1.0f) < 1e-4f &&
-                      std::fabs(b.max.y - 0.3f) < 1e-4f,
-                  "torus bounds = R+r / r");
-        }
-
-        const Mesh cap =
-            PrimitiveMeshes::MakeCapsule(0.5f, 2.0f, 12, 8);
-        Check(cap.GetVertexCount() == 18 * 13,
-              "capsule = (2+2·8)環 × 13 頂點");
-        Check(cap.GetIndexCount() == 17 * 12 * 6,
-              "capsule 索引 = (環-1)·sectors·6");
-        {
-            // 膠囊方程：頂點到 Y 軸柱段 [yBot,yTop] 距離 = r
-            bool ok = true;
-            for (const Vertex& v : cap.GetVertices()) {
-                const float q = std::sqrt(
-                    v.position.x * v.position.x +
-                    v.position.z * v.position.z);
-                float dy = 0.0f;
-                if (v.position.y < -0.5f)
-                    dy = v.position.y + 0.5f;
-                else if (v.position.y > 0.5f)
-                    dy = v.position.y - 0.5f;
-                const float d = std::sqrt(q * q + dy * dy);
-                if (std::fabs(d - 0.5f) > 1e-4f) ok = false;
-                if (std::fabs(v.normal.Length() - 1.0f) >
-                    1e-4f)
-                    ok = false;
-            }
-            Check(ok, "capsule 滿足膠囊方程且法線單位長");
-        }
     }
 
     // [3] GL context 前建構安全

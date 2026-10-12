@@ -7,7 +7,6 @@
 
 #include "AIAgentSystem.h"
 #include "LLMIntegration.h"
-#include "ToolFramework.h"
 #include <string>
 #include <vector>
 #include <unordered_map>
@@ -96,8 +95,6 @@ public:
     AgentChain(const std::string& name);
     ~AgentChain();
     
-    const std::string& GetName() const { return name; }
-    
     // Node management
     void AddNode(const ChainNode& node);
     void RemoveNode(const std::string& nodeId);
@@ -108,7 +105,6 @@ public:
     ChainResult Execute(
         const std::unordered_map<std::string, std::string>& inputs = {});
     
-    // 保留 API——目前與 Execute 相同（同步語義）
     ChainResult ExecuteAsync(
         const std::unordered_map<std::string, std::string>& inputs = {});
     
@@ -120,9 +116,6 @@ public:
     // Configuration
     void SetAIAgentManager(AIAgentManager* manager);
     void SetLLMClient(ILLMClient* client);
-    // Tool 節點走此 executor（必填驗證/超時/重試語義
-    // 與 ToolExecutor 一致）；未設定時 Tool 節點報錯
-    void SetToolRegistry(ToolRegistry* registry);
     
     // Validation
     bool Validate();
@@ -134,9 +127,17 @@ private:
     std::unordered_map<std::string, std::string> variables;
     AIAgentManager* agentManager;
     ILLMClient* llmClient;
-    std::unique_ptr<ToolExecutor> toolExecutor;
     
     ChainResult ExecuteNode(const ChainNode& node);
+    ChainResult ExecuteAgentNode(const ChainNode& node);
+    ChainResult ExecuteLLMNode(const ChainNode& node);
+    ChainResult ExecuteToolNode(const ChainNode& node);
+    ChainResult ExecuteConditionNode(const ChainNode& node);
+    ChainResult ExecuteLoopNode(const ChainNode& node);
+    ChainResult ExecuteParallelNode(const ChainNode& node);
+    
+    bool EvaluateCondition(const std::string& expression);
+    std::string EvaluateExpression(const std::string& expression);
 };
 
 /**
@@ -147,8 +148,6 @@ class AgentGraph {
 public:
     AgentGraph(const std::string& name);
     ~AgentGraph();
-    
-    const std::string& GetName() const { return name; }
     
     // Node management
     void AddNode(const ChainNode& node);
@@ -179,7 +178,6 @@ public:
     // Configuration
     void SetAIAgentManager(AIAgentManager* manager);
     void SetLLMClient(ILLMClient* client);
-    void SetToolRegistry(ToolRegistry* registry);
     
 private:
     std::string name;
@@ -187,17 +185,14 @@ private:
     std::unordered_map<std::string, std::vector<std::string>> edges;
     AIAgentManager* agentManager;
     ILLMClient* llmClient;
-    std::unique_ptr<ToolExecutor> toolExecutor;
     
     bool DetectCycleDFS(
         const std::string& node,
         std::unordered_map<std::string, int>& visited);
     
-    // vars = inputs ∪ 已完成節點輸出——供 {var} 展開與
-    // loop body 回寫
     ChainResult ExecuteNode(
         const ChainNode& node,
-        std::unordered_map<std::string, std::string>& vars);
+        const std::unordered_map<std::string, std::string>& inputs);
 };
 
 /**
@@ -307,8 +302,6 @@ public:
     // Configuration
     void SetAIAgentManager(AIAgentManager* manager);
     void SetLLMClient(ILLMClient* client);
-    // 傳播到之後 Register 的 chain/graph（已註冊者不追溯）
-    void SetToolRegistry(ToolRegistry* registry);
     
     // Statistics
     struct OrchestratorStats {
@@ -325,7 +318,6 @@ private:
     std::unordered_map<std::string, std::unique_ptr<AgentGraph>> graphs;
     AIAgentManager* agentManager;
     ILLMClient* llmClient;
-    ToolRegistry* toolRegistry = nullptr;
     OrchestratorStats stats;
 };
 

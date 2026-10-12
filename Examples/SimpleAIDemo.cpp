@@ -145,7 +145,6 @@ public:
     size_t GetCompletedTaskCount() const { return completedTaskCount; }
     size_t GetKnowledgeShareCount() const { return knowledgeShareCount; }
     const std::vector<SimpleTask>& GetTasks() const { return tasks; }
-    const std::vector<std::string>& GetCapabilities() const { return capabilities; }
     bool IsActive() const { return active; }
     
 private:
@@ -231,7 +230,7 @@ private:
             float score = agent->GetPerformanceRating();
             
             // 檢查專業領域匹配
-            for (const auto& capability : agent->GetCapabilities()) {
+            for (const auto& capability : agent->capabilities) {
                 if (capability == task.category) {
                     score += 0.2f;
                     break;

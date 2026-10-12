@@ -95,29 +95,6 @@ public:
     // 3D 線框錐（視錐可視化）：8 角 + 連邊——給世界空間 8 角
     void FrustumBox(const Vector3 corners[8],
                     const Vector4& color);
-    // 箭頭：軸線 + headFins 片鰭構成錐形頭——方向/速度/
-    // 力向量可視化。headFrac 為頭長佔全長比例
-    void Arrow(const Vector3& from, const Vector3& to,
-               const Vector4& color, float headFrac = 0.25f,
-               int headFins = 4);
-    // 線框圓柱：頂底兩圓 + 4 母線,軸向 Y
-    void WireCylinder(const Vector3& center, float radius,
-                      float height, const Vector4& color,
-                      int segments = 24);
-    // 線框圓錐：底圓 + 4 母線到頂點,軸向 Y
-    void WireCone(const Vector3& apex, float radius,
-                  float height, const Vector4& color,
-                  int segments = 24);
-    // 填充圓（三角扇）——2D 圓盤/範圍圈/雷達掃描;
-    // 走 triVerts 佇列,可配 alpha blend
-    void Disc(const Vector3& center, float radius,
-              const Vector3& normal, const Vector4& color,
-              int segments = 32);
-    // 三次 Bézier 折線化（segments 段）——曲線/軌跡/
-    // 導航路徑可視化
-    void Bezier(const Vector3& p0, const Vector3& c0,
-                const Vector3& c1, const Vector3& p1,
-                const Vector4& color, int segments = 32);
 
     size_t GetLineVertexCount() const { return lineVerts.size(); }
     size_t GetTriangleVertexCount() const {
