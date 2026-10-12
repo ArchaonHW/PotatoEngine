@@ -19,7 +19,10 @@ Platform、Quantum、Rendering、Resources、Scene、Security、Serialization、
 Simulation（SystemDynamics：存量-流量離散模擬器——stock/flow/aux/param/
   確定+機率事件/延遲鏈/KPI 探針，RTS 經濟與專案運營建模用；
   範例 Examples/ProjectOpsDemo.cpp）、
-Time、build-video、
+Time、build-video、GUI（AgentGUI 等引擎 GUI）、
+Examples（standalone 建置時的範例/測試程式）、docs、
+java（Spring Boot agent 微服務 + JNI 橋接：agent-service/
+api-gateway/discovery-server，原生端 native/PotatoAgentJni.cpp）、
 external（vendored：glad_gen/tinygltf/miniaudio/imgui submodule）
 
 ## 消費關係（重要）

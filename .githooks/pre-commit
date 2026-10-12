@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# MingGoRTS Pre-commit Hook
+# PotatoEngine Pre-commit Hook
 # 本地預提交檢查腳本
 #
 # 安裝方法:
@@ -179,39 +179,6 @@ else
         echo "  git commit --no-verify"
         exit 1
     fi
-fi
-
-# 檢查 commit message 格式
-echo ""
-echo "Checking commit message format..."
-commit_msg_file="$1"
-if [ -f "$commit_msg_file" ]; then
-    commit_msg=$(head -n 1 "$commit_msg_file")
-    
-    # 檢查 Conventional Commits 格式
-    valid_types="feat|fix|docs|style|refactor|test|chore|perf|ci|build|revert"
-    if ! echo "$commit_msg" | grep -qE "^($valid_types)(\([^)]*\))?: .+"; then
-        echo "${RED}❌ Invalid commit message format!${NC}"
-        echo ""
-        echo "Commit message must follow Conventional Commits:"
-        echo "  <type>(<scope>): <subject>"
-        echo ""
-        echo "Valid types: $valid_types"
-        echo ""
-        echo "Examples:"
-        echo "  feat(sage): implement three authority system"
-        echo "  fix(ai): resolve image generation timeout"
-        echo "  docs: update README"
-        exit 1
-    fi
-    
-    # 檢查標題長度
-    msg_length=${#commit_msg}
-    if [ $msg_length -gt 100 ]; then
-        echo "${YELLOW}⚠️  Commit message too long ($msg_length > 100 chars)${NC}"
-    fi
-    
-    echo "${GREEN}✓ Commit message format valid${NC}"
 fi
 
 # 運行快速語法檢查（如果存在 PowerShell 腳本）

@@ -1,0 +1,42 @@
+#!/bin/sh
+#
+# PotatoEngine Commit-msg Hook
+# 檢查 Conventional Commits 格式（配合 CI commitlint）
+#
+# 安裝方法:
+#   git config core.hooksPath .githooks
+#
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+commit_msg_file="$1"
+commit_msg=$(head -n 1 "$commit_msg_file")
+
+# 檢查 Conventional Commits 格式
+valid_types="feat|fix|docs|style|refactor|test|chore|perf|ci|build|revert"
+if ! echo "$commit_msg" | grep -qE "^($valid_types)(\([^)]*\))?: .+"; then
+    echo "${RED}❌ Invalid commit message format!${NC}"
+    echo ""
+    echo "Commit message must follow Conventional Commits:"
+    echo "  <type>(<scope>): <subject>"
+    echo ""
+    echo "Valid types: $valid_types"
+    echo ""
+    echo "Examples:"
+    echo "  feat(rendering): add cascaded shadow map support"
+    echo "  fix(ai): resolve image generation timeout"
+    echo "  docs: update README"
+    exit 1
+fi
+
+# 檢查標題長度
+msg_length=${#commit_msg}
+if [ $msg_length -gt 100 ]; then
+    echo "${YELLOW}⚠️  Commit message too long ($msg_length > 100 chars)${NC}"
+fi
+
+echo "${GREEN}✓ Commit message format valid${NC}"
+exit 0
