@@ -121,6 +121,7 @@ ChatMessage ToolResultMessage(const ToolCall& call,
     ChatMessage m;
     m.role = MessageRole::Tool;
     m.name = call.name;
+    m.toolCallId = call.id; // OpenAI/Anthropic 都要求回填
     m.content = result.success
                     ? result.output
                     : "ERROR: " + result.error;

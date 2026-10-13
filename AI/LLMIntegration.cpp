@@ -87,6 +87,18 @@ static LLMResponse ParseOpenAiChatJson(const std::string& jsonResponse) {
     const JsonValue& first = choices[0];
     r.content = first["message"]["content"].AsString(
         first["text"].AsString());
+    // tool_calls[]:{id,type:"function",function:{name,arguments}}
+    // ——finish_reason 常為 "tool_calls";content 可能為 null
+    for (const auto& tc : first["message"]["tool_calls"].AsArray()) {
+        ToolCall call;
+        call.id = tc["id"].AsString();
+        const JsonValue& fn = tc["function"];
+        call.name = fn["name"].AsString(tc["name"].AsString());
+        call.arguments = fn["arguments"].AsString();
+        if (call.arguments.empty() && fn["arguments"].IsObject())
+            call.arguments = fn["arguments"].Dump();
+        if (!call.name.empty()) r.toolCalls.push_back(call);
+    }
     r.finishReason = first["finish_reason"].AsString("stop");
     const JsonValue& usage = j["usage"];
     r.promptTokens = usage["prompt_tokens"].AsInt(
@@ -112,6 +124,54 @@ static std::vector<float> ParseOpenAiEmbeddingJson(const std::string& json) {
     return out;
 }
 
+// OpenAI 式 message 序列化——role=tool 帶 tool_call_id,
+// assistant 帶 tool_calls 回放（OpenAI/Ollama/llama.cpp 共用）
+static void AppendOpenAiMessage(std::stringstream& json,
+                                const ChatMessage& m) {
+    const char* role = "user";
+    switch (m.role) {
+        case MessageRole::System:    role = "system"; break;
+        case MessageRole::Assistant: role = "assistant"; break;
+        case MessageRole::Tool:      role = "tool"; break;
+        default: break;
+    }
+    json << "{\"role\":\"" << role << "\"";
+    if (m.role == MessageRole::Tool && !m.toolCallId.empty()) {
+        json << ",\"tool_call_id\":\""
+             << EscapeJson(m.toolCallId) << "\"";
+    }
+    if (m.role == MessageRole::Assistant && !m.toolCalls.empty()) {
+        json << ",\"tool_calls\":[";
+        bool first = true;
+        for (const auto& tc : m.toolCalls) {
+            if (!first) json << ",";
+            first = false;
+            json << "{\"id\":\"" << EscapeJson(tc.id)
+                 << "\",\"type\":\"function\",\"function\":{"
+                 << "\"name\":\"" << EscapeJson(tc.name)
+                 << "\",\"arguments\":"
+                 << (tc.arguments.empty() ? "{}" : tc.arguments)
+                 << "}}";
+        }
+        json << "]";
+    }
+    json << ",\"content\":\"" << EscapeJson(m.content) << "\"}";
+}
+
+// OpenAI 式 tools 陣列（function schema）——
+// OpenAIClient::ChatCompletionWithTools 與 Local HTTP 模式共用
+static void AppendOpenAiTools(std::stringstream& json,
+                              const std::vector<ToolDefinition>& tools) {
+    for (size_t i = 0; i < tools.size(); i++) {
+        if (i > 0) json << ",";
+        json << "{\"type\":\"function\",\"function\":{"
+             << "\"name\":\"" << EscapeJson(tools[i].name) << "\","
+             << "\"description\":\"" << EscapeJson(tools[i].description)
+             << "\",\"parameters\":" << tools[i].parametersSchema
+             << "}}";
+    }
+}
+
 // ============================================================================
 // OpenAI Client Implementation
 // ============================================================================
@@ -135,31 +195,21 @@ LLMResponse OpenAIClient::ChatCompletion(
     json << "{";
     json << "\"model\":\"" << EscapeJson(config.model) << "\",";
     json << "\"messages\":[";
-    
+
     for (size_t i = 0; i < messages.size(); i++) {
         if (i > 0) json << ",";
-        json << "{";
-        json << "\"role\":\"";
-        switch (messages[i].role) {
-            case MessageRole::System: json << "system"; break;
-            case MessageRole::User: json << "user"; break;
-            case MessageRole::Assistant: json << "assistant"; break;
-            case MessageRole::Tool: json << "tool"; break;
-        }
-        json << "\",";
-        json << "\"content\":\"" << EscapeJson(messages[i].content) << "\"";
-        json << "}";
+        AppendOpenAiMessage(json, messages[i]);
     }
-    
+
     json << "],";
     json << "\"temperature\":" << config.temperature << ",";
     json << "\"max_tokens\":" << config.maxTokens << ",";
     json << "\"top_p\":" << config.topP;
     json << "}";
-    
+
     std::string jsonResponse = MakeRequest("/chat/completions", json.str(), config);
     response = ParseResponse(jsonResponse);
-    
+
     return response;
 }
 
@@ -175,37 +225,15 @@ LLMResponse OpenAIClient::ChatCompletionWithTools(
     json << "{";
     json << "\"model\":\"" << EscapeJson(config.model) << "\",";
     json << "\"messages\":[";
-    
+
     for (size_t i = 0; i < messages.size(); i++) {
         if (i > 0) json << ",";
-        json << "{";
-        json << "\"role\":\"";
-        switch (messages[i].role) {
-            case MessageRole::System: json << "system"; break;
-            case MessageRole::User: json << "user"; break;
-            case MessageRole::Assistant: json << "assistant"; break;
-            case MessageRole::Tool: json << "tool"; break;
-        }
-        json << "\",";
-        json << "\"content\":\"" << EscapeJson(messages[i].content) << "\"";
-        json << "}";
+        AppendOpenAiMessage(json, messages[i]);
     }
-    
+
     json << "],";
     json << "\"tools\":[";
-    
-    for (size_t i = 0; i < tools.size(); i++) {
-        if (i > 0) json << ",";
-        json << "{";
-        json << "\"type\":\"function\",";
-        json << "\"function\":{";
-        json << "\"name\":\"" << EscapeJson(tools[i].name) << "\",";
-        json << "\"description\":\"" << EscapeJson(tools[i].description) << "\",";
-        json << "\"parameters\":" << tools[i].parametersSchema;
-        json << "}";
-        json << "}";
-    }
-    
+    AppendOpenAiTools(json, tools);
     json << "],";
     json << "\"temperature\":" << config.temperature << ",";
     json << "\"max_tokens\":" << config.maxTokens;
@@ -304,14 +332,14 @@ AnthropicClient::AnthropicClient(const std::string& key, const std::string& base
 AnthropicClient::~AnthropicClient() {
 }
 
-LLMResponse AnthropicClient::ChatCompletion(
+// Anthropic /v1/messages body：system 訊息拆到頂層 "system" 欄位
+// （不接受 role=system message）；role=Tool 收成接續 user turn 的
+// tool_result block（連續 Tool 訊息併成同一 user message）；
+// assistant 的 toolCalls 回放為 tool_use block（input 需原 object）
+static std::string BuildAnthropicBody(
     const std::vector<ChatMessage>& messages,
+    const std::vector<ToolDefinition>* tools,
     const LLMConfig& config) {
-    
-    LLMResponse response;
-    
-    // Build JSON request for Anthropic API——system 訊息拆到頂層
-    // "system" 欄位（/v1/messages 不接受 role=system 的 message）
     std::stringstream json;
     json << "{";
     json << "\"model\":\"" << EscapeJson(config.model) << "\",";
@@ -321,7 +349,8 @@ LLMResponse AnthropicClient::ChatCompletion(
     std::stringstream msgs;
     msgs << "\"messages\":[";
     bool firstMsg = true;
-    for (const auto& m : messages) {
+    for (size_t i = 0; i < messages.size(); ++i) {
+        const ChatMessage& m = messages[i];
         if (m.role == MessageRole::System) {
             if (!systemPrompt.empty()) systemPrompt += "\n";
             systemPrompt += m.content;
@@ -329,6 +358,42 @@ LLMResponse AnthropicClient::ChatCompletion(
         }
         if (!firstMsg) msgs << ",";
         firstMsg = false;
+        if (m.role == MessageRole::Tool) {
+            msgs << "{\"role\":\"user\",\"content\":[";
+            bool firstTr = true;
+            for (; i < messages.size() &&
+                   messages[i].role == MessageRole::Tool; ++i) {
+                if (!firstTr) msgs << ",";
+                firstTr = false;
+                msgs << "{\"type\":\"tool_result\",\"tool_use_id\":\""
+                     << EscapeJson(messages[i].toolCallId)
+                     << "\",\"content\":\""
+                     << EscapeJson(messages[i].content) << "\"}";
+            }
+            --i;
+            msgs << "]}";
+            continue;
+        }
+        if (m.role == MessageRole::Assistant && !m.toolCalls.empty()) {
+            msgs << "{\"role\":\"assistant\",\"content\":[";
+            if (!m.content.empty()) {
+                msgs << "{\"type\":\"text\",\"text\":\""
+                     << EscapeJson(m.content) << "\"},";
+            }
+            bool first = true;
+            for (const auto& tc : m.toolCalls) {
+                if (!first) msgs << ",";
+                first = false;
+                JsonValue input = JsonValue::Parse(tc.arguments);
+                msgs << "{\"type\":\"tool_use\",\"id\":\""
+                     << EscapeJson(tc.id) << "\",\"name\":\""
+                     << EscapeJson(tc.name) << "\",\"input\":"
+                     << (input.IsObject() ? input.Dump() : "{}")
+                     << "}";
+            }
+            msgs << "]}";
+            continue;
+        }
         msgs << "{\"role\":\""
              << (m.role == MessageRole::Assistant ? "assistant" : "user")
              << "\",\"content\":\"" << EscapeJson(m.content) << "\"}";
@@ -337,21 +402,40 @@ LLMResponse AnthropicClient::ChatCompletion(
     if (!systemPrompt.empty()) {
         json << ",\"system\":\"" << EscapeJson(systemPrompt) << "\"";
     }
-    json << "," << msgs.str() << "}";
+    json << "," << msgs.str();
+    if (tools && !tools->empty()) {
+        json << ",\"tools\":[";
+        for (size_t i = 0; i < tools->size(); ++i) {
+            const ToolDefinition& t = (*tools)[i];
+            if (i) json << ",";
+            json << "{\"name\":\"" << EscapeJson(t.name)
+                 << "\",\"description\":\"" << EscapeJson(t.description)
+                 << "\",\"input_schema\":"
+                 << (t.parametersSchema.empty() ? "{\"type\":\"object\"}"
+                                                : t.parametersSchema)
+                 << "}";
+        }
+        json << "]";
+    }
+    json << "}";
+    return json.str();
+}
 
-    std::string jsonResponse = MakeRequest("/v1/messages", json.str(), config);
-    response = ParseResponse(jsonResponse);
-    
-    return response;
+LLMResponse AnthropicClient::ChatCompletion(
+    const std::vector<ChatMessage>& messages,
+    const LLMConfig& config) {
+    return ParseResponse(MakeRequest(
+        "/v1/messages", BuildAnthropicBody(messages, nullptr, config),
+        config));
 }
 
 LLMResponse AnthropicClient::ChatCompletionWithTools(
     const std::vector<ChatMessage>& messages,
     const std::vector<ToolDefinition>& tools,
     const LLMConfig& config) {
-    
-    // Anthropic tool calling implementation
-    return ChatCompletion(messages, config);
+    return ParseResponse(MakeRequest(
+        "/v1/messages", BuildAnthropicBody(messages, &tools, config),
+        config));
 }
 
 void AnthropicClient::ChatCompletionStream(
@@ -417,7 +501,10 @@ std::string AnthropicClient::MakeRequest(const std::string& endpoint,
     return r.body;
 }
 
-LLMResponse AnthropicClient::ParseResponse(const std::string& jsonResponse) {
+// Anthropic /v1/messages 回應解析——content block 陣列:
+// text 串接,tool_use 收進 toolCalls（input object →
+// arguments JSON 字串）。與 client 解耦供 LLMUtils wire 測試
+static LLMResponse ParseAnthropicChatJson(const std::string& jsonResponse) {
     LLMResponse r;
     JsonValue j;
     if (!JsonValue::ParseOk(jsonResponse, j)) {
@@ -434,13 +521,22 @@ LLMResponse AnthropicClient::ParseResponse(const std::string& jsonResponse) {
             j["error"]["type"].AsString("API error"));
         return r;
     }
-    // content 為 block 陣列——串接所有 text block
+    // content 為 block 陣列——串接 text block,tool_use block
+    // 收成 ToolCall（input 為 object,序列化回 arguments 字串）
     for (const auto& block : j["content"].AsArray()) {
-        if (block["type"].AsString() == "text") {
+        const std::string type = block["type"].AsString();
+        if (type == "text") {
             r.content += block["text"].AsString();
+        } else if (type == "tool_use") {
+            ToolCall call;
+            call.id = block["id"].AsString();
+            call.name = block["name"].AsString();
+            call.arguments = block["input"].IsObject()
+                ? block["input"].Dump() : "{}";
+            if (!call.name.empty()) r.toolCalls.push_back(call);
         }
     }
-    if (r.content.empty()) {
+    if (r.content.empty() && r.toolCalls.empty()) {
         r.error = "Anthropic 回應缺 content text";
         return r;
     }
@@ -451,6 +547,10 @@ LLMResponse AnthropicClient::ParseResponse(const std::string& jsonResponse) {
     r.totalTokens = r.promptTokens + r.completionTokens;
     r.success = true;
     return r;
+}
+
+LLMResponse AnthropicClient::ParseResponse(const std::string& jsonResponse) {
+    return ParseAnthropicChatJson(jsonResponse);
 }
 
 // ============================================================================
@@ -474,7 +574,7 @@ LLMResponse LocalModelClient::ChatCompletion(
 
     // baseURL 有值 → OpenAI-compatible HTTP（Ollama/llama.cpp/vLLM）
     std::string base = EffectiveBase(config);
-    if (!base.empty()) return ChatViaHttp(messages, config);
+    if (!base.empty()) return ChatViaHttp(messages, config, nullptr);
 
     LLMResponse response;
 
@@ -507,7 +607,11 @@ LLMResponse LocalModelClient::ChatCompletionWithTools(
     const std::vector<ChatMessage>& messages,
     const std::vector<ToolDefinition>& tools,
     const LLMConfig& config) {
-    
+
+    // OpenAI-compatible 端點支援 function calling（Ollama/vLLM
+    // 皆實作 OpenAI tools 欄位）；無端點時退回模擬路徑
+    if (!EffectiveBase(config).empty())
+        return ChatViaHttp(messages, config, &tools);
     return ChatCompletion(messages, config);
 }
 
@@ -569,9 +673,10 @@ std::string LocalModelClient::GetDefaultModel() {
     return "llama-2-7b";
 }
 
-bool LocalModelClient::LoadModel(const std::string& modelPath) {
+bool LocalModelClient::LoadModel(const std::string& path) {
     // Placeholder for model loading
     // Would use llama.cpp or similar
+    modelPath = path;
     modelHandle = reinterpret_cast<void*>(1);  // Dummy handle
     return true;
 }
@@ -590,7 +695,8 @@ std::string LocalModelClient::EffectiveBase(const LLMConfig& config) const {
 
 LLMResponse LocalModelClient::ChatViaHttp(
     const std::vector<ChatMessage>& messages,
-    const LLMConfig& config) {
+    const LLMConfig& config,
+    const std::vector<ToolDefinition>* tools) {
 
     std::string base = EffectiveBase(config);
     std::string model = !config.model.empty() ? config.model
@@ -601,18 +707,15 @@ LLMResponse LocalModelClient::ChatViaHttp(
          << "\"messages\":[";
     for (size_t i = 0; i < messages.size(); i++) {
         if (i > 0) json << ",";
-        const char* role = "user";
-        switch (messages[i].role) {
-            case MessageRole::System:    role = "system"; break;
-            case MessageRole::Assistant: role = "assistant"; break;
-            case MessageRole::Tool:      role = "tool"; break;
-            default: break;
-        }
-        json << "{\"role\":\"" << role
-             << "\",\"content\":\"" << EscapeJson(messages[i].content)
-             << "\"}";
+        AppendOpenAiMessage(json, messages[i]);
     }
-    json << "],\"temperature\":" << config.temperature
+    json << "],";
+    if (tools && !tools->empty()) {
+        json << "\"tools\":[";
+        AppendOpenAiTools(json, *tools);
+        json << "],";
+    }
+    json << "\"temperature\":" << config.temperature
          << ",\"max_tokens\":" << config.maxTokens
          << ",\"stream\":false}";
 
@@ -915,9 +1018,20 @@ std::string FormatToolCall(const ToolCall& call) {
     return ss.str();
 }
 
+// {id,name,arguments} 或 OpenAI 巢狀 {id,type,function:{name,arguments}}
+// → ToolCall；arguments 允許字串或 object/array（序列化回字串）
 ToolCall ParseToolCall(const std::string& json) {
     ToolCall call;
-    // Placeholder for JSON parsing
+    JsonValue j;
+    if (!JsonValue::ParseOk(json, j)) return call;
+    const JsonValue& fn = j["function"].IsObject() ? j["function"] : j;
+    call.id = j["id"].AsString();
+    call.name = fn["name"].AsString();
+    call.arguments = fn["arguments"].AsString();
+    if (call.arguments.empty() &&
+        (fn["arguments"].IsObject() || fn["arguments"].IsArray())) {
+        call.arguments = fn["arguments"].Dump();
+    }
     return call;
 }
 
@@ -926,8 +1040,16 @@ std::string ExtractContent(const LLMResponse& response) {
 }
 
 std::vector<ToolCall> ExtractToolCalls(const LLMResponse& response) {
-    // Placeholder for tool call extraction
-    return std::vector<ToolCall>();
+    return response.toolCalls;
+}
+
+// 各家 wire 格式的公開解析口（測試/工具可繞過 HTTP 驗證）
+LLMResponse ParseOpenAiResponseJson(const std::string& json) {
+    return ParseOpenAiChatJson(json);
+}
+
+LLMResponse ParseAnthropicResponseJson(const std::string& json) {
+    return ParseAnthropicChatJson(json);
 }
 
 LLMConfig CreateOpenAIConfig(const std::string& apiKey, const std::string& model) {

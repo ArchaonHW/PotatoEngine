@@ -11,6 +11,7 @@
 #include <unordered_map>
 #include <memory>
 #include <cctype>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <cmath>
@@ -93,6 +94,90 @@ public:
     const std::vector<JsonValue>& AsArray() const {
         static const std::vector<JsonValue> empty;
         return (type == Type::Array) ? arrayValue : empty;
+    }
+
+    // ---- 序列化 ----
+    // 緊湊 JSON 輸出（number 為整數時不帶小數點；object key 順序
+    // 依 unordered_map 不定——僅作 wire/除錯輸出非穩定格式）
+    std::string Dump() const {
+        std::string out;
+        DumpInto(out);
+        return out;
+    }
+    void DumpInto(std::string& out) const {
+        switch (type) {
+            case Type::Null:
+                out += "null";
+                return;
+            case Type::Bool:
+                out += boolValue ? "true" : "false";
+                return;
+            case Type::Number: {
+                if (numberValue == std::floor(numberValue) &&
+                    std::fabs(numberValue) < 1e15) {
+                    out += std::to_string(
+                        static_cast<long long>(numberValue));
+                    return;
+                }
+                char buf[40];
+                std::snprintf(buf, sizeof(buf), "%.12g",
+                              numberValue);
+                out += buf;
+                return;
+            }
+            case Type::String:
+                out += '"';
+                DumpString(out, stringValue);
+                out += '"';
+                return;
+            case Type::Array: {
+                out += '[';
+                for (size_t i = 0; i < arrayValue.size(); ++i) {
+                    if (i) out += ',';
+                    arrayValue[i].DumpInto(out);
+                }
+                out += ']';
+                return;
+            }
+            case Type::Object: {
+                out += '{';
+                bool first = true;
+                for (const auto& kv : objectValue) {
+                    if (!first) out += ',';
+                    first = false;
+                    out += '"';
+                    DumpString(out, kv.first);
+                    out += "\":";
+                    kv.second.DumpInto(out);
+                }
+                out += '}';
+                return;
+            }
+        }
+    }
+    static void DumpString(std::string& out, const std::string& s) {
+        for (const char ch : s) {
+            const unsigned char c =
+                static_cast<unsigned char>(ch);
+            switch (c) {
+                case '"':  out += "\\\""; break;
+                case '\\': out += "\\\\"; break;
+                case '\b': out += "\\b";  break;
+                case '\f': out += "\\f";  break;
+                case '\n': out += "\\n";  break;
+                case '\r': out += "\\r";  break;
+                case '\t': out += "\\t";  break;
+                default:
+                    if (c < 0x20) {
+                        char buf[8];
+                        std::snprintf(buf, sizeof(buf),
+                                      "\\u%04x", c);
+                        out += buf;
+                    } else {
+                        out += ch;
+                    }
+            }
+        }
     }
 
     // ---- 解析 ----

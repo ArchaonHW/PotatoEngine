@@ -32,6 +32,7 @@
 #include "Serialization/JsonParser.h"
 
 #include <atomic>
+#include <cmath>
 #include <cstdio>
 #include <deque>
 #include <memory>
@@ -79,6 +80,23 @@ std::string JsonEsc(const std::string& s) {
 std::string JQ(const std::string& s) { return "\"" + JsonEsc(s) + "\""; }
 
 std::string JBool(bool b) { return b ? "true" : "false"; }
+
+// JsonValue 最小序列化——委派 JsonValue::Dump
+// （arguments input object → arguments JSON 用）
+std::string JsonMin(const JsonValue& v) {
+    return v.Dump();
+}
+
+// arguments 欄位可能是已序列化 JSON 字串或任意字串——
+// 前者原樣輸出,後者 JQ 包成字串,保證外層 JSON 合法
+std::string JArgs(const std::string& args) {
+    if (args.empty()) return "{}";
+    JsonValue probe;
+    if (JsonValue::ParseOk(args, probe) &&
+        (probe.IsObject() || probe.IsArray()))
+        return args;
+    return JQ(args);
+}
 
 std::string JErr(const std::string& err) {
     return "{\"success\":false,\"error\":" + JQ(err) + "}";
@@ -189,6 +207,19 @@ MessageRole ParseRole(const std::string& role) {
     return MessageRole::User;
 }
 
+// {id,name,arguments} → ToolCall；arguments 允許字串或 object
+ToolCall ParseToolCall(const JsonValue& j) {
+    ToolCall tc;
+    tc.id = j["id"].AsString();
+    tc.name = j["name"].AsString();
+    tc.arguments = j["arguments"].AsString();
+    if (tc.arguments.empty() && !j["arguments"].IsNull()) {
+        // object/array 形式——最小序列化轉回字串
+        tc.arguments = JsonMin(j["arguments"]);
+    }
+    return tc;
+}
+
 std::vector<ChatMessage> ParseMessages(const JsonValue& arr) {
     std::vector<ChatMessage> out;
     for (const auto& m : arr.AsArray()) {
@@ -196,20 +227,58 @@ std::vector<ChatMessage> ParseMessages(const JsonValue& arr) {
         msg.role = ParseRole(m["role"].AsString("user"));
         msg.content = m["content"].AsString();
         msg.name = m["name"].AsString();
+        msg.toolCallId = m["toolCallId"].AsString(
+            m["tool_call_id"].AsString());
+        for (const auto& tc : m["toolCalls"].AsArray()) {
+            msg.toolCalls.push_back(ParseToolCall(tc));
+        }
         out.push_back(std::move(msg));
     }
     return out;
 }
 
+// {name,description,parameters|schema} → ToolDefinition
+std::vector<ToolDefinition> ParseToolDefs(const JsonValue& arr) {
+    std::vector<ToolDefinition> out;
+    for (const auto& t : arr.AsArray()) {
+        ToolDefinition d;
+        d.name = t["name"].AsString();
+        d.description = t["description"].AsString();
+        // parameters 可直接給字串或 object
+        const JsonValue& schema = t["parameters"].IsNull()
+            ? t["schema"] : t["parameters"];
+        if (schema.IsString()) {
+            d.parametersSchema = schema.AsString();
+        } else if (!schema.IsNull()) {
+            d.parametersSchema = JsonMin(schema);
+        }
+        if (d.parametersSchema.empty()) {
+            d.parametersSchema = "{\"type\":\"object\"}";
+        }
+        if (!d.name.empty()) out.push_back(std::move(d));
+    }
+    return out;
+}
+
 std::string LLMResponseToJson(const LLMResponse& r) {
-    return "{"
+    std::string out = "{"
         "\"success\":" + JBool(r.success) +
         ",\"content\":" + JQ(r.content) +
         ",\"finishReason\":" + JQ(r.finishReason) +
         ",\"promptTokens\":" + std::to_string(r.promptTokens) +
         ",\"completionTokens\":" + std::to_string(r.completionTokens) +
         ",\"totalTokens\":" + std::to_string(r.totalTokens) +
-        ",\"error\":" + JQ(r.error) + "}";
+        ",\"toolCalls\":[";
+    bool first = true;
+    for (const auto& tc : r.toolCalls) {
+        if (!first) out += ",";
+        first = false;
+        out += "{\"id\":" + JQ(tc.id) +
+               ",\"name\":" + JQ(tc.name) +
+               ",\"arguments\":" + JArgs(tc.arguments) + "}";
+    }
+    out += "],\"error\":" + JQ(r.error) + "}";
+    return out;
 }
 
 // ============================================================================
@@ -297,8 +366,11 @@ extern "C" {
 
 // nChat(configJson, messagesJson) → LLMResponse JSON。
 // configJson: {provider:"openai"|"anthropic"|"local", apiKey, model,
-//              modelPath, baseURL, temperature, topP, maxTokens, stop[]}
-// messagesJson: [{role:"system"|"user"|"assistant"|"tool", content, name?}]
+//              modelPath, baseURL, temperature, topP, maxTokens, stop[],
+//              tools?:[{name,description,parameters|schema}]}
+//   —— tools 存在時走 ChatCompletionWithTools（LLM 可回 toolCalls）
+// messagesJson: [{role:"system"|"user"|"assistant"|"tool", content, name?,
+//               toolCallId?, toolCalls?}]
 JNIEXPORT jstring JNICALL Java_com_potato_agent_jni_NativeLlm_nChat(
     JNIEnv* env, jclass, jstring jConfig, jstring jMessages) {
     JsonValue cfg = JsonValue::Parse(JToUtf8(env, jConfig));
@@ -310,8 +382,13 @@ JNIEXPORT jstring JNICALL Java_com_potato_agent_jni_NativeLlm_nChat(
     if (!client) {
         return ToJString(env, JErr("未知 provider: " + cfg["provider"].AsString()));
     }
-    LLMResponse r = client->ChatCompletion(ParseMessages(msgs),
-                                           ParseLLMConfig(cfg));
+    const LLMConfig llmCfg = ParseLLMConfig(cfg);
+    const std::vector<ChatMessage> chat = ParseMessages(msgs);
+    const std::vector<ToolDefinition> tools =
+        ParseToolDefs(cfg["tools"]);
+    LLMResponse r = tools.empty()
+        ? client->ChatCompletion(chat, llmCfg)
+        : client->ChatCompletionWithTools(chat, tools, llmCfg);
     return ToJString(env, LLMResponseToJson(r));
 }
 

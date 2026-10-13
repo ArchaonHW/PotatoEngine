@@ -36,17 +36,34 @@ enum class MessageRole {
 };
 
 /**
+ * Tool Call
+ */
+struct ToolCall {
+    std::string id;
+    std::string name;
+    std::string arguments;  // JSON string
+
+    ToolCall() {
+    }
+};
+
+/**
  * Chat Message
  */
 struct ChatMessage {
     MessageRole role;
     std::string content;
     std::string name;  // Optional name for the message
-    
+    // role=Tool 時回填觸發該結果的 tool_call id——
+    // OpenAI tool_call_id / Anthropic tool_result.tool_use_id
+    std::string toolCallId;
+    // assistant 發出工具請求時回填（回放 messages 需原樣帶回）
+    std::vector<ToolCall> toolCalls;
+
     ChatMessage()
         : role(MessageRole::User) {
     }
-    
+
     ChatMessage(MessageRole r, const std::string& c)
         : role(r), content(c) {
     }
@@ -64,7 +81,10 @@ struct LLMResponse {
     float confidence;
     bool success;
     std::string error;
-    
+    // LLM 要求執行的工具呼叫（OpenAI tool_calls /
+    // Anthropic tool_use）——空表示純文字回應
+    std::vector<ToolCall> toolCalls;
+
     LLMResponse()
         : promptTokens(0)
         , completionTokens(0)
@@ -98,18 +118,6 @@ struct LLMConfig {
         , frequencyPenalty(0)
         , presencePenalty(0)
         , stream(false) {
-    }
-};
-
-/**
- * Tool Call
- */
-struct ToolCall {
-    std::string id;
-    std::string name;
-    std::string arguments;  // JSON string
-    
-    ToolCall() {
     }
 };
 
@@ -317,7 +325,9 @@ private:
 
     std::string EffectiveBase(const LLMConfig& config) const;
     LLMResponse ChatViaHttp(const std::vector<ChatMessage>& messages,
-                            const LLMConfig& config);
+                            const LLMConfig& config,
+                            const std::vector<ToolDefinition>* tools =
+                                nullptr);
     std::string MakeLocalRequest(const std::string& prompt);
     LLMResponse ParseLocalResponse(const std::string& response);
 };
@@ -436,6 +446,11 @@ namespace LLMUtils {
     // Validation
     bool ValidateMessages(const std::vector<ChatMessage>& messages);
     bool ValidateToolDefinitions(const std::vector<ToolDefinition>& tools);
+
+    // Wire-format response parsers（與各家 client 內部共用——
+    // 無 HTTP 也能驗證 wire 格式,含 tool_calls/tool_use 提取）
+    LLMResponse ParseOpenAiResponseJson(const std::string& json);
+    LLMResponse ParseAnthropicResponseJson(const std::string& json);
 }
 
 } // namespace AI
