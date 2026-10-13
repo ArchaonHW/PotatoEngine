@@ -151,6 +151,161 @@ int main() {
             LLMToolBridge::ToolResultMessage(call, bad);
         Check(m2.content.find("ERROR") != std::string::npos,
               "ToolResultMessage 錯誤路徑包 ERROR:");
+        call.id = "call_42";
+        const ChatMessage m3 =
+            LLMToolBridge::ToolResultMessage(call, ok);
+        Check(m3.toolCallId == "call_42",
+              "ToolResultMessage 帶回 tool_call_id");
+    }
+
+    // ---- OpenAI wire 回應解析 ----
+    {
+        const std::string wire = R"({"choices":[{"message":{
+            "role":"assistant","content":null,
+            "tool_calls":[{"id":"call_1","type":"function",
+            "function":{"name":"zeta_eval",
+            "arguments":"{\"sigma\":\"2\",\"t\":\"0\"}"}}]},
+            "finish_reason":"tool_calls"}],
+            "usage":{"prompt_tokens":10,"completion_tokens":5,
+            "total_tokens":15}})";
+        const LLMResponse r =
+            LLMUtils::ParseOpenAiResponseJson(wire);
+        Check(r.success && r.toolCalls.size() == 1,
+              "OpenAI wire 解析出 tool_calls");
+        if (r.toolCalls.size() == 1) {
+            Check(r.toolCalls[0].id == "call_1" &&
+                      r.toolCalls[0].name == "zeta_eval" &&
+                      r.toolCalls[0].arguments.find(
+                          "\"sigma\"") != std::string::npos,
+                  "OpenAI tool_call id/name/arguments");
+        }
+    }
+    {
+        // 多 tool_calls + content 並存 + Unicode arguments
+        const std::string wire = R"({"choices":[{"message":{
+            "role":"assistant","content":"我先查兩項",
+            "tool_calls":[
+              {"id":"c1","function":{"name":"a",
+               "arguments":"{}"}},
+              {"id":"c2","function":{"name":"b",
+               "arguments":"{\"x\":\"中\"}"}}]},
+            "finish_reason":"tool_calls"}]})";
+        const LLMResponse r =
+            LLMUtils::ParseOpenAiResponseJson(wire);
+        Check(r.success && r.toolCalls.size() == 2 &&
+                  r.content == "我先查兩項" &&
+                  r.toolCalls[1].arguments.find("中") !=
+                      std::string::npos,
+              "OpenAI 多 tool_calls + Unicode arguments");
+    }
+    {
+        const LLMResponse r =
+            LLMUtils::ParseOpenAiResponseJson("not json");
+        Check(!r.success && !r.error.empty(),
+              "OpenAI wire 壞 JSON 安全失敗");
+        const LLMResponse r2 =
+            LLMUtils::ParseOpenAiResponseJson(
+                "{\"choices\":[{\"message\":{\"content\":\"hi\"}}]}");
+        Check(r2.success && r2.toolCalls.empty() &&
+                  r2.content == "hi",
+              "OpenAI 純文字回應無 tool_calls");
+    }
+
+    // ---- Anthropic wire 回應解析 ----
+    {
+        const std::string wire = R"({"content":[
+            {"type":"text","text":"查一下"},
+            {"type":"tool_use","id":"toolu_1",
+             "name":"zeta_mertens",
+             "input":{"x":1000}}],
+            "stop_reason":"tool_use",
+            "usage":{"input_tokens":7,"output_tokens":3}})";
+        const LLMResponse r =
+            LLMUtils::ParseAnthropicResponseJson(wire);
+        Check(r.success && r.content == "查一下" &&
+                  r.toolCalls.size() == 1,
+              "Anthropic 解析 text + tool_use");
+        if (r.toolCalls.size() == 1)
+            Check(r.toolCalls[0].id == "toolu_1" &&
+                      r.toolCalls[0].name == "zeta_mertens" &&
+                      r.toolCalls[0].arguments.find(
+                          "1000") != std::string::npos,
+                  "Anthropic tool_use input→arguments");
+    }
+    {
+        const LLMResponse r =
+            LLMUtils::ParseAnthropicResponseJson("{bad");
+        Check(!r.success && !r.error.empty(),
+              "Anthropic 壞 JSON 安全失敗");
+    }
+
+    // ---- ParseToolCall / ExtractToolCalls ----
+    {
+        const ToolCall c = LLMUtils::ParseToolCall(
+            R"({"id":"k9","function":{"name":"f","arguments":"{\"a\":1}"}})");
+        Check(c.id == "k9" && c.name == "f" &&
+                  c.arguments.find("\"a\"") != std::string::npos,
+              "ParseToolCall 巢狀 function 型");
+        const ToolCall flat = LLMUtils::ParseToolCall(
+            R"({"id":"k","name":"g","arguments":{"a":2}})");
+        Check(flat.name == "g" &&
+                  flat.arguments.find("2") != std::string::npos,
+              "ParseToolCall 扁平+object arguments");
+        const ToolCall bad =
+            LLMUtils::ParseToolCall("not json");
+        Check(bad.name.empty(), "ParseToolCall 壞 JSON→空");
+    }
+
+    // ---- 端到端 loop：scripted 回應→解析→派發→回填→第二輪 ----
+    {
+        const LLMResponse r1 =
+            LLMUtils::ParseOpenAiResponseJson(
+                R"({"choices":[{"message":{"role":"assistant",
+                "content":null,"tool_calls":[{"id":"call_z",
+                "type":"function","function":{"name":"zeta_eval",
+                "arguments":"{\"sigma\":\"2\"}"}}]},
+                "finish_reason":"tool_calls"}]})");
+        Check(r1.success && r1.toolCalls.size() == 1,
+              "loop 第一輪解析");
+
+        std::vector<ChatMessage> convo;
+        ChatMessage user;
+        user.role = MessageRole::User;
+        user.content = "zeta(2)=?";
+        convo.push_back(user);
+
+        ChatMessage asst;
+        asst.role = MessageRole::Assistant;
+        asst.content = r1.content;
+        asst.toolCalls = r1.toolCalls;
+        convo.push_back(asst);
+
+        for (const auto& tc : r1.toolCalls) {
+            const ToolResult tr =
+                LLMToolBridge::ExecuteToolCall(reg, tc);
+            Check(tr.success &&
+                      tr.output.find("1.644934") !=
+                          std::string::npos,
+                  "loop 派發 zeta_eval");
+            convo.push_back(
+                LLMToolBridge::ToolResultMessage(tc, tr));
+        }
+        Check(convo.size() == 3 &&
+                  convo[2].role == MessageRole::Tool &&
+                  convo[2].toolCallId == "call_z" &&
+                  convo[2].content.find("1.644934") !=
+                      std::string::npos,
+              "loop tool 訊息回填含結果+id");
+
+        const LLMResponse r2 =
+            LLMUtils::ParseOpenAiResponseJson(
+                R"({"choices":[{"message":{"role":"assistant",
+                "content":"ζ(2)=π²/6≈1.644934"},
+                "finish_reason":"stop"}]})");
+        Check(r2.success && r2.toolCalls.empty() &&
+                  r2.content.find("1.644934") !=
+                      std::string::npos,
+              "loop 第二輪純文字收尾");
     }
 
     printf("\n=== 結果 ===\n  PASS: %d\n  FAIL: %d\n",
