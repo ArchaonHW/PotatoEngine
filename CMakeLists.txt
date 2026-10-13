@@ -9,10 +9,6 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# 靜態庫會連進 PotatoAgentJni(.so) 等 shared 物件——非 MSVC 下所有 target
-# 啟用位置無關碼（MSVC 無此概念，屬性被忽略）
-set(CMAKE_POSITION_INDEPENDENT_CODE ON)
-
 # 設置輸出目錄
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
@@ -38,11 +34,7 @@ if(POTATO_SECURITY_HARDENING)
         add_link_options(/DYNAMICBASE /NXCOMPAT /HIGHENTROPYVA /GUARD:CF /CETCOMPAT)
     else()
         # 堆疊保護 + PIE (位置無關執行檔，啟用 ASLR)
-        # -fPIE 只套執行檔：其物件的 PC32 relocation 進不了 shared 物件
-        # （PotatoAgentJni/FakeCheatModule 與 static lib 一律走
-        #  CMAKE_POSITION_INDEPENDENT_CODE 的 -fPIC）
-        add_compile_options(-fstack-protector-strong -fstack-clash-protection
-            $<$<STREQUAL:$<TARGET_PROPERTY:TYPE>,EXECUTABLE>:-fPIE>)
+        add_compile_options(-fstack-protector-strong -fstack-clash-protection -fPIE)
         if(WIN32)
             # MinGW: PE 格式加固(-pie 只能套用於執行檔,SHARED/MODULE 庫加上會導致要求 WinMain)
             add_link_options(
@@ -235,10 +227,11 @@ target_link_libraries(PotatoEngine
 # Windows: psapi.lib（Security 模組的模組枚舉用；MSVC 由 #pragma comment 處理，MinGW 需顯式連結）
 # wintrust: Authenticode 簽章驗證;bcrypt: BCryptGenRandom 隨機數
 # ws2_32: Networking UdpSocket 的 Winsock2
+# winhttp: Networking HttpClient 的 WinHTTP（MSVC 亦有 #pragma comment 雙保險）
 if(WIN32 AND NOT MSVC)
-    target_link_libraries(PotatoEngine psapi wintrust bcrypt ws2_32)
+    target_link_libraries(PotatoEngine psapi wintrust bcrypt ws2_32 winhttp)
 elseif(MSVC)
-    target_link_libraries(PotatoEngine ws2_32)
+    target_link_libraries(PotatoEngine ws2_32 winhttp)
 endif()
 
 target_compile_definitions(PotatoEngine PRIVATE POTATO_ENGINE_VERSION="${PROJECT_VERSION}")
@@ -270,10 +263,14 @@ target_include_directories(AIAgentSystem PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/AI)
 # AI 增強模塊 - LLM 整合
 add_library(LLMIntegration STATIC AI/LLMIntegration.cpp)
 target_include_directories(LLMIntegration PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/AI)
+# HttpClient::Post 在 PotatoEngine（Networking/*）——不連則消費端
+# 只連 AI libs 時（如 UltimateAIAgentDemo）ld 報 undefined reference
+target_link_libraries(LLMIntegration PotatoEngine)
 
 # AI 增強模塊 - RAG 系統
 add_library(RAGSystem STATIC AI/RAGSystem.cpp)
 target_include_directories(RAGSystem PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/AI)
+target_link_libraries(RAGSystem PotatoEngine)
 
 # AI 增強模塊 - Agent 鏈
 add_library(AgentChain STATIC AI/AgentChain.cpp)
@@ -283,6 +280,25 @@ target_link_libraries(AgentChain LLMIntegration ToolFramework AIAgentSystem)
 # AI 增強模塊 - 工具框架
 add_library(ToolFramework STATIC AI/ToolFramework.cpp)
 target_include_directories(ToolFramework PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/AI)
+
+# Agent 繪圖工具橋接（RenderingServer ↔ ToolFramework；
+# headless/GL 皆可用——Dummy rasterizer 下 agent 可模擬繪圖）
+add_library(RenderAgentTools STATIC AI/RenderAgentTools.cpp)
+target_include_directories(RenderAgentTools PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(RenderAgentTools ToolFramework PotatoEngine)
+
+# Agent 解析數論工具橋接（MathUtils/RiemannZeta ↔ ToolFramework；
+# 全 headless 純 CPU——ζ/L 求值、零點掃描、RH 等價判據）
+add_library(ZetaAgentTools STATIC AI/ZetaAgentTools.cpp)
+target_include_directories(ZetaAgentTools PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(ZetaAgentTools ToolFramework)
+
+# LLM function-calling ↔ ToolRegistry 橋接：registry 序列化成
+# ToolDefinition schema,ToolCall.arguments JSON 解析回 string map
+# 派發——LLM 由此直接驅動 render_*/zeta_* 工具
+add_library(LLMToolBridge STATIC AI/LLMToolBridge.cpp)
+target_include_directories(LLMToolBridge PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(LLMToolBridge LLMIntegration ToolFramework)
 
 # AI 增強模塊 - 智能開發系統
 add_library(IntelligentDevelopmentSystem STATIC AI/IntelligentDevelopmentSystem.cpp)
@@ -373,12 +389,18 @@ target_link_libraries(AIAgentTrainer ReinforcementLearning)
 # 需要 JDK；find_package(JNI) 找不到就跳過，不影響其餘建置
 find_package(JNI)
 if(JNI_FOUND)
-    add_library(PotatoAgentJni SHARED java/native/PotatoAgentJni.cpp)
+    add_library(PotatoAgentJni SHARED
+        java/native/PotatoAgentJni.cpp      # RL GridWorld session API
+        java/native/PotatoAgentExtJni.cpp   # LLM/Chain/RAG/Render/Ledger API
+    )
     target_include_directories(PotatoAgentJni PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR} ${JNI_INCLUDE_DIRS})
     # MinGW 預設加 lib 前綴；Java 端搜尋固定檔名故去掉
     set_target_properties(PotatoAgentJni PROPERTIES PREFIX "")
-    target_link_libraries(PotatoAgentJni ReinforcementLearning NeuralNetwork)
+    target_link_libraries(PotatoAgentJni
+        ReinforcementLearning NeuralNetwork
+        AgentChain LLMIntegration RAGSystem ToolFramework
+        RenderAgentTools ZetaAgentTools PotatoEngine)
 else()
     message(STATUS "JNI not found - skipping PotatoAgentJni (java/ Spring layer needs it)")
 endif()
@@ -643,6 +665,13 @@ add_executable(DeferredRendererTest Examples/DeferredRendererTest.cpp)
 target_include_directories(DeferredRendererTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(DeferredRendererTest PotatoEngine glad glfw)
 
+# RenderingServer（Godot 式 RID server/culler/rasterizer 分層）
+# 全 headless 測試：RID 代際、canvas 剔除/z-order、scene cull、
+# dummy rasterizer 指令流、agent 工具端到端
+add_executable(RenderingServerTest Examples/RenderingServerTest.cpp)
+target_include_directories(RenderingServerTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(RenderingServerTest PotatoEngine RenderAgentTools ToolFramework NeuralNetwork)
+
 # GPU instanced 精靈批次測試（headless pack/sort；GL 段 SKIP）
 add_executable(SpriteBatcherTest Examples/SpriteBatcherTest.cpp)
 target_include_directories(SpriteBatcherTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -667,6 +696,27 @@ target_link_libraries(SkyboxTest PotatoEngine glad glfw)
 add_executable(RiemannExplorerTest Examples/RiemannExplorerTest.cpp)
 target_include_directories(RiemannExplorerTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(RiemannExplorerTest PotatoEngine)
+
+add_executable(RiemannExplorer2Test Examples/RiemannExplorer2Test.cpp)
+target_include_directories(RiemannExplorer2Test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(RiemannExplorer2Test PotatoEngine)
+
+add_executable(ZetaAgentToolsTest Examples/ZetaAgentToolsTest.cpp)
+target_include_directories(ZetaAgentToolsTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(ZetaAgentToolsTest ZetaAgentTools ToolFramework)
+
+# LLM function-calling ↔ ToolRegistry 橋測試（headless）
+add_executable(LLMToolBridgeTest Examples/LLMToolBridgeTest.cpp)
+target_include_directories(LLMToolBridgeTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(LLMToolBridgeTest LLMToolBridge ZetaAgentTools ToolFramework LLMIntegration)
+
+add_executable(RiemannExplorer3Test Examples/RiemannExplorer3Test.cpp)
+target_include_directories(RiemannExplorer3Test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(RiemannExplorer3Test PotatoEngine)
+
+add_executable(RiemannExplorer4Test Examples/RiemannExplorer4Test.cpp)
+target_include_directories(RiemannExplorer4Test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(RiemannExplorer4Test PotatoEngine)
 
 # 立即模式圖元批次 + 程序化 3D 網格測試（headless 頂點驗證；GL 段 SKIP）
 add_executable(PrimitiveDrawTest Examples/PrimitiveDrawTest.cpp)
@@ -809,9 +859,15 @@ set(POTATO_TESTS
     SkyboxTest
     RLTest
     RiemannExplorerTest
+    RiemannExplorer2Test
+    RiemannExplorer3Test
+    RiemannExplorer4Test
+    ZetaAgentToolsTest
+    LLMToolBridgeTest
     PrimitiveDrawTest
     ToolFrameworkTest
     AgentChainTest
+    RenderingServerTest
 )
 foreach(test_name IN LISTS POTATO_TESTS)
     if(TARGET ${test_name})
