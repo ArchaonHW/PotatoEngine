@@ -6,20 +6,26 @@ spring:
     name: api-gateway
   cloud:
     gateway:
-      routes:
-        - id: agent-websocket
-          uri: lb:ws://agent-service
-          predicates:
-            - Path=/ws/**
-        - id: agent-api
-          uri: lb://agent-service
-          predicates:
-            - Path=/api/**
-        - id: agent-ui
-          uri: lb://agent-service
-          predicates:
-            - Path=/**
-          order: 10
+      server:
+        webflux:
+          routes:
+            - id: agent-websocket
+              uri: lb:ws://agent-service
+              predicates:
+                - Path=/ws/**
+            - id: web3-api
+              uri: lb://web3-service
+              predicates:
+                - Path=/api/web3/**
+            - id: agent-api
+              uri: lb://agent-service
+              predicates:
+                - Path=/api/**
+            - id: agent-ui
+              uri: lb://agent-service
+              predicates:
+                - Path=/**
+              order: 10
 
 eureka:
   client:
