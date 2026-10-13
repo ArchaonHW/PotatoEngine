@@ -665,13 +665,19 @@ add_executable(PrimitiveDrawTest Examples/PrimitiveDrawTest.cpp)
 target_include_directories(PrimitiveDrawTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(PrimitiveDrawTest PotatoEngine glad glfw)
 
+# 源碼未進 repo 的測試以 EXISTS 守衛——POTATO_TESTS 白名單
+# 本就允許 target 缺席（foreach 內 if(TARGET)）
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/Examples/ToolFrameworkTest.cpp)
 add_executable(ToolFrameworkTest Examples/ToolFrameworkTest.cpp)
 target_include_directories(ToolFrameworkTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(ToolFrameworkTest ToolFramework)
+endif()
 
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/Examples/AgentChainTest.cpp)
 add_executable(AgentChainTest Examples/AgentChainTest.cpp)
 target_include_directories(AgentChainTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(AgentChainTest AgentChain ToolFramework AIAgentSystem LLMIntegration)
+endif()
 
 # 專案運營系統動力學示範：以 SDModel 模擬引擎開發存量-流量（工具非測試）
 add_executable(ProjectOpsDemo Examples/ProjectOpsDemo.cpp)
