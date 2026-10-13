@@ -11,6 +11,7 @@
 #include "Game/Render/BattleView.h"
 #include "Game/Render/Framebuffer.h"
 #include "Game/Render/MapProjection.h"
+#include "Game/Render/ReportView.h"
 #include "Game/Render/SpriteAtlas.h"
 #include "Gameplay/Fog/QuantumFog.h"
 #include "Gameplay/Json/JsonValue.h"
@@ -20,10 +21,13 @@
 #include <cstdio>
 #include <string>
 
+namespace Game = Potato::Game;
 using Potato::Game::BattleViewInput;
 using Potato::Game::Framebuffer;
 using Potato::Game::MapProjection;
 using Potato::Game::RenderBattleView;
+using Potato::Game::RenderReportPage;
+using Potato::Game::ReportInput;
 using Potato::Game::Rgba;
 using Potato::Game::SpriteAtlas;
 using Potato::Gameplay::BattleMap;
@@ -335,7 +339,7 @@ int main() {
     {
         using Potato::Game::BuildHudLayout;
         using Potato::Game::HudCell;
-        using Potato::Game::HudDensity;
+        using Potato::Game::HudVerbosity;
         using Potato::Game::HudInput;
         using Potato::Game::RenderHud;
         using Potato::Gameplay::BattleBeat;
@@ -425,7 +429,7 @@ int main() {
         a2.active = false; // inactive arrows draw nothing
         const PlanArrow arr[2] = {a1, a2};
         pl.arrows = arr;
-        pl.density = HudDensity::Full;
+        pl.verbosity = HudVerbosity::Full;
         auto pll = BuildHudLayout(pl);
         Check(count(pll, HudCell::SquadHeader) == 1 &&
                   count(pll, HudCell::CardTile) == 3 &&
@@ -439,13 +443,13 @@ int main() {
 
         // Density is a runtime field: Minimal strips bars+arrows
         // without touching the same input struct.
-        pl.density = HudDensity::Minimal;
+        pl.verbosity = HudVerbosity::Minimal;
         auto plm = BuildHudLayout(pl);
         Check(count(plm, HudCell::CardTile) == 3 &&
                   count(plm, HudCell::CooldownBar) == 0 &&
                   count(plm, HudCell::ArrowRow) == 0,
               "hud: minimal density strips chrome");
-        pl.density = HudDensity::Standard;
+        pl.verbosity = HudVerbosity::Standard;
         Check(count(BuildHudLayout(pl), HudCell::CooldownBar) ==
                   0 &&
                   count(BuildHudLayout(pl), HudCell::ArrowRow) ==
@@ -480,6 +484,37 @@ int main() {
             return i;
         }());
         Check(!bad.ok(), "hud: degenerate bounds reject");
+    }
+
+    // ===== ReportView — the aftermath page chrome =====
+    {
+        ReportInput rin;
+        rin.seal = 4242;
+        auto p1 = RenderReportPage(rin);
+        auto p2 = RenderReportPage(rin);
+        Check(p1.ok() && p2.ok() &&
+                  p1.value.Hash() == p2.value.Hash(),
+              "report: page render deterministic");
+        // The seal is content — a different battle's stamp
+        // differs on the same page.
+        rin.seal = 99;
+        auto p3 = RenderReportPage(rin);
+        Check(p3.ok() && p3.value.Hash() != p1.value.Hash(),
+              "report: seal changes the page");
+        rin.seal = 0;
+        auto p4 = RenderReportPage(rin);
+        Check(p4.ok() && p4.value.Hash() != p1.value.Hash(),
+              "report: unsealed page differs");
+        Check(p4.value.PixelAt(160, 40).a == 255,
+              "report: paper painted inside the sheet");
+        Check(p4.value.PixelAt(10, 10).a == 255,
+              "report: desk painted outside the sheet");
+        auto bad = RenderReportPage([&] {
+            ReportInput i;
+            i.w = 0;
+            return i;
+        }());
+        Check(!bad.ok(), "report: degenerate dims reject");
     }
 
     std::printf(failures ? "RENDER TESTS FAILED: %d\n"

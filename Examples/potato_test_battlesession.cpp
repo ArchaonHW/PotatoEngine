@@ -53,6 +53,15 @@ const char* MAP_DOC = R"json({
     "edges": [["r0", "r1"], ["r1", "r2"]]
 })json";
 
+// r3 hangs off r2 — a Cunning feint's non-path neighbor (the
+// chain leaves none).
+const char* BRANCH_DOC = R"json({
+    "schema": "potato.map/1", "id": "branch",
+    "regions": [{"id": "r0"}, {"id": "r1"}, {"id": "r2"},
+                {"id": "r3"}],
+    "edges": [["r0", "r1"], ["r1", "r2"], ["r2", "r3"]]
+})json";
+
 const char* SQUAD_DOC = R"json({
     "schema": "potato.squad/1",
     "squads": [
@@ -409,6 +418,49 @@ int main() {
         Check(s3.Controller().Checksum() ==
                   s4.Controller().Checksum(),
               "ai: checksums identical across pump splits");
+    }
+
+    // ===== PlanDeployed — the marshaled-battle planning seam =====
+    {
+        BattleSession sd(4242, bmap, cards, a.value.fog, {},
+                         eval);
+        Check(sd.Deploy(a.value), "pd: deploy on chain");
+        Gameplay::BattleAI def(7, 1, Gameplay::Prior::Defensive,
+                               bmap, cards);
+        Check(def.PlanDeployed(sd.Controller(), 0),
+              "pd: defensive plans on marshaled rows");
+        const auto& arr = sd.Controller().ArrowOf(1);
+        Check(arr.active && arr.path.size() == 2 &&
+                  arr.path[0] == 2 && arr.path[1] == 1,
+              "pd: defensive trims to first hop");
+        Check(!def.PlanDeployed(sd.Controller(), 99),
+              "pd: out-of-bounds objective rejected");
+        Check(sd.RequestExecution(), "pd: beat commits");
+        Check(!def.PlanDeployed(sd.Controller(), 0),
+              "pd: wrong beat rejected");
+
+        // Branched map — the Cunning feint plants the militia's
+        // believed position on r3 (the neighbor OFF its arrow).
+        Gameplay::BattleMap dmap =
+            Gameplay::BattleMap::FromJson(
+                Gameplay::JsonValue::Parse(BRANCH_DOC).value)
+                .value;
+        BattleSession sc(7, dmap, cards, {}, {}, eval);
+        Check(sc.Controller().DeploySquad(
+                  *squads.Find("militia"), 2, 1),
+              "pd: militia fields on branch");
+        Gameplay::BattleAI cun(7, 1, Gameplay::Prior::Cunning,
+                               dmap, cards);
+        Check(cun.PlanDeployed(sc.Controller(), 0),
+              "pd: cunning plans on branch");
+        const auto& clouds = sc.Controller().Fog(0).Clouds();
+        Check(!clouds.empty() && clouds[0].believedRegion == 3 &&
+                  clouds[0].certainty == 70,
+              "pd: feint plants false signature off-path");
+        Gameplay::BattleAI lone(7, 0, Gameplay::Prior::Cunning,
+                                dmap, cards);
+        Check(!lone.PlanDeployed(sc.Controller(), 0),
+              "pd: no own squads fails");
     }
 
     if (failures == 0) {
