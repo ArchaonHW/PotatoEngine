@@ -1992,7 +1992,7 @@ int main() {
                       std::string::npos,
               "6.3: unseen rival renders only the name");
         // Revision seam — proven-wrong claims confess inline.
-        const ClaimKind wrong[] = {ClaimKind::Temperament};
+        const DossierClaimKind wrong[] = {DossierClaimKind::Temperament};
         const std::string rr = RenderDossier(g, wrong);
         Check(rr.find("然近事駁之") != std::string::npos &&
                   rr.find("詭譎") != std::string::npos,
@@ -2034,7 +2034,7 @@ int main() {
               "distortion");
         // The dossier seam — false rival claims annotate.
         const auto pw = il.ProvenWrongFor("thefox");
-        Check(pw.size() == 1 && pw[0] == ClaimKind::Temperament,
+        Check(pw.size() == 1 && pw[0] == DossierClaimKind::Temperament,
               "6.4: false verdict maps to dossier revision");
         // Pending — briefing-time intel still unresolved.
         Check(il.PendingFor("ford-e3").size() == 1 &&

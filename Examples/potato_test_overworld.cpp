@@ -15,17 +15,25 @@
 #include "Game/Render/WorldProjection.h"
 #include "Game/Ui/CreationForm.h"
 #include "Game/Ui/OrderMenu.h"
+#include "Game/Ui/OverworldHud.h"
 #include "Campaign/Characters/Character.h"
 #include "Campaign/Ledger/Ledger.h"
+#include "Campaign/Narrative/Bencao.h"
+#include "Campaign/Narrative/BencaoCodex.h"
+#include "Campaign/Narrative/IntelLedger.h"
+#include "Campaign/Roster/Roster.h"
+#include "Campaign/State/CampaignState.h"
 #include "Campaign/World/Encounter.h"
 #include "Campaign/World/March.h"
 #include "Campaign/World/WorldMap.h"
 #include "Campaign/World/WorldState.h"
+#include "Gameplay/Doctrine/Doctrine.h"
 #include "Gameplay/Json/JsonValue.h"
 
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <set>
 #include <string>
 
 using Potato::Campaign::Account;
@@ -391,6 +399,317 @@ int main() {
         bad.name = std::string(200, 'x');
         Check(!BuildCharacter(bad).ok(),
               "creation: oversized name fails wire gate");
+    }
+
+    // ---------- 13.4: OverworldHud ----------
+    {
+        // Top bar reads day + anchor + the ledger folds — never
+        // a stored stat.
+        WorldState s = WorldState::Init(w, 42).value;
+        Ledger ledger;
+        Posting seed;
+        seed.credit = {Account::Materiel, 100};
+        seed.debit = {Account::ArmyPrestige, 100};
+        seed.memo = "war chest";
+        Check(ledger.Post(seed).ok(), "topbar: seed funds");
+        Posting gov;
+        gov.credit = {Account::PopularSupport, 20};
+        gov.debit = {Account::Materiel, 15};
+        gov.memo = "grain relief";
+        gov.tags = {"order:+3"};
+        Check(ledger.Post(gov).ok(), "topbar: governance post");
+        auto bar = Potato::Game::BuildTopBar(w, s, ledger);
+        Check(bar.day == 0 && bar.nodeId == "a",
+              "topbar: day + anchor");
+        Check(bar.nodeName == "a",
+              "topbar: unlabeled node falls back to id");
+        Check(bar.materiel == 85 && bar.popularSupport == 20 &&
+                  bar.order == 3,
+              "topbar: balances + governance folds");
+        Check(!bar.marching, "topbar: not marching");
+        Check(IssueMarch(s, w, ledger, "b").ok(),
+              "topbar: march issued");
+        bar = Potato::Game::BuildTopBar(w, s, ledger);
+        Check(bar.marching && bar.marchDestId == "b" &&
+                  bar.marchEta == 2,
+              "topbar: in-flight dest + eta");
+
+        // Tab titles — six sections, all named.
+        for (std::size_t i = 0;
+             i < Potato::Game::kOverworldTabCount; ++i) {
+            const char* t = Potato::Game::OverworldTabTitle(
+                static_cast<Potato::Game::OverworldTab>(i));
+            Check(t != nullptr && t[0] != '\0' && t[0] != '?',
+                  "drawer: every tab titled");
+        }
+        Check(std::string(Potato::Game::OverworldTabTitle(
+                  Potato::Game::OverworldTab::March)) == "行軍令",
+              "drawer: march tab is 行軍令");
+    }
+
+    // --- 遭遇 rows: only encounters firing NOW ---
+    {
+        const fs::path dir = TestDir();
+        WriteFile(dir, "enc.json",
+                  "{\"schema\":\"potato.encounter/1\","
+                  "\"id\":\"b_ambush\",\"node\":\"b\","
+                  "\"trigger\":\"arrival\",\"defenders\":["
+                  "{\"template\":\"m\",\"region\":0,"
+                  "\"deck\":[\"c1\",\"c2\",\"c3\"]}]}");
+        EncounterLibrary lib;
+        Check(EncounterLibrary::Load(dir, lib).ok,
+              "drawer: encounter library loads");
+        fs::remove(dir / "enc.json");
+        WorldState s = WorldState::Init(w, 42).value;
+        Check(Potato::Game::EncounterRows(s, w, lib).empty(),
+              "drawer: no firing encounters at 'a'");
+        s.SetWarband("b", w);
+        auto rows = Potato::Game::EncounterRows(s, w, lib);
+        Check(rows.size() == 1 && rows[0].id == "b_ambush" &&
+                  rows[0].trigger ==
+                      Potato::Campaign::EncounterTrigger::Arrival,
+              "drawer: firing encounter row");
+        Check(std::string(Potato::Game::EncTriggerLabel(
+                  Potato::Campaign::EncounterTrigger::Poi)) ==
+                  "要地",
+              "drawer: poi trigger label");
+        s.MarkResolved("b_ambush");
+        Check(Potato::Game::EncounterRows(s, w, lib).empty(),
+              "drawer: resolved encounter drops out");
+    }
+
+    // --- 情報 / 名冊 / 帳冊 rows ---
+    {
+        Potato::Campaign::IntelLedger intel;
+        Check(intel.Record("rival_a",
+                           Potato::Campaign::IntelKind::RivalTemperament,
+                           "其性多疑", 0).ok(),
+              "drawer: intel records");
+        Check(intel.Resolve(1,
+                            Potato::Campaign::IntelVerdict::False)
+                  .ok(),
+              "drawer: verdict lands");
+        auto irows = Potato::Game::IntelRows(intel);
+        Check(irows.size() == 1 && irows[0].seq == 1 &&
+                  irows[0].verdict ==
+                      Potato::Campaign::IntelVerdict::False,
+              "drawer: intel row carries verdict");
+
+        Potato::Campaign::CampaignState state;
+        Check(Potato::Campaign::Enlist(state, "第一營").ok(),
+              "drawer: enlist");
+        auto rrows = Potato::Game::SquadRows(state);
+        Check(rrows.size() == 1 && rrows[0].name == "第一營" &&
+                  !rrows[0].dead,
+              "drawer: roster row");
+        std::vector<Potato::Campaign::AftermathRow> report = {
+            {"第一營", 12, true}};
+        Check(Potato::Campaign::ApplyAftermath(state, report)
+                  .ok(),
+              "drawer: aftermath applies");
+        rrows = Potato::Game::SquadRows(state);
+        Check(rrows[0].dead && rrows[0].casualties == 12,
+              "drawer: memorial row stays visible");
+
+        Ledger ledger;
+        for (int i = 0; i < 3; ++i) {
+            Posting p;
+            p.credit = {Account::Materiel, 10};
+            p.debit = {Account::ArmyPrestige, 10};
+            p.memo = "entry " + std::to_string(i);
+            Check(ledger.Post(p).ok(), "drawer: post");
+        }
+        auto lrows = Potato::Game::LedgerRows(ledger, 2);
+        Check(lrows.size() == 2 && lrows[0].memo == "entry 1" &&
+                  lrows[1].memo == "entry 2",
+              "drawer: ledger tail is chronological");
+        Check(Potato::Game::LedgerRows(ledger, 0).empty(),
+              "drawer: zero tail is empty");
+    }
+
+    // --- 本草 rows: unlocked in delivery order + pending ---
+    {
+        const fs::path dir = TestDir();
+        WriteFile(dir, "h.json",
+                  "{\"schema\":\"potato.bencao/1\",\"id\":\"sanqi\","
+                  "\"category\":\"jinshi\",\"name\":\"三七\","
+                  "\"nature\":\"甘微苦溫\",\"indications\":\"止血\","
+                  "\"source\":\"卷一\","
+                  "\"unlock\":{\"kind\":\"ledger_tag\",\"tag\":\"x\"}}");
+        Potato::Campaign::BencaoLibrary lib;
+        Check(Potato::Campaign::BencaoLibrary::Load(dir, lib).ok &&
+                  lib.Size() == 1,
+              "drawer: bencao library loads");
+        fs::remove(dir / "h.json");
+        auto cod = Potato::Campaign::BencaoCodex::FromJson(
+            JsonValue::Parse(
+                "{\"schema\":\"potato.bencao_state/1\","
+                "\"unlocked\":[\"sanqi\"],"
+                "\"pending\":[{\"id\":\"ghost\",\"kind\":\"terrain\","
+                "\"detail\":\"forest\"}]}").value);
+        Check(cod.ok(), "drawer: codex doc parses");
+        auto crows = Potato::Game::CodexRows(lib, cod.value);
+        Check(crows.size() == 2 && crows[0].id == "sanqi" &&
+                  !crows[0].pending && crows[0].name == "三七" &&
+                  crows[0].category == "jinshi",
+              "drawer: unlocked page named + categorized");
+        Check(crows[1].pending && crows[1].id == "ghost" &&
+                  crows[1].name == "ghost",
+              "drawer: pending page falls back to id");
+    }
+
+    // ---------- 13.5: creation screen view-model ----------
+    {
+        Potato::Gameplay::DoctrineLibrary cards =
+            Potato::Gameplay::DoctrineLibrary::FromJson(
+                JsonValue::Parse(R"json({
+                    "schema": "potato.doctrine_cards/1",
+                    "cards": [
+                        {"id": "c_hold", "name": "堅守",
+                         "trigger": {"type": "always"},
+                         "action": {"type": "hold"}},
+                        {"id": "c_push", "name": "挺進",
+                         "trigger": {"type": "always"},
+                         "action": {"type": "move", "param": 0}},
+                        {"id": "c_brace",
+                         "trigger": {"type": "always"},
+                         "action": {"type": "brace", "param": 5}},
+                        {"id": "c_burn",
+                         "trigger": {"type": "always"},
+                         "action": {"type": "burn"}},
+                        {"id": "c_rest",
+                         "trigger": {"type": "always"},
+                         "action": {"type": "hold"}},
+                        {"id": "c_wait",
+                         "trigger": {"type": "always"},
+                         "action": {"type": "hold"}}
+                    ]
+                })json").value).value;
+
+        // Per-field validation — same bounds, field-attributed.
+        CreationForm form;
+        form.name = "tester";
+        form.origin = "nowhere";
+        Check(Potato::Game::ValidateForm(form).empty(),
+              "creation: valid form validates clean");
+        CreationForm bad = form;
+        bad.name = "";
+        auto errs = Potato::Game::ValidateForm(bad);
+        Check(errs.size() == 1 &&
+                  errs[0].field ==
+                      Potato::Game::CreationField::Name,
+              "creation: empty name flags Name");
+        bad = form;
+        bad.name = "   ";
+        errs = Potato::Game::ValidateForm(bad);
+        Check(errs.size() == 1 &&
+                  errs[0].message.find("blank") !=
+                      std::string::npos,
+              "creation: blank name flags blank");
+        bad = form;
+        bad.origin = std::string(200, 'x');
+        errs = Potato::Game::ValidateForm(bad);
+        Check(errs.size() == 1 &&
+                  errs[0].field ==
+                      Potato::Game::CreationField::Origin,
+              "creation: oversized origin flags Origin");
+        bad = form;
+        bad.deck.assign(40, "c");
+        errs = Potato::Game::ValidateForm(bad);
+        Check(errs.size() == 1 &&
+                  errs[0].field ==
+                      Potato::Game::CreationField::Deck,
+              "creation: oversized deck flags Deck");
+
+        // Gate-reason → field mapping for commit echo.
+        Check(Potato::Game::FieldForReason(
+                  "missing/empty/out-of-range 'origin'") ==
+                  Potato::Game::CreationField::Origin,
+              "creation: gate reason maps to field");
+        Check(Potato::Game::FieldForReason(
+                  "'deck_seed' must be an int") ==
+                  Potato::Game::CreationField::DeckSeed,
+              "creation: seed reason maps to DeckSeed");
+        Check(Potato::Game::FieldForReason(
+                  "name and origin are required") ==
+                  Potato::Game::CreationField::Name,
+              "creation: preflight reason maps to first field");
+
+        // Deterministic roll: same seed → same deck, 3..5
+        // distinct, all resolving.
+        const auto r1 = Potato::Game::RollDeck(42, cards);
+        const auto r2 = Potato::Game::RollDeck(42, cards);
+        Check(r1 == r2, "creation: roll is deterministic");
+        Check(r1.size() >= 3 && r1.size() <= 5,
+              "creation: roll within slot bounds");
+        {
+            std::set<std::string> uniq(r1.begin(), r1.end());
+            Check(uniq.size() == r1.size(),
+                  "creation: roll is distinct");
+            bool all = true;
+            for (const auto& id : r1) {
+                if (cards.Find(id) == nullptr) all = false;
+            }
+            Check(all, "creation: roll resolves in library");
+        }
+        Potato::Gameplay::DoctrineLibrary empty;
+        Check(Potato::Game::RollDeck(1, empty).empty(),
+              "creation: empty library → empty roll");
+
+        // Preview: explicit deck verbatim + unknown flags;
+        // empty deck previews the seed roll.
+        form.deck = {"c_hold", "ghost_card"};
+        auto prev = Potato::Game::PreviewDeck(form, cards);
+        Check(prev.size() == 2 && prev[0].resolved &&
+                  prev[0].name == "堅守" &&
+                  !prev[1].resolved &&
+                  prev[1].name == "ghost_card",
+              "creation: explicit preview flags unknown");
+        form.deck.clear();
+        form.deckSeed = 42;
+        prev = Potato::Game::PreviewDeck(form, cards);
+        Check(prev.size() == r1.size() &&
+                  prev[0].id == r1[0],
+              "creation: empty deck previews the roll");
+    }
+
+    // --- two-step march intent ---
+    {
+        WorldState s = WorldState::Init(w, 42).value;
+        Ledger ledger;
+        Posting seed;
+        seed.credit = {Account::Materiel, 100};
+        seed.debit = {Account::ArmyPrestige, 100};
+        seed.memo = "war chest";
+        Check(ledger.Post(seed).ok(), "intent: seed funds");
+        Potato::Game::MarchIntent intent;
+        Check(!intent.Pending(), "intent: starts unstaged");
+        auto miss = intent.Confirm(s, w, ledger);
+        Check(!miss.ok(), "intent: confirm without stage fails");
+        Check(!intent.Click(w, s, 100, "zzz"),
+              "intent: non-adjacent click rejected");
+        Check(intent.Click(w, s, 100, "b"),
+              "intent: adjacent node stages");
+        Check(intent.Pending() &&
+                  intent.Option().nodeId == "b" &&
+                  intent.Option().days == 2 &&
+                  intent.Option().affordable,
+              "intent: staged option carries cost");
+        // Re-clicking a different legal node restages.
+        Check(intent.Click(w, s, 100, "d") &&
+                  intent.Option().nodeId == "d",
+              "intent: re-click restages");
+        // Clicking out clears.
+        Check(!intent.Click(w, s, 100, "zzz") &&
+                  !intent.Pending(),
+              "intent: click-out clears");
+        Check(intent.Click(w, s, 100, "b"), "intent: restage b");
+        auto plan = intent.Confirm(s, w, ledger);
+        Check(plan.ok() && plan.value.to == "b" &&
+                  s.Marching() && !intent.Pending(),
+              "intent: confirm issues + clears");
+        Check(!intent.Click(w, s, 100, "a"),
+              "intent: no staging while marching");
     }
 
     if (failures == 0) {

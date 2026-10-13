@@ -125,7 +125,8 @@ const char* ENC_ARRIVAL = R"json({
          "deck": ["card_hold", "card_brace", "card_flee"]}
     ],
     "stakes": {"control": "player"},
-    "seed": 4242
+    "seed": 4242,
+    "prior": "cunning"
 })json";
 
 const char* ENC_PROX = R"json({
@@ -277,11 +278,17 @@ int main() {
                      "defenders":[{"template":"militia","region":0,
                      "deck":["card_hold","card_brace",
                              "card_flee"]}]})");
+        WriteFile(dir, "p_bad_prior.json",
+                  R"({"schema":"potato.encounter/1","id":"q",
+                     "node":"longmen","prior":"reckless",
+                     "defenders":[{"template":"militia","region":0,
+                     "deck":["card_hold","card_brace",
+                             "card_flee"]}]})");
         auto res = EncounterLibrary::Load(dir, lib);
         Check(res.ok, "library loads");
         Check(lib.Size() == 5, "five encounters accepted");
-        Check(res.rejected.size() == 10,
-              "ten files rejected (dup + 9 bad)");
+        Check(res.rejected.size() == 11,
+              "eleven files rejected (dup + 10 bad)");
         Check(lib.Encounters()[0].id == "depot_raid" &&
                   lib.Encounters()[4].id == "node_map_fight",
               "canonical order is encounter id");
@@ -293,12 +300,16 @@ int main() {
                   enc->controlStake == WorldControl::Player &&
                   enc->hasSeed && enc->seed == 4242 &&
                   enc->defenders.size() == 1 &&
-                  enc->defenders[0].deck.size() == 3,
+                  enc->defenders[0].deck.size() == 3 &&
+                  enc->hasPrior &&
+                  enc->prior == Potato::Campaign::RivalPrior::
+                                    Cunning,
               "arrival doc decodes fully");
         Check(lib.Find("node_map_fight") != nullptr &&
                   !lib.Find("node_map_fight")->hasSeed &&
+                  !lib.Find("node_map_fight")->hasPrior &&
                   lib.Find("node_map_fight")->map.empty(),
-              "absent trigger/seed/map default");
+              "absent trigger/seed/map/prior default");
         Check(lib.Find("ghost_field") != nullptr,
               "vanished-node encounter loads (marshal's check)");
     }

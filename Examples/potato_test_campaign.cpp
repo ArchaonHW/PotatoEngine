@@ -2022,6 +2022,100 @@ int main() {
         fs::remove_all(sdir);
     }
 
+    // ===== 13.x — resident stores ride the save =====
+    {
+        CampaignState st;
+        st.GetIntel()
+            .Record("fox", Campaign::IntelKind::RivalTemperament,
+                    "the fox is cautious", 1)
+            .ok();
+        st.GetMyth()
+            .Record("pacify_shrine", "安撫", 0, 1, -1)
+            .ok();
+        // Codex seeding goes through its own wire gate — the
+        // same doc shape ResolveBencaoUnlocks would have grown.
+        auto cx = Campaign::BencaoCodex::FromJson(
+            JsonValue::Parse(
+                R"({"schema":"potato.bencao_state/1",
+                    "unlocked":["sanqi"],
+                    "pending":[{"id":"fuzi","kind":"corruption",
+                                "detail":"15"}]})")
+                .value);
+        Check(cx.ok(), "stores: codex seed parses");
+        st.GetCodex() = std::move(cx.value);
+
+        auto j = st.ToJson();
+        Check(j.ok() && j.value.Has("intel") &&
+                  j.value.Has("myth") && j.value.Has("codex"),
+              "stores: all three emit into the envelope");
+        auto back = CampaignState::FromJson(j.value);
+        Check(back.ok() &&
+                  back.value.GetIntel().Size() == 1 &&
+                  back.value.GetMyth().Size() == 1 &&
+                  back.value.GetCodex().IsUnlocked("sanqi") &&
+                  back.value.GetCodex().Pending().size() == 1,
+              "stores: intel+myth+codex round-trip");
+        Check(back.ok() &&
+                  back.value.GetIntel().Entries()[0].claim ==
+                      "the fox is cautious" &&
+                  back.value.GetMyth().Entries()[0].name ==
+                      "安撫",
+              "stores: entry contents survive verbatim");
+
+        // Backward compat: a save predating the stores loads
+        // them empty — no flag, no migration.
+        {
+            auto m = j.value.Members();
+            m.erase("intel");
+            m.erase("myth");
+            m.erase("codex");
+            auto old = CampaignState::FromJson(
+                JsonValue::MakeObject(std::move(m)));
+            Check(old.ok() &&
+                      old.value.GetIntel().Size() == 0 &&
+                      old.value.GetMyth().Size() == 0 &&
+                      !old.value.GetCodex().IsUnlocked("sanqi"),
+                  "stores: absent sub-docs load empty");
+        }
+        // A broken chronicle rejects the whole envelope — a
+        // corrupt store must not silently vanish.
+        {
+            auto m = j.value.Members();
+            m["intel"] = JsonValue::MakeObject(
+                JsonValue::Object{});
+            Check(!CampaignState::FromJson(
+                      JsonValue::MakeObject(std::move(m)))
+                       .ok(),
+                  "stores: malformed intel sub-doc rejects");
+        }
+        {
+            auto m = j.value.Members();
+            m["codex"] =
+                JsonValue::String("not a doc");
+            Check(!CampaignState::FromJson(
+                      JsonValue::MakeObject(std::move(m)))
+                       .ok(),
+                  "stores: malformed codex sub-doc rejects");
+        }
+
+        // Slot-level round-trip — the stores ride the same
+        // temp+rename path the rest of the envelope takes.
+        namespace fs = std::filesystem;
+        const fs::path sdir =
+            fs::temp_directory_path() / "potato_test_stores";
+        fs::remove_all(sdir);
+        fs::create_directories(sdir);
+        SaveSystem saves(sdir);
+        Check(saves.Save(4, st).ok(), "stores: slot save writes");
+        auto slot = saves.Load(4);
+        Check(slot.ok() && slot.value.GetIntel().Size() == 1 &&
+                  slot.value.GetMyth().Size() == 1 &&
+                  slot.value.GetCodex().IsUnlocked("sanqi") &&
+                  slot.value.GetCodex().Pending().size() == 1,
+              "stores: slot load restores all three");
+        fs::remove_all(sdir);
+    }
+
     std::printf(failures ? "CAMPAIGN TESTS FAILED: %d\n"
                          : "CAMPAIGN TESTS PASS\n",
                 failures);
