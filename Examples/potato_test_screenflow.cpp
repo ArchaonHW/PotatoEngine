@@ -2,17 +2,15 @@
 // Table-gated narrative moves, the always-legal abandon door, the
 // pause overlay flag, and the save gating that keeps I/O off the
 // tick path.
-<<<<<<< HEAD
-#include "Game/Ui/ScreenFlow.h"
-=======
 #include "Game/Ui/EndingScreen.h"
 #include "Game/Ui/ScreenFlow.h"
 #include "Game/Ui/PauseOverlay.h"
+#include "Game/Ui/SettingsForm.h"
 #include "Game/Ui/TitleScreen.h"
 #include "Campaign/Ledger/Ledger.h"
->>>>>>> 21139f9 (feat(game): wire Story 13 screen flow + Epic 7 subversion end-to-end)
 
 #include <cstdio>
+#include <filesystem>
 
 namespace {
 
@@ -184,8 +182,6 @@ int main() {
         Check(!f.CanSave(), "ending can't save");
     }
 
-<<<<<<< HEAD
-=======
     // ===== 13.8: pause overlay widget model =====
     {
         // Save gating flows straight from ScreenFlow::CanSave —
@@ -294,7 +290,96 @@ int main() {
         // widget that issues it.
     }
 
->>>>>>> 21139f9 (feat(game): wire Story 13 screen flow + Epic 7 subversion end-to-end)
+    // ===== settings: potato.settings/1 =====
+    {
+        namespace fs = std::filesystem;
+        using Potato::Game::GameSettings;
+        using Potato::Game::HudDensity;
+
+        GameSettings s;
+        Check(s.volume == 80 && s.resolutionIndex == 0 &&
+                  s.density == HudDensity::Standard,
+              "set: defaults");
+
+        // Cycle/step math — wrap cycles, clamped steps.
+        Potato::Game::StepVolume(s, -40);
+        Check(s.volume == 0, "set: volume clamps low");
+        Potato::Game::StepVolume(s, 30);
+        Check(s.volume == 100, "set: volume clamps high");
+        Potato::Game::CycleResolution(s, -1);
+        Check(s.resolutionIndex ==
+                  Potato::Game::kResolutionCount - 1,
+              "set: resolution wraps down");
+        Potato::Game::CycleDensity(s, 1);
+        Check(s.density == HudDensity::Roomy,
+              "set: density cycles up");
+        Check(Potato::Game::DensityScale(HudDensity::Roomy) >
+                  Potato::Game::DensityScale(
+                      HudDensity::Standard) &&
+                  Potato::Game::DensityScale(
+                      HudDensity::Compact) <
+                      Potato::Game::DensityScale(
+                          HudDensity::Standard),
+              "set: density scale ordered");
+
+        // Round-trip through the wire.
+        s.volume = 42;
+        s.resolutionIndex = 2;
+        s.density = HudDensity::Compact;
+        auto j = s.ToJson();
+        Check(j.ok(), "set: emits");
+        auto back = GameSettings::FromJson(j.value);
+        Check(back.ok() && back.value.volume == 42 &&
+                  back.value.resolutionIndex == 2 &&
+                  back.value.density == HudDensity::Compact,
+              "set: round-trips");
+
+        // Rejections — bad content mutates nothing.
+        Check(!GameSettings::FromJson(
+                  Potato::Gameplay::JsonValue::Parse(
+                      R"({"schema":"potato.settings/1","volume":101})")
+                      .value)
+                   .ok(),
+              "set: out-of-range volume rejects");
+        Check(!GameSettings::FromJson(
+                  Potato::Gameplay::JsonValue::Parse(
+                      R"({"schema":"potato.settings/1","resolution":"800x600"})")
+                      .value)
+                   .ok(),
+              "set: unknown resolution rejects");
+        Check(!GameSettings::FromJson(
+                  Potato::Gameplay::JsonValue::Parse(
+                      R"({"schema":"potato.settings/2"})")
+                      .value)
+                   .ok(),
+              "set: wrong schema rejects");
+        // Absent members keep defaults — forward-compat.
+        auto partial = GameSettings::FromJson(
+            Potato::Gameplay::JsonValue::Parse(
+                R"({"schema":"potato.settings/1","volume":33})")
+                .value);
+        Check(partial.ok() && partial.value.volume == 33 &&
+                  partial.value.resolutionIndex == 0,
+              "set: absent members default");
+
+        // File round-trip — missing file defaults; save+load
+        // preserves; tmp file must not linger.
+        const fs::path p =
+            fs::temp_directory_path() / "potato_test_set.json";
+        fs::remove(p);
+        auto miss = GameSettings::Load(p);
+        Check(miss.ok() && miss.value.volume == 80,
+              "set: missing file yields defaults");
+        Check(s.Save(p).ok(), "set: save writes");
+        auto ld = GameSettings::Load(p);
+        Check(ld.ok() && ld.value.volume == 42 &&
+                  ld.value.density == HudDensity::Compact,
+              "set: load restores");
+        Check(!fs::exists(p.string() + ".tmp"),
+              "set: tmp renamed away");
+        fs::remove(p);
+    }
+
     std::printf("%s\n", failures == 0 ? "ALL PASS" : "FAILURES");
     return failures == 0 ? 0 : 1;
 }
