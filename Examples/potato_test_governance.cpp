@@ -593,20 +593,22 @@ int main() {
                      back.tick != e.tick) allOk = false;
         }
         Check(allOk, "event kinds 4-12 round-trip on the wire");
+        // v7 moved the boundary: SquadDefected (13) is legal now;
+        // kind 14 is the first reject again.
         auto bad = JsonValue::Parse(
-            R"({"kind":13,"tick":0,"squad":-1,"slot":-1,"param":-1,)"
+            R"({"kind":14,"tick":0,"squad":-1,"slot":-1,"param":-1,)"
             R"("aux":0,"side":-1,"path":[],"card":""})");
         SimEvent sink;
         Check(bad.ok() && !EventFromJson(bad.value, sink),
-              "event kind 13 rejected on the wire");
-        // aux gate: MythGhostArmy(9) is the max legitimate
-        // Intervention ordinal; aux=10+ is wire-garbage and must
+              "event kind 14 rejected on the wire");
+        // aux gate: Subvert(10) is the max legitimate
+        // Intervention ordinal; aux=11+ is wire-garbage and must
         // reject.
         auto badAux = JsonValue::Parse(
             R"({"kind":2,"tick":0,"squad":0,"slot":-1,"param":6,)"
-            R"("aux":10,"side":0,"path":[],"card":""})");
+            R"("aux":11,"side":0,"path":[],"card":""})");
         Check(badAux.ok() && !EventFromJson(badAux.value, sink),
-              "intervention aux beyond MythGhostArmy rejected");
+              "intervention aux beyond Subvert rejected");
     }
 
     // --- Determinism: identical runs, identical stream + checksum ---

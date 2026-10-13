@@ -368,8 +368,8 @@ int main() {
               "hud: CP pips = cp filled + cap hollow");
         Check(count(exl, HudCell::ProbePip) == 3,
               "hud: probe pips = budget");
-        Check(count(exl, HudCell::Verb) == 10,
-              "hud: all 10 verbs on the palette");
+        Check(count(exl, HudCell::Verb) == 11,
+              "hud: all 11 verbs on the palette");
         Check(count(exl, HudCell::CardTile) == 0 &&
                   count(exl, HudCell::ArrowRow) == 0 &&
                   count(exl, HudCell::SquadHeader) == 0,
