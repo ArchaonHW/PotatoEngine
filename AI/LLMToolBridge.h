@@ -59,6 +59,29 @@ ToolResult ExecuteToolCall(ToolRegistry& registry,
 ChatMessage ToolResultMessage(const ToolCall& call,
                               const ToolResult& result);
 
+// ---- Multi-round loop ----
+
+struct ToolLoopResult {
+    bool success = false;
+    LLMResponse final;                 // 最後一輪 LLM 回應（純文字或錯誤）
+    std::vector<ChatMessage> messages; // 含 assistant/tool 回放的完整對話
+    int rounds = 0;                    // 實際執行的 tool 派發輪數
+    std::string error;
+};
+
+// 完整的 tool-calling 迴圈：送 messages+tools → 若回應含
+// toolCalls 則逐個 ExecuteToolCall 並把 assistant/tool 訊息
+// 回放進對話 → 再送，直到 LLM 回純文字或達 maxRounds。
+// LLM 傳輸錯誤/回應錯誤即中止；maxRounds 用盡視為失敗
+// （防 tool ping-pong 無限迴圈），messages 保留現場。
+ToolLoopResult RunToolLoop(
+    ILLMClient& client,
+    ToolRegistry& registry,
+    std::vector<ChatMessage> messages,
+    const std::vector<ToolDefinition>& tools,
+    const LLMConfig& config,
+    int maxRounds = 8);
+
 } // namespace LLMToolBridge
 } // namespace AI
 } // namespace Potato

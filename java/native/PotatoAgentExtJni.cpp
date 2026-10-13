@@ -23,6 +23,7 @@
 
 #include "AI/AgentChain.h"
 #include "AI/LLMIntegration.h"
+#include "AI/LLMToolBridge.h"
 #include "AI/RAGSystem.h"
 #include "AI/RenderAgentTools.h"
 #include "AI/ToolFramework.h"
@@ -390,6 +391,95 @@ JNIEXPORT jstring JNICALL Java_com_potato_agent_jni_NativeLlm_nChat(
         ? client->ChatCompletion(chat, llmCfg)
         : client->ChatCompletionWithTools(chat, tools, llmCfg);
     return ToJString(env, LLMResponseToJson(r));
+}
+
+// ChatMessage → JSON（回放對話用）
+std::string MessageToJson(const ChatMessage& m) {
+    const char* role = "user";
+    switch (m.role) {
+        case MessageRole::System:    role = "system"; break;
+        case MessageRole::Assistant: role = "assistant"; break;
+        case MessageRole::Tool:      role = "tool"; break;
+        default: break;
+    }
+    std::string out = std::string("{\"role\":\"") + role +
+        "\",\"content\":" + JQ(m.content);
+    if (!m.name.empty()) out += ",\"name\":" + JQ(m.name);
+    if (!m.toolCallId.empty())
+        out += ",\"toolCallId\":" + JQ(m.toolCallId);
+    if (!m.toolCalls.empty()) {
+        out += ",\"toolCalls\":[";
+        bool first = true;
+        for (const auto& tc : m.toolCalls) {
+            if (!first) out += ",";
+            first = false;
+            out += "{\"id\":" + JQ(tc.id) +
+                   ",\"name\":" + JQ(tc.name) +
+                   ",\"arguments\":" + JArgs(tc.arguments) + "}";
+        }
+        out += "]";
+    }
+    return out + "}";
+}
+
+// nToolLoop(configJson, messagesJson) → {success,content,rounds,
+//   finishReason,messages:[...],error}
+// configJson 同 nChat,外加：
+//   tools?:[...]      顯式工具定義（缺省=依旗標建的 registry 全部）
+//   zetaTools?:bool   掛 zeta_* 工具面（無狀態）
+//   renderTools?:bool 掛 render_* 工具面（g_renderMutex 全程持有）
+//   maxRounds?:int    預設 8
+JNIEXPORT jstring JNICALL Java_com_potato_agent_jni_NativeLlm_nToolLoop(
+    JNIEnv* env, jclass, jstring jConfig, jstring jMessages) {
+    JsonValue cfg = JsonValue::Parse(JToUtf8(env, jConfig));
+    JsonValue msgs = JsonValue::Parse(JToUtf8(env, jMessages));
+    if (!cfg.IsObject()) return ToJString(env, JErr("config JSON 解析失敗"));
+    if (!msgs.IsArray()) return ToJString(env, JErr("messages 需為陣列"));
+
+    auto client = MakeClient(cfg);
+    if (!client) {
+        return ToJString(env, JErr("未知 provider: " + cfg["provider"].AsString()));
+    }
+
+    // 依旗標建本 loop 私有的 registry；render 面全程持鎖
+    // （render_* 共用全域 headless server）
+    ToolRegistry reg;
+    if (cfg["zetaTools"].AsBool(false))
+        ZetaTools::RegisterZetaTools(reg);
+
+    std::unique_lock<std::mutex> renderLock(g_renderMutex,
+                                            std::defer_lock);
+    if (cfg["renderTools"].AsBool(false)) {
+        renderLock.lock();
+        if (!EnsureRenderServer())
+            return ToJString(env, JErr("render server 初始化失敗"));
+        RenderTools::RegisterRenderTools(reg, g_renderServer.get());
+    }
+
+    std::vector<ToolDefinition> tools = ParseToolDefs(cfg["tools"]);
+    if (tools.empty())
+        tools = LLMToolBridge::RegistryToolDefinitions(reg);
+
+    const int maxRounds = cfg["maxRounds"].AsInt(8);
+    const LLMToolBridge::ToolLoopResult lr =
+        LLMToolBridge::RunToolLoop(
+            *client, reg, ParseMessages(msgs), tools,
+            ParseLLMConfig(cfg), maxRounds);
+
+    std::string out = "{"
+        "\"success\":" + JBool(lr.success) +
+        ",\"content\":" + JQ(lr.final.content) +
+        ",\"finishReason\":" + JQ(lr.final.finishReason) +
+        ",\"rounds\":" + std::to_string(lr.rounds) +
+        ",\"messages\":[";
+    bool first = true;
+    for (const auto& m : lr.messages) {
+        if (!first) out += ",";
+        first = false;
+        out += MessageToJson(m);
+    }
+    out += "],\"error\":" + JQ(lr.error) + "}";
+    return ToJString(env, out);
 }
 
 }  // extern "C"（暫時關閉——C 連結不允許 C++ 型別簽名）

@@ -26,8 +26,10 @@ zeta_audit 一鍵跑零點/輻角/Laguerre/H_λ/Mertens/
 Robin/Li 審計電池，agent 可做 RH 有限驗證；
 LLMToolBridge 把整個 ToolRegistry 序列化成 LLM
 function-calling ToolDefinition 並將回傳 ToolCall 的
-arguments JSON 解析回 string map 派發——LLM 直接
-驅動 render/zeta 工具面）、
+arguments JSON 解析回 string map 派發，RunToolLoop
+做多輪 tool→回訊編排（maxRounds 防 ping-pong）——
+LLM 直接驅動 render/zeta 工具面；OpenAI/Anthropic/
+Local client 皆保留 tool_calls/tool_use 並正確回放）、
 Audio、Core、ECS、Events、FileSystem、
 GameObject、Input、Logging、MathUtils、Media、Memory、Networking、Physics、
 Platform、Quantum、Rendering、Resources、Scene、Security、Serialization、
@@ -187,6 +189,9 @@ external（vendored：glad_gen/tinygltf/miniaudio/imgui submodule）
   一律 JSON 字串往返，原生端用 `Serialization/JsonParser.h`）。
   agent-service 的 `jni/Native{Chain,Ledger,Llm,Rag,Render}.java`
   對應宣告；DLL 經 `-Dpotato.jni.dll`/`POTATO_JNI_DLL` 載入。
+  NativeLlm 另提供 `nToolLoop(cfg,msgs)`：config 帶
+  zetaTools/renderTools/tools/maxRounds 旗標,原生端跑
+  RunToolLoop 多輪 tool-calling 編排,回傳完整回放 messages。
 - REST 域：/api/agent/*（RL session+WS）、/api/llm/chat、
   /api/chain/*（/run 即時、/chains 註冊複用、/async+輪詢、
   /ws/chain 逐節點進度推播）、/api/rag/sessions/*

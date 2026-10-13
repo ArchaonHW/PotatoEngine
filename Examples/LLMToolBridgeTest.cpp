@@ -19,6 +19,83 @@ static void Check(bool ok, const char* name) {
     else    { ++g_fail; printf("  [FAIL] %s\n", name); }
 }
 
+// 腳本化 ILLMClient：依序吐 queue 裡的回應,記錄每輪 messages
+// 供 RunToolLoop 驗證回放行為（免 HTTP）
+class ScriptedClient : public ILLMClient {
+public:
+    std::vector<LLMResponse> queue;
+    std::vector<std::vector<ChatMessage>> seen;
+
+    LLMResponse ChatCompletion(
+        const std::vector<ChatMessage>& m,
+        const LLMConfig&) override {
+        return Respond(m);
+    }
+    LLMResponse ChatCompletionWithTools(
+        const std::vector<ChatMessage>& m,
+        const std::vector<ToolDefinition>&,
+        const LLMConfig&) override {
+        return Respond(m);
+    }
+    void ChatCompletionStream(
+        const std::vector<ChatMessage>&, const LLMConfig&,
+        std::function<void(const std::string&)>) override {
+    }
+    std::future<LLMResponse> ChatCompletionAsync(
+        const std::vector<ChatMessage>& m,
+        const LLMConfig& c) override {
+        return std::async(std::launch::deferred,
+                          [&] { return Respond(m); });
+    }
+    std::vector<float> GenerateEmbedding(
+        const std::string&,
+        const std::string&) override {
+        return {};
+    }
+    std::vector<std::vector<float>> GenerateEmbeddings(
+        const std::vector<std::string>&,
+        const std::string&) override {
+        return {};
+    }
+    bool ValidateConfig(const LLMConfig&) override {
+        return true;
+    }
+    std::string GetDefaultModel() override { return "fake"; }
+
+private:
+    LLMResponse Respond(const std::vector<ChatMessage>& m) {
+        seen.push_back(m);
+        if (queue.empty()) {
+            LLMResponse r;
+            r.error = "script 用盡";
+            return r;
+        }
+        LLMResponse r = queue.front();
+        queue.erase(queue.begin());
+        return r;
+    }
+};
+
+static LLMResponse TextResp(const std::string& text) {
+    LLMResponse r;
+    r.success = true;
+    r.content = text;
+    r.finishReason = "stop";
+    return r;
+}
+static LLMResponse CallResp(const char* id, const char* name,
+                            const char* args) {
+    LLMResponse r;
+    r.success = true;
+    r.finishReason = "tool_calls";
+    ToolCall tc;
+    tc.id = id;
+    tc.name = name;
+    tc.arguments = args;
+    r.toolCalls.push_back(tc);
+    return r;
+}
+
 int main() {
     printf("=== LLMToolBridge 測試 ===\n\n");
 
@@ -306,6 +383,94 @@ int main() {
                   r2.content.find("1.644934") !=
                       std::string::npos,
               "loop 第二輪純文字收尾");
+    }
+
+    // ---- RunToolLoop：scripted client 多輪編排 ----
+    {
+        ScriptedClient fake;
+        fake.queue.push_back(
+            CallResp("call_z", "zeta_eval",
+                     "{\"sigma\":\"2\"}"));
+        fake.queue.push_back(TextResp("ζ(2)=π²/6"));
+
+        std::vector<ChatMessage> msgs;
+        msgs.push_back(
+            ChatMessage(MessageRole::User, "zeta(2)=?"));
+        const LLMConfig cfg;
+
+        const LLMToolBridge::ToolLoopResult lr =
+            LLMToolBridge::RunToolLoop(
+                fake, reg, msgs,
+                LLMToolBridge::RegistryToolDefinitions(reg),
+                cfg);
+        Check(lr.success && lr.rounds == 1 &&
+                  lr.final.content == "ζ(2)=π²/6",
+              "RunToolLoop 單輪工具→收尾");
+        // 回放驗證：第二輪 LLM 看到的 messages 應含
+        // assistant(toolCalls)+tool(result)
+        Check(fake.seen.size() == 2 &&
+                  fake.seen[1].size() == 3 &&
+                  fake.seen[1][1].toolCalls.size() == 1 &&
+                  fake.seen[1][2].role == MessageRole::Tool &&
+                  fake.seen[1][2].toolCallId == "call_z",
+              "RunToolLoop 回放 assistant+tool 訊息");
+    }
+    {
+        // 連續兩輪工具呼叫
+        ScriptedClient fake;
+        fake.queue.push_back(
+            CallResp("c1", "echo_test",
+                     "{\"x\":\"a\"}"));
+        fake.queue.push_back(
+            CallResp("c2", "echo_test",
+                     "{\"x\":\"b\"}"));
+        fake.queue.push_back(TextResp("done"));
+        std::vector<ChatMessage> msgs;
+        msgs.push_back(
+            ChatMessage(MessageRole::User, "go"));
+        const LLMConfig cfg;
+        const LLMToolBridge::ToolLoopResult lr =
+            LLMToolBridge::RunToolLoop(
+                fake, reg, msgs, {}, cfg);
+        Check(lr.success && lr.rounds == 2 &&
+                  lr.messages.size() == 5,
+              "RunToolLoop 連續兩輪派發");
+    }
+    {
+        // maxRounds 用盡→失敗但保留現場
+        ScriptedClient fake;
+        for (int i = 0; i < 5; ++i)
+            fake.queue.push_back(
+                CallResp("c", "echo_test",
+                         "{\"x\":\"x\"}"));
+        std::vector<ChatMessage> msgs;
+        msgs.push_back(
+            ChatMessage(MessageRole::User, "go"));
+        const LLMConfig cfg;
+        const LLMToolBridge::ToolLoopResult lr =
+            LLMToolBridge::RunToolLoop(
+                fake, reg, msgs, {}, cfg, 3);
+        Check(!lr.success && lr.rounds == 3 &&
+                  !lr.error.empty() &&
+                  lr.messages.size() == 7,
+              "RunToolLoop maxRounds 中止保現場");
+    }
+    {
+        // LLM 錯誤路徑
+        ScriptedClient fake;
+        LLMResponse err;
+        err.error = "HTTP 500";
+        fake.queue.push_back(err);
+        std::vector<ChatMessage> msgs;
+        msgs.push_back(
+            ChatMessage(MessageRole::User, "go"));
+        const LLMConfig cfg;
+        const LLMToolBridge::ToolLoopResult lr =
+            LLMToolBridge::RunToolLoop(
+                fake, reg, msgs, {}, cfg);
+        Check(!lr.success &&
+                  lr.error.find("500") != std::string::npos,
+              "RunToolLoop LLM 錯誤傳回");
     }
 
     printf("\n=== 結果 ===\n  PASS: %d\n  FAIL: %d\n",

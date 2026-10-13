@@ -128,6 +128,55 @@ ChatMessage ToolResultMessage(const ToolCall& call,
     return m;
 }
 
+ToolLoopResult RunToolLoop(
+    ILLMClient& client,
+    ToolRegistry& registry,
+    std::vector<ChatMessage> messages,
+    const std::vector<ToolDefinition>& tools,
+    const LLMConfig& config,
+    int maxRounds) {
+
+    ToolLoopResult out;
+    if (maxRounds < 1) maxRounds = 1;
+
+    for (int round = 0; ; ++round) {
+        const LLMResponse r =
+            client.ChatCompletionWithTools(messages, tools, config);
+        if (!r.success) {
+            out.error = r.error.empty() ? "LLM 呼叫失敗" : r.error;
+            out.final = r;
+            out.messages = std::move(messages);
+            return out;
+        }
+        if (r.toolCalls.empty()) {
+            // 純文字收尾——成功
+            out.success = true;
+            out.final = r;
+            out.messages = std::move(messages);
+            return out;
+        }
+        if (round >= maxRounds) break; // 超額工具請求→中止
+
+        // 回放 assistant 訊息（含 toolCalls，provider 要求原樣帶回）
+        ChatMessage asst;
+        asst.role = MessageRole::Assistant;
+        asst.content = r.content;
+        asst.toolCalls = r.toolCalls;
+        messages.push_back(std::move(asst));
+
+        // 逐個派發並回填 tool 結果
+        for (const auto& tc : r.toolCalls) {
+            const ToolResult tr = ExecuteToolCall(registry, tc);
+            messages.push_back(ToolResultMessage(tc, tr));
+        }
+        out.rounds++;
+    }
+
+    out.error = "超過 maxRounds——可能存在 tool ping-pong";
+    out.messages = std::move(messages);
+    return out;
+}
+
 } // namespace LLMToolBridge
 } // namespace AI
 } // namespace Potato

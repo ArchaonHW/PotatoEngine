@@ -408,7 +408,7 @@ if(JNI_FOUND)
     target_link_libraries(PotatoAgentJni
         ReinforcementLearning NeuralNetwork
         AgentChain LLMIntegration RAGSystem ToolFramework
-        RenderAgentTools ZetaAgentTools PotatoEngine)
+        RenderAgentTools ZetaAgentTools LLMToolBridge PotatoEngine)
 else()
     message(STATUS "JNI not found - skipping PotatoAgentJni (java/ Spring layer needs it)")
 endif()
