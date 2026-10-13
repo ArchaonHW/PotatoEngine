@@ -434,12 +434,23 @@ public:
     bool LoadFromString(const std::string& data, Algo algo = Algo::Unknown);
 
     Algo GetAlgo() const { return algo; }
+    // 演算法名（除錯/UI 顯示）
+    const char* AlgoName() const;
     // 神經網路演算法的輸入維度（QL 回 -1，它的「狀態」是離散索引）
     int GetStateSize() const;
     // QL 專用：離散狀態索引 → 動作
     int SelectTabularAction(int state, bool explore = false);
     // NN 演算法通用：feature 向量 → 動作
     Action SelectAction(const State& state, bool explore = false);
+
+    // ---- 決策分數（可解釋性/除錯/UI 顯示）----
+    // QL：離散狀態索引 → Q 值行（越界回空）
+    std::vector<float> GetTabularScores(int state) const;
+    // NN 演算法：feature 向量 → 各動作分數
+    std::vector<float> GetActionScores(const State& state) const;
+    // true ⇒ GetActionScores 回動作機率（PG/AC/PPO）；
+    // false ⇒ Q 值（DQN）；未載入也回 false
+    bool OutputsProbabilities() const;
 
 private:
     Algo algo = Algo::Unknown;

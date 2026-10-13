@@ -6,6 +6,7 @@
 #include <iostream>
 #include <vector>
 #include <string>
+#include <unordered_map>
 #include <chrono>
 #include <thread>
 
@@ -242,8 +243,9 @@ namespace AI {
         }
 
         virtual void StoreMemory(const MemoryItem& memory) {
-            memory.timestamp = getCurrentTime();
-            memories.push_back(memory);
+            MemoryItem item = memory;
+            item.timestamp = getCurrentTime();
+            memories.push_back(item);
             std::cout << name << " 存儲記憶: " << memory.content.substr(0, 30) << "..." << std::endl;
         }
 
