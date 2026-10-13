@@ -4,6 +4,7 @@
 #include "Platform/PlatformSystem.h"
 #include "Platform/GLFWSharedContext.h"
 #include <GLFW/glfw3.h>
+#include <cstdlib>
 #include <iostream>
 
 using namespace Potato;
@@ -14,6 +15,14 @@ int main() {
     
     // 初始化平台管理器
     if (!InitializePlatformManager()) {
+#ifndef _WIN32
+        // CI/無顯示環境：GLFW init 必敗——依專案慣例 SKIP 而非失敗
+        if (!std::getenv("DISPLAY") && !std::getenv("WAYLAND_DISPLAY")) {
+            std::cout << "[SKIP] 無顯示環境（DISPLAY/WAYLAND_DISPLAY 未設）"
+                      << std::endl;
+            return 0;
+        }
+#endif
         std::cerr << "錯誤: 平台管理器初始化失敗" << std::endl;
         return -1;
     }

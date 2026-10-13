@@ -129,16 +129,22 @@ int main() {
     // ---- [4] Runner 段編排 ----
     printf("\n[4] runner\n");
     {
-        // 必要段成功：用一個會產出工件的指令（cmd echo）
+        // system() 的 shell 依平台：Windows 走 cmd /c、POSIX 走 sh -c
+#ifdef _WIN32
+        const std::string shExe = "cmd", shFlag = "/c";
+#else
+        const std::string shExe = "sh", shFlag = "-c";
+#endif
+        // 必要段成功：用一個會產出工件的指令（shell echo）
         const std::string marker = "output/media_test/marker.txt";
         std::filesystem::create_directories("output/media_test");
         std::filesystem::remove(marker);
 
         PipelineRunner r;
-        // Windows: echo 文字 > 檔案（system() 走 cmd）
         Check(r.LoadPlan(
                   "{\"schema\":\"potato.pipeline_plan/1\",\"stages\":["
-                  "{\"name\":\"gen\",\"exe\":\"cmd\",\"args\":[\"/c\","
+                  "{\"name\":\"gen\",\"exe\":\"" + shExe +
+                  "\",\"args\":[\"" + shFlag + "\","
                   "\"echo hi > " + marker + "\"],"
                   "\"outputs\":[\"" + marker + "\"]}]}"),
               "單段 plan");
@@ -150,9 +156,11 @@ int main() {
         PipelineRunner r2;
         Check(r2.LoadPlan(
                   "{\"schema\":\"potato.pipeline_plan/1\",\"stages\":["
-                  "{\"name\":\"noop\",\"exe\":\"cmd\",\"args\":[\"/c\","
+                  "{\"name\":\"noop\",\"exe\":\"" + shExe +
+                  "\",\"args\":[\"" + shFlag + "\","
                   "\"echo hi\"],\"outputs\":[\"never_exists_xyz\"]},"
-                  "{\"name\":\"after\",\"exe\":\"cmd\",\"args\":[\"/c\","
+                  "{\"name\":\"after\",\"exe\":\"" + shExe +
+                  "\",\"args\":[\"" + shFlag + "\","
                   "\"echo x\"]}]}"),
               "缺席工件 plan");
         Check(!r2.Run(), "工件缺席 → 失敗");
@@ -163,9 +171,11 @@ int main() {
         PipelineRunner r3;
         Check(r3.LoadPlan(
                   "{\"schema\":\"potato.pipeline_plan/1\",\"stages\":["
-                  "{\"name\":\"opt\",\"exe\":\"cmd\",\"args\":[\"/c\","
+                  "{\"name\":\"opt\",\"exe\":\"" + shExe +
+                  "\",\"args\":[\"" + shFlag + "\","
                   "\"exit 1\"],\"optional\":true},"
-                  "{\"name\":\"real\",\"exe\":\"cmd\",\"args\":[\"/c\","
+                  "{\"name\":\"real\",\"exe\":\"" + shExe +
+                  "\",\"args\":[\"" + shFlag + "\","
                   "\"echo ok\"]}]}"),
               "optional plan");
         Check(r3.Run(), "optional 失敗不中止");
