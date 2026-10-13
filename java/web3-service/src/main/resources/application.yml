@@ -1,0 +1,29 @@
+server:
+  port: 8082
+
+spring:
+  application:
+    name: web3-service
+
+eureka:
+  client:
+    service-url:
+      defaultZone: http://localhost:8761/eureka/
+
+potato:
+  web3:
+    # local = 本地錨定檔（簽章收據 JSONL，開發/離線用）
+    # evm   = EVM JSON-RPC 上鏈（需 rpc-url/chain-id）
+    backend: ${POTATO_WEB3_BACKEND:local}
+    rpc-url: ${POTATO_WEB3_RPC_URL:}
+    chain-id: ${POTATO_WEB3_CHAIN_ID:1}
+    # 服務錢包私鑰（hex，不帶 0x）；留空則啟動時生成 ephemeral key
+    private-key: ${POTATO_WEB3_PRIVATE_KEY:}
+    # 本地錨定收據落盤路徑
+    anchor-file: ${POTATO_WEB3_ANCHOR_FILE:web3-anchors.jsonl}
+    # 受管錢包持久化檔（含私鑰——勿進版控,gitignore 已排除）
+    wallet-file: ${POTATO_WEB3_WALLET_FILE:web3-wallets.json}
+    # 錢包檔私鑰 AES-GCM 加密的 passphrase；留空 = 明文 hex（僅開發用）
+    wallet-passphrase: ${POTATO_WEB3_WALLET_PASSPHRASE:}
+    # 取 agent-service ledger headHash 用的服務名（Eureka lb）
+    agent-service-url: ${POTATO_AGENT_SERVICE_URL:http://agent-service}

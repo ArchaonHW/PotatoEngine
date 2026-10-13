@@ -137,6 +137,10 @@ output/portraits/
 **/target/
 services/data/
 
+# web3-service 本機錨定收據與受管錢包檔（runtime 產物,含私鑰）
+java/web3-anchors.jsonl
+java/web3-wallets.json
+
 # VrmLoadTest/訓練管線產生的資料集（可再生）
 output/vrm_dataset/
 

@@ -15,6 +15,7 @@
         <module>discovery-server</module>
         <module>api-gateway</module>
         <module>agent-service</module>
+        <module>web3-service</module>
     </modules>
 
     <!-- 注意：~/.m2/settings.xml 的 minggo-rts profile 會覆寫
@@ -55,6 +56,8 @@
                     <version>3.14.1</version>
                     <configuration>
                         <release>${potato.java.version}</release>
+                        <!-- Spring MVC 以反射取 @PathVariable/@RequestParam 參數名 -->
+                        <parameters>true</parameters>
                     </configuration>
                 </plugin>
                 <plugin>
