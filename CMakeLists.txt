@@ -38,7 +38,11 @@ if(POTATO_SECURITY_HARDENING)
         add_link_options(/DYNAMICBASE /NXCOMPAT /HIGHENTROPYVA /GUARD:CF /CETCOMPAT)
     else()
         # 堆疊保護 + PIE (位置無關執行檔，啟用 ASLR)
-        add_compile_options(-fstack-protector-strong -fstack-clash-protection -fPIE)
+        # -fPIE 只套執行檔：其物件的 PC32 relocation 進不了 shared 物件
+        # （PotatoAgentJni/FakeCheatModule 與 static lib 一律走
+        #  CMAKE_POSITION_INDEPENDENT_CODE 的 -fPIC）
+        add_compile_options(-fstack-protector-strong -fstack-clash-protection
+            $<$<STREQUAL:$<TARGET_PROPERTY:TYPE>,EXECUTABLE>:-fPIE>)
         if(WIN32)
             # MinGW: PE 格式加固(-pie 只能套用於執行檔,SHARED/MODULE 庫加上會導致要求 WinMain)
             add_link_options(
