@@ -13,7 +13,22 @@ Agent/LLM/Tool/Condition/Loop/Parallel 節點共用 ExecCtx，
 {var} 佔位餵 inputs+上游輸出，condition 運算式支援
 ==/!=/>/</>=/<=/!，被 branch/loopBody/parallel 引用的
 子節點為子例程不佔主序列；AgentGraph 拓撲執行同一套
-調度；ChainOrchestrator 以鏈/圖名註冊）、Audio、Core、ECS、Events、FileSystem、
+調度；ChainOrchestrator 以鏈/圖名註冊；RenderAgentTools 把
+RenderingServer RID API 註冊成 render_* 工具供 agent 繪圖；
+ZetaAgentTools 把 MathUtils/RiemannZeta（Potato::RZ——
+EM ζ/Hurwitz/Γ/RS-Z/ξ/η/β/L(χ₅)/de Bruijn–Newman H_t/
+Li/Mertens/Robin/ψ 篩法 + 統計/泛函形式：Montgomery
+配對關聯、S(T) 計數殘差、最小間距、Chebyshev bias、
+Báez–Duarte d_N、GUE 間距、顯式公式重建、Dedekind
+Λ_K FE、Speiser ζ′、線上矩、Selberg CLT、Gram、
+Euler 乘積）註冊成 zeta_* 工具；
+zeta_audit 一鍵跑零點/輻角/Laguerre/H_λ/Mertens/
+Robin/Li 審計電池，agent 可做 RH 有限驗證；
+LLMToolBridge 把整個 ToolRegistry 序列化成 LLM
+function-calling ToolDefinition 並將回傳 ToolCall 的
+arguments JSON 解析回 string map 派發——LLM 直接
+驅動 render/zeta 工具面）、
+Audio、Core、ECS、Events、FileSystem、
 GameObject、Input、Logging、MathUtils、Media、Memory、Networking、Physics、
 Platform、Quantum、Rendering、Resources、Scene、Security、Serialization、
 Simulation（SystemDynamics：存量-流量離散模擬器——stock/flow/aux/param/
@@ -22,7 +37,8 @@ Simulation（SystemDynamics：存量-流量離散模擬器——stock/flow/aux/p
 Time、build-video、GUI（AgentGUI 等引擎 GUI）、
 Examples（standalone 建置時的範例/測試程式）、docs、
 java（Spring Boot agent 微服務 + JNI 橋接：agent-service/
-api-gateway/discovery-server，原生端 native/PotatoAgentJni.cpp）、
+api-gateway/discovery-server/web3-service，
+原生端 native/PotatoAgentJni.cpp + PotatoAgentExtJni.cpp）、
 external（vendored：glad_gen/tinygltf/miniaudio/imgui submodule）
 
 ## 消費關係（重要）
@@ -35,7 +51,8 @@ external（vendored：glad_gen/tinygltf/miniaudio/imgui submodule）
   `if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)` 內：
   被消費時只產出 `PotatoEngine`/`NeuralNetwork`/`ReinforcementLearning`/
   `NaturalLanguageProcessing`/`AIAgentSystem`/`LLMIntegration`/`RAGSystem`/
-  `AgentChain`/`ToolFramework`/`IntelligentDevelopmentSystem`/`Quantum`/
+  `AgentChain`/`ToolFramework`/`RenderAgentTools`/`ZetaAgentTools`/`LLMToolBridge`/
+  `IntelligentDevelopmentSystem`/`Quantum`/
   `Media`/`glad`/`glfw` 這些 lib target；examples/tests/install/CPack
   只在獨立建置時註冊。
 - `glfw` 為 imported target 時必須 `GLOBAL`——imported target 預設是
@@ -128,6 +145,86 @@ external（vendored：glad_gen/tinygltf/miniaudio/imgui submodule）
   `TextRenderer::Create` 上傳 RGBA（白底+alpha coverage），
   `QueueText` 產生 `SpriteInstance` 直接餵 `SpriteBatcher`——
   同圖集文字 draw call 恆為 1，`SpriteInstance.color` 即染色。
+- Server 層（Godot servers/rendering 同款分層，全部 RID 句柄+
+  POD 參數，AI agent 可直接驅動）：`Core/RID.h`（RID 句柄
+  index|validator<<32 + `RID_Alloc` slot 池，代際驗證防懸垂）
+  → `RenderingServer`（singleton 抽象，snake_case API：
+  texture_2d/font/mesh/canvas/canvas_item/scenario/instance/
+  camera/light/viewport/free_rid/draw_frame）
+  → `RenderingServerDefault`（持有資源池 +
+  `RendererCanvasCull`（2D：canvas layer 排序、item 樹
+  transform/z/modulate 疊加、Rect2 視錐剔除、
+  Rect/Line/PolyLine/Circle/Polygon/TextureRect/Text 指令 variant）
+  與 `RendererSceneCull`（3D：scenario 扁平 instance 集、
+  instance_set_base 指 mesh/light、光源姿態走 instance
+  transform 的 -Z 軸與平移、AABB×Frustum 剔除、打包成
+  Deferred*Light））
+  → `Rasterizer{Canvas,Scene}` 後端介面：`GL` 後端
+  （PrimitiveBatcher+SpriteBatcher+TextRenderer / 橋接
+  DeferredRenderer 佇列+方向光 shadow pass）或 `Dummy`
+  （只記錄指令流——headless 測試與 agent 模擬執行用）。
+  入口：`RenderingServerDefault::CreateGL()/CreateHeadless()`
+  建構即註冊 `RenderingServer::GetSingleton()`。
+- Agent 繪圖工具：`AI/RenderAgentTools`（獨立 lib
+  `RenderAgentTools`，連結 ToolFramework+PotatoEngine）——
+  `RegisterRenderTools(registry, server)` 註冊 25 支
+  `render_*` 工具（viewport/canvas/item 指令/mesh primitive/
+  scenario/instance/light/camera/紋理/INR 神經紋理
+  `render_texture_generate_neural`/draw_frame/free_rid），
+  參數全 string map、RID 以 uint64 字串往返，headless
+  server 下 agent 可在無 GL 環境組裝並驗證場景。
+  測試 `Examples/RenderingServerTest.cpp`（全 headless）。
+
+## Java 微服務層（AI Agent + Web3）
+
+- 拓撲：discovery-server（Eureka :8761）← api-gateway
+  （Spring Cloud Gateway :8080）→ agent-service（:8081）/
+  web3-service（:8082）。gateway 路由前綴是 SCG 5.x 的
+  `spring.cloud.gateway.server.webflux.routes`，
+  順序：ws `/ws/**` → `/api/web3/**` → `/api/**` → `/**`。
+- JNI 橋：`java/native/PotatoAgentJni.cpp`（RL/GridWorld 原有）+
+  `PotatoAgentExtJni.cpp`（LLM/AgentChain/RAG/Render/AuditLedger，
+  一律 JSON 字串往返，原生端用 `Serialization/JsonParser.h`）。
+  agent-service 的 `jni/Native{Chain,Ledger,Llm,Rag,Render}.java`
+  對應宣告；DLL 經 `-Dpotato.jni.dll`/`POTATO_JNI_DLL` 載入。
+- REST 域：/api/agent/*（RL session+WS）、/api/llm/chat、
+  /api/chain/*（/run 即時、/chains 註冊複用、/async+輪詢、
+  /ws/chain 逐節點進度推播）、/api/rag/sessions/*
+  （含 /export|/import 知識庫持久化）、/api/render/*（headless
+  render_* 工具直驅）、/api/ledger/sessions/*（AuditLedger）。
+  chain spec 欄位名：expr/true/false/body/nodes/params/llm/
+  renderTools/zetaTools/inputs（zetaTools 掛 zeta_* 數值
+  工具——無狀態免鎖,renderTools 才需 g_renderMutex）。
+- LLM 傳輸：OpenAIClient/AnthropicClient 走
+  `Networking/HttpClient`（WinHTTP, HTTPS+HTTP）真 POST；
+  config 帶 `baseURL` 可指 proxy/Ollama 等 OpenAI-compatible
+  端點；LocalModelClient 有 baseURL 時也走 HTTP,無則回傳
+  確定性模擬回應（測試用 fallback）。apiKey 只進 Authorization
+  header,不落 log/檔案。
+- web3-service：secp256k1 錢包/地址/公鑰、personal_sign 簽章與
+  ecrecover 驗證、`did:potato:<address>` 身份；具名 agent
+  DID（POST/GET /agents{name},GET/POST /agents/{id} 解析與
+  agent 私鑰簽章——id 接受 name/did/0x 地址）；受管錢包持久化到
+  `potato.web3.wallet-file`（預設 `web3-wallets.json`,gitignored,
+  passphrase 有值時 AES-GCM(SHA-256(passphrase)) 加密私鑰,
+  無則明文 hex 僅開發用）；
+  `POST /api/web3/anchors` 帶 `ledgerSessionId` 會經 Eureka 取
+  agent-service 的 ledger headHash 做外部錨定
+  （backend=local：服務錢包簽名收據寫 `web3-anchors.jsonl`；
+  backend=evm：EIP-155 自簽 tx 送 `potato.web3.rpc-url`）。
+- Java 建置：parent `java/pom.xml` 固定 `release=25`+
+  `<parameters>true`（Spring MVC 反射參數名必需；
+  改 compiler 設定後要 `clean`——incremental 不看 flag）。
+  Boot 4 HTTP converter 是 Jackson 3（`tools.jackson`），
+  新端點原生 JSON 一律 String 透傳不經 Jackson 2 JsonNode；
+  `AnchorService` 對外呼叫也吃 `Map` 不吃 JsonNode。
+  `@LoadBalanced RestClient.Builder` 會攔截 Eureka 註冊請求
+  （把 localhost 當服務名）——服務間呼叫用 `LoadBalancerClient`
+  手動解析實例。
+  Boot 4 的 @WebMvcTest 切片在獨立 starter：
+  `spring-boot-starter-webmvc-test`（test scope）;
+  `java.net.http.WebSocket` client 的 onText 覆寫後要
+  `request(1)` 才會繼續收訊息。
 
 ## 建置與驗證
 
@@ -138,7 +235,7 @@ external（vendored：glad_gen/tinygltf/miniaudio/imgui submodule）
 - MinGW：`cmake -B build-mingw -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release`
   ；`if(MINGW)` 已加 `-static-libgcc -static-libstdc++ -static`。
 - MSVC：`cmake -B build -G "Visual Studio 18 2026" -A x64`。
-- 測試：`ctest -C Release`（白名單 `POTATO_TESTS`，57 項引擎層測試；
+- 測試：`ctest -C Release`（白名單 `POTATO_TESTS`，64 項引擎層測試；
   GL 依賴測試無顯示環境自行 SKIP）。
 - 本地驗證標準：MSVC 與 MinGW 皆建置+ctest 全綠。
 - 注意：repo 路徑含 CJK 時 `mingw32-make`（`Illegal byte sequence`）與

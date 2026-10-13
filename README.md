@@ -46,7 +46,7 @@ cmake --build build-mingw
 ctest --test-dir build -C Release
 ```
 
-白名單 `POTATO_TESTS` 共 40 項引擎層測試；GL 依賴測試在無顯示環境會自行 SKIP。
+白名單 `POTATO_TESTS` 共 64 項引擎層測試；GL 依賴測試在無顯示環境會自行 SKIP。
 
 ## 消費方式
 
@@ -62,4 +62,5 @@ ctest --test-dir build -C Release
 
 ## License
 
-見 [LICENSE](./LICENSE)。
+MIT，見 [LICENSE](./LICENSE)。第三方元件的歸屬與授權彙整於
+[THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md)。
