@@ -18,4 +18,13 @@ public class LlmService {
                 NativeLlm.nChat(NativeJsonSupport.toJson(config),
                                 NativeJsonSupport.toJson(messages)));
     }
+
+    // 多輪 tool loop——config 旗標 zetaTools/renderTools 決定
+    // 掛哪面工具,原生端跑 LLM→tool_calls→派發→回放直到收尾
+    public String toolLoop(Object config, Object messages) {
+        NativeJsonSupport.requireNative();
+        return NativeJsonSupport.passthrough(
+                NativeLlm.nToolLoop(NativeJsonSupport.toJson(config),
+                                    NativeJsonSupport.toJson(messages)));
+    }
 }

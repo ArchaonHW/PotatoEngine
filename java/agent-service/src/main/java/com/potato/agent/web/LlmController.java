@@ -16,6 +16,9 @@ import com.potato.agent.service.LlmService;
 /**
  * LLM 對話 API——body 的 config/messages 原樣送進原生端。
  * POST /api/llm/chat {"config":{provider,...}, "messages":[{role,content}]}
+ * POST /api/llm/tool-loop 同 body,config 外加
+ *   zetaTools/renderTools/maxRounds/tools——原生端跑多輪
+ *   function-calling loop 直到 LLM 收尾
  */
 @RestController
 @RequestMapping("/api/llm")
@@ -36,6 +39,14 @@ public class LlmController {
             throw new IllegalArgumentException("需帶 config 與 messages");
         }
         return svc.chat(req.config(), req.messages());
+    }
+
+    @PostMapping(value = "/tool-loop", produces = MediaType.APPLICATION_JSON_VALUE)
+    public String toolLoop(@RequestBody ChatRequest req) {
+        if (req.config() == null || req.messages() == null) {
+            throw new IllegalArgumentException("需帶 config 與 messages");
+        }
+        return svc.toolLoop(req.config(), req.messages());
     }
 
     @ExceptionHandler({IllegalArgumentException.class, IllegalStateException.class})
