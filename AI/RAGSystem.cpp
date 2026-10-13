@@ -3,8 +3,11 @@
  */
 
 #include "RAGSystem.h"
+#include "../Networking/HttpClient.h"
+#include "../Serialization/JsonParser.h"
 #include <iostream>
 #include <sstream>
+#include <fstream>
 #include <algorithm>
 #include <cmath>
 #include <regex>
@@ -14,6 +17,16 @@
 
 namespace Potato {
 namespace AI {
+
+namespace {
+
+// ASCII-only tolower——非 ASCII 位元組（UTF-8 多位元組）原樣保留；
+// signed char 負值進 ::tolower 是 UB（MSVC CRT 會 assert）
+char AsciiToLower(char c) {
+    return (c >= 'A' && c <= 'Z') ? static_cast<char>(c + ('a' - 'A')) : c;
+}
+
+}  // namespace
 
 // ============================================================================
 // In-Memory Vector Database Implementation
@@ -102,7 +115,7 @@ std::vector<DocumentChunk> InMemoryVectorDB::SearchByKeyword(
     std::vector<std::pair<int, DocumentChunk>> scoredChunks;
     
     std::string lowerKeyword = keyword;
-    std::transform(lowerKeyword.begin(), lowerKeyword.end(), lowerKeyword.begin(), ::tolower);
+    std::transform(lowerKeyword.begin(), lowerKeyword.end(), lowerKeyword.begin(), AsciiToLower);
     
     if (lowerKeyword.empty()) {
         return {};
@@ -110,7 +123,7 @@ std::vector<DocumentChunk> InMemoryVectorDB::SearchByKeyword(
     
     for (auto& chunk : chunks) {
         std::string lowerContent = chunk.content;
-        std::transform(lowerContent.begin(), lowerContent.end(), lowerContent.begin(), ::tolower);
+        std::transform(lowerContent.begin(), lowerContent.end(), lowerContent.begin(), AsciiToLower);
         
         // Count keyword occurrences
         size_t pos = 0;
@@ -149,6 +162,13 @@ size_t InMemoryVectorDB::GetDocumentCount() {
 
 size_t InMemoryVectorDB::GetChunkCount() {
     return chunks.size();
+}
+
+std::vector<Document> InMemoryVectorDB::ListDocuments() {
+    std::vector<Document> out;
+    out.reserve(documents.size());
+    for (const auto& kv : documents) out.push_back(kv.second);
+    return out;
 }
 
 float InMemoryVectorDB::CosineSimilarity(const std::vector<float>& a, const std::vector<float>& b) {
@@ -225,7 +245,9 @@ std::unordered_map<std::string, std::string> DocumentProcessor::ExtractMetadata(
     
     // Extract basic metadata
     metadata["length"] = std::to_string(content.length());
-    metadata["word_count"] = std::to_string(std::count_if(content.begin(), content.end(), ::isspace) + 1);
+    // isspace 只吃 unsigned char——UTF-8 負值 char 是 UB（MSVC CRT assert）
+    metadata["word_count"] = std::to_string(std::count_if(content.begin(), content.end(),
+        [](char c) { return std::isspace(static_cast<unsigned char>(c)) ? 1 : 0; }) + 1);
     
     return metadata;
 }
@@ -338,10 +360,12 @@ std::vector<DocumentChunk> RAGSystem::Retrieve(
     stats.totalQueries++;
     stats.totalRetrievals++;
     
-    // Generate query embedding
+    // Generate query embedding（無 LLM client 時為空——Keyword/BM25
+    // 不需要 embedding,Hybrid 降級為純 keyword）
     std::vector<float> queryEmbedding = GenerateQueryEmbedding(query);
+    const bool hasEmbedding = !queryEmbedding.empty();
     
-    if (queryEmbedding.empty()) {
+    if (!hasEmbedding && config.strategy == RetrievalStrategy::Semantic) {
         return std::vector<DocumentChunk>();
     }
     
@@ -358,6 +382,10 @@ std::vector<DocumentChunk> RAGSystem::Retrieve(
             break;
             
         case RetrievalStrategy::Hybrid: {
+            if (!hasEmbedding) {
+                results = vectorDB->SearchByKeyword(query, topK);
+                break;
+            }
             // Combine semantic and keyword search
             auto semanticResults = vectorDB->Search(queryEmbedding, topK * 2, config.similarityThreshold);
             auto keywordResults = vectorDB->SearchByKeyword(query, topK * 2);
@@ -524,6 +552,18 @@ RAGSystem::RAGStats RAGSystem::GetStats() const {
     return stats;
 }
 
+size_t RAGSystem::GetDocumentCount() const {
+    return vectorDB->GetDocumentCount();
+}
+
+size_t RAGSystem::GetChunkCount() const {
+    return vectorDB->GetChunkCount();
+}
+
+std::vector<Document> RAGSystem::ListDocuments() const {
+    return vectorDB->ListDocuments();
+}
+
 void RAGSystem::ResetStats() {
     memset(&stats, 0, sizeof(stats));
 }
@@ -571,13 +611,18 @@ bool KnowledgeBase::AddKnowledge(const std::string& content, const std::string& 
 }
 
 bool KnowledgeBase::AddKnowledgeFromFile(const std::string& filePath) {
-    // Placeholder for file reading
-    return false;
+    std::ifstream in(filePath, std::ios::binary);
+    if (!in) return false;
+    std::stringstream ss;
+    ss << in.rdbuf();
+    if (ss.str().empty()) return false;
+    return AddKnowledge(ss.str(), filePath);
 }
 
 bool KnowledgeBase::AddKnowledgeFromURL(const std::string& url) {
-    // Placeholder for URL fetching
-    return false;
+    HttpResponse r = HttpClient::Get(url);
+    if (!r.Ok() || r.body.empty()) return false;
+    return AddKnowledge(r.body, url);
 }
 
 std::string KnowledgeBase::Query(const std::string& question) {
@@ -588,23 +633,99 @@ std::vector<DocumentChunk> KnowledgeBase::Search(const std::string& query, int t
     return ragSystem->Retrieve(query, topK);
 }
 
+namespace {
+
+// Document ↔ JSON 序列化（匯出格式）——自帶最小跳脫,
+// 不引第三方 JSON 庫（repo 規範）
+std::string KbJsonEsc(const std::string& s) {
+    std::string out;
+    out.reserve(s.size() + 8);
+    for (char c : s) {
+        switch (c) {
+            case '"':  out += "\\\""; break;
+            case '\\': out += "\\\\"; break;
+            case '\b': out += "\\b";  break;
+            case '\f': out += "\\f";  break;
+            case '\n': out += "\\n";  break;
+            case '\r': out += "\\r";  break;
+            case '\t': out += "\\t";  break;
+            default:
+                if (static_cast<unsigned char>(c) < 0x20) {
+                    char buf[8];
+                    snprintf(buf, sizeof(buf), "\\u%04x", c);
+                    out += buf;
+                } else {
+                    out += c;
+                }
+        }
+    }
+    return out;
+}
+
+} // namespace
+
+// 匯出格式：{"version":1,"documents":[{id,title,content,url,author,
+//   source,timestamp,tags[]}]}——只存文件原文;匯入時重新分塊/embedding
 bool KnowledgeBase::Export(const std::string& filePath) {
-    // Placeholder for export
-    return false;
+    std::ofstream out(filePath, std::ios::binary | std::ios::trunc);
+    if (!out) return false;
+    out << "{\"version\":1,\"documents\":[";
+    bool first = true;
+    for (const auto& d : ragSystem->ListDocuments()) {
+        if (!first) out << ",";
+        first = false;
+        out << "{\"id\":\"" << KbJsonEsc(d.id) << "\""
+            << ",\"title\":\"" << KbJsonEsc(d.title) << "\""
+            << ",\"content\":\"" << KbJsonEsc(d.content) << "\""
+            << ",\"url\":\"" << KbJsonEsc(d.url) << "\""
+            << ",\"author\":\"" << KbJsonEsc(d.author) << "\""
+            << ",\"source\":\"" << KbJsonEsc(d.source) << "\""
+            << ",\"timestamp\":" << d.timestamp
+            << ",\"tags\":[";
+        for (size_t i = 0; i < d.tags.size(); i++) {
+            if (i) out << ",";
+            out << "\"" << KbJsonEsc(d.tags[i]) << "\"";
+        }
+        out << "]}";
+    }
+    out << "]}";
+    return out.good();
 }
 
 bool KnowledgeBase::Import(const std::string& filePath) {
-    // Placeholder for import
-    return false;
+    std::ifstream in(filePath, std::ios::binary);
+    if (!in) return false;
+    std::stringstream ss;
+    ss << in.rdbuf();
+    JsonValue j;
+    if (!JsonValue::ParseOk(ss.str(), j)) return false;
+    const JsonValue& docs = j.IsArray() ? j : j["documents"];
+    if (!docs.IsArray()) return false;
+    bool any = false;
+    for (const auto& jd : docs.AsArray()) {
+        Document d;
+        d.id = jd["id"].AsString();
+        d.title = jd["title"].AsString();
+        d.content = jd["content"].AsString();
+        d.url = jd["url"].AsString();
+        d.author = jd["author"].AsString();
+        d.source = jd["source"].AsString();
+        d.timestamp = static_cast<uint64_t>(jd["timestamp"].AsInt(0));
+        for (const auto& t : jd["tags"].AsArray()) {
+            d.tags.push_back(t.AsString());
+        }
+        if (d.content.empty()) continue;
+        any |= ragSystem->AddDocument(d);
+    }
+    return any;
 }
 
 size_t KnowledgeBase::GetDocumentCount() const {
-    // Need to expose this from RAGSystem
-    return 0;
+    return ragSystem->GetDocumentCount();
 }
 
 size_t KnowledgeBase::GetChunkCount() const {
-    // Need to expose this from RAGSystem
+    return ragSystem->GetChunkCount();
     return 0;
 }
 
@@ -644,7 +765,7 @@ Document CreateDocumentFromFile(const std::string& filePath) {
 
 std::string NormalizeText(const std::string& text) {
     std::string normalized = text;
-    std::transform(normalized.begin(), normalized.end(), normalized.begin(), ::tolower);
+    std::transform(normalized.begin(), normalized.end(), normalized.begin(), AsciiToLower);
     normalized = std::regex_replace(normalized, std::regex("\\s+"), " ");
     return normalized;
 }

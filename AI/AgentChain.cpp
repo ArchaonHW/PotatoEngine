@@ -3,12 +3,15 @@
  */
 
 #include "AgentChain.h"
+#include "ToolFramework.h"
 #include <iostream>
 #include <sstream>
 #include <algorithm>
 #include <chrono>
 #include <queue>
 #include <stack>
+#include <unordered_set>
+#include <cstdlib>
 #include <cstring>
 
 namespace Potato {
@@ -21,7 +24,8 @@ namespace AI {
 AgentChain::AgentChain(const std::string& chainName)
     : name(chainName)
     , agentManager(nullptr)
-    , llmClient(nullptr) {
+    , llmClient(nullptr)
+    , toolRegistry(nullptr) {
 }
 
 AgentChain::~AgentChain() {
@@ -64,8 +68,21 @@ ChainResult AgentChain::Execute(
         variables[input.first] = input.second;
     }
     
+    // 被 condition 分支 / loopBody / parallel 引用的節點為子例程——
+    // 不佔主序列，只在被引用時執行
+    std::unordered_set<std::string> subroutineIds;
+    for (const auto& node : nodes) {
+        if (!node.trueBranchId.empty()) subroutineIds.insert(node.trueBranchId);
+        if (!node.falseBranchId.empty()) subroutineIds.insert(node.falseBranchId);
+        if (!node.loopBodyId.empty()) subroutineIds.insert(node.loopBodyId);
+        for (const auto& pid : node.parallelNodeIds) subroutineIds.insert(pid);
+    }
+    
     // Execute nodes in order
     for (const auto& node : nodes) {
+        if (subroutineIds.count(node.id) > 0) {
+            continue;
+        }
         // Check dependencies
         bool dependenciesMet = true;
         for (const auto& dep : node.dependencies) {
@@ -90,16 +107,22 @@ ChainResult AgentChain::Execute(
         
         // Store output
         variables[node.id] = nodeResult.output;
+        result.intermediateResults[node.id] = nodeResult.output;
         
         // Store intermediate results
         for (const auto& intermediate : nodeResult.intermediateResults) {
             variables[intermediate.first] = intermediate.second;
+            result.intermediateResults[intermediate.first] = intermediate.second;
         }
     }
     
-    // Set final output
-    if (!nodes.empty()) {
-        result.output = variables[nodes.back().id];
+    // Set final output：主序列最後一個節點（排除子例程）的輸出
+    for (auto it = nodes.rbegin(); it != nodes.rend(); ++it) {
+        if (subroutineIds.count(it->id) == 0 &&
+            variables.find(it->id) != variables.end()) {
+            result.output = variables[it->id];
+            break;
+        }
     }
     
     auto endTime = std::chrono::high_resolution_clock::now();
@@ -135,6 +158,10 @@ void AgentChain::SetAIAgentManager(AIAgentManager* manager) {
 
 void AgentChain::SetLLMClient(ILLMClient* client) {
     llmClient = client;
+}
+
+void AgentChain::SetToolRegistry(ToolRegistry* registry) {
+    toolRegistry = registry;
 }
 
 bool AgentChain::Validate() {
@@ -176,25 +203,35 @@ std::vector<std::string> AgentChain::GetValidationErrors() {
 }
 
 ChainResult AgentChain::ExecuteNode(const ChainNode& node) {
+    ChainResult result;
     switch (node.type) {
         case ChainNodeType::Agent:
-            return ExecuteAgentNode(node);
+            result = ExecuteAgentNode(node);
+            break;
         case ChainNodeType::LLM:
-            return ExecuteLLMNode(node);
+            result = ExecuteLLMNode(node);
+            break;
         case ChainNodeType::Tool:
-            return ExecuteToolNode(node);
+            result = ExecuteToolNode(node);
+            break;
         case ChainNodeType::Condition:
-            return ExecuteConditionNode(node);
+            result = ExecuteConditionNode(node);
+            break;
         case ChainNodeType::Loop:
-            return ExecuteLoopNode(node);
+            result = ExecuteLoopNode(node);
+            break;
         case ChainNodeType::Parallel:
-            return ExecuteParallelNode(node);
+            result = ExecuteParallelNode(node);
+            break;
         default:
-            ChainResult result;
             result.success = false;
             result.error = "Unknown node type";
-            return result;
     }
+    if (onNodeComplete) {
+        onNodeComplete(node.id,
+            result.success ? result.output : ("ERROR:" + result.error));
+    }
+    return result;
 }
 
 ChainResult AgentChain::ExecuteAgentNode(const ChainNode& node) {
@@ -264,9 +301,27 @@ ChainResult AgentChain::ExecuteLLMNode(const ChainNode& node) {
 ChainResult AgentChain::ExecuteToolNode(const ChainNode& node) {
     ChainResult result;
     
-    // Placeholder for tool execution
-    result.success = true;
-    result.output = "Tool " + node.toolName + " executed";
+    if (!toolRegistry) {
+        result.success = false;
+        result.error = "Tool registry not set (node " + node.id + ", tool " + node.toolName + ")";
+        return result;
+    }
+    
+    // 工具參數先過 {var} 佔位——inputs 與上游節點輸出都能餵進來
+    std::unordered_map<std::string, std::string> params = node.toolParameters;
+    for (auto& pair : params) {
+        pair.second = ChainUtils::SubstituteVariables(pair.second, variables);
+    }
+    
+    ToolResult toolResult = toolRegistry->ExecuteTool(node.toolName, params);
+    result.success = toolResult.success;
+    result.output = toolResult.output;
+    if (!toolResult.success) {
+        result.error = "Tool " + node.toolName + " failed: " + toolResult.error;
+    }
+    for (const auto& pair : toolResult.metadata) {
+        result.intermediateResults[node.id + "." + pair.first] = pair.second;
+    }
     
     return result;
 }
@@ -349,25 +404,106 @@ ChainResult AgentChain::ExecuteParallelNode(const ChainNode& node) {
     return result;
 }
 
+namespace {
+
+// 解析 condition 運算元：先 {var} 展開，再查變數表，皆落空視為字面量
+std::string ResolveOperand(
+    const std::string& operand,
+    const std::unordered_map<std::string, std::string>& variables) {
+    std::string resolved = ChainUtils::SubstituteVariables(operand, variables);
+    auto it = variables.find(resolved);
+    return (it != variables.end()) ? it->second : resolved;
+}
+
+bool TryParseNumber(const std::string& s, double& out) {
+    if (s.empty()) return false;
+    char* end = nullptr;
+    out = std::strtod(s.c_str(), &end);
+    return end == s.c_str() + s.size();
+}
+
+}  // namespace
+
 bool AgentChain::EvaluateCondition(const std::string& expression) {
-    // Simple variable evaluation
-    // In real implementation, would use expression parser
-    
     if (expression.empty()) {
         return true;
     }
     
-    // Check if variable exists and is not empty
-    auto it = variables.find(expression);
-    if (it != variables.end()) {
-        return !it->second.empty();
+    std::string expr = expression;
+    
+    // 前導 ! 取反
+    bool negate = false;
+    while (!expr.empty() && expr.front() == '!') {
+        negate = !negate;
+        expr.erase(expr.begin());
+        // 允許 "! (a==b)" 的空白
+        expr.erase(0, expr.find_first_not_of(" \t") == std::string::npos
+                      ? 0 : expr.find_first_not_of(" \t"));
+    }
+    // 去掉包覆括號
+    while (expr.size() >= 2 && expr.front() == '(' && expr.back() == ')') {
+        expr = expr.substr(1, expr.size() - 2);
     }
     
-    // Check for boolean values
-    if (expression == "true") return true;
-    if (expression == "false") return false;
+    // 比較運算子（>=/<= 須先於 >/< 匹配；== 先於 =）
+    static const char* kOps[] = {"==", "!=", ">=", "<=", ">", "<"};
+    size_t opPos = std::string::npos;
+    std::string op;
+    for (const char* candidate : kOps) {
+        opPos = expr.find(candidate);
+        if (opPos != std::string::npos) {
+            op = candidate;
+            break;
+        }
+    }
     
-    return false;
+    bool value;
+    if (!op.empty()) {
+        std::string lhs = expr.substr(0, opPos);
+        std::string rhs = expr.substr(opPos + op.size());
+        // trim
+        auto trim = [](std::string& s) {
+            size_t b = s.find_first_not_of(" \t");
+            size_t e = s.find_last_not_of(" \t");
+            s = (b == std::string::npos) ? "" : s.substr(b, e - b + 1);
+        };
+        trim(lhs);
+        trim(rhs);
+        std::string lval = ResolveOperand(lhs, variables);
+        std::string rval = ResolveOperand(rhs, variables);
+        
+        double ln = 0.0, rn = 0.0;
+        if (TryParseNumber(lval, ln) && TryParseNumber(rval, rn)) {
+            if (op == "==") value = (ln == rn);
+            else if (op == "!=") value = (ln != rn);
+            else if (op == ">=") value = (ln >= rn);
+            else if (op == "<=") value = (ln <= rn);
+            else if (op == ">") value = (ln > rn);
+            else value = (ln < rn);
+        } else {
+            if (op == "==") value = (lval == rval);
+            else if (op == "!=") value = (lval != rval);
+            else if (op == ">=") value = (lval >= rval);
+            else if (op == "<=") value = (lval <= rval);
+            else if (op == ">") value = (lval > rval);
+            else value = (lval < rval);
+        }
+    } else if (expr == "true") {
+        value = true;
+    } else if (expr == "false") {
+        value = false;
+    } else {
+        // 變數 truthiness：存在且非空、非 "false"/"0"
+        auto it = variables.find(expr);
+        if (it != variables.end()) {
+            value = !it->second.empty() &&
+                    it->second != "false" && it->second != "0";
+        } else {
+            value = false;
+        }
+    }
+    
+    return negate ? !value : value;
 }
 
 std::string AgentChain::EvaluateExpression(const std::string& expression) {
@@ -382,7 +518,8 @@ std::string AgentChain::EvaluateExpression(const std::string& expression) {
 AgentGraph::AgentGraph(const std::string& graphName)
     : name(graphName)
     , agentManager(nullptr)
-    , llmClient(nullptr) {
+    , llmClient(nullptr)
+    , toolRegistry(nullptr) {
 }
 
 AgentGraph::~AgentGraph() {
@@ -457,8 +594,14 @@ ChainResult AgentGraph::Execute(
         
         ChainNode& node = it->second;
         
+        // inputs + 已完成的節點輸出併成可解析變數（{var} 佔位可用）
+        std::unordered_map<std::string, std::string> vars = inputs;
+        for (const auto& pair : nodeOutputs) {
+            vars[pair.first] = pair.second;
+        }
+        
         // Execute node
-        ChainResult nodeResult = ExecuteNode(node, inputs);
+        ChainResult nodeResult = ExecuteNode(node, vars);
         
         if (!nodeResult.success) {
             result.success = false;
@@ -467,6 +610,7 @@ ChainResult AgentGraph::Execute(
         }
         
         nodeOutputs[nodeId] = nodeResult.output;
+        result.intermediateResults[nodeId] = nodeResult.output;
     }
     
     if (result.success && !executionOrder.empty()) {
@@ -573,6 +717,10 @@ void AgentGraph::SetLLMClient(ILLMClient* client) {
     llmClient = client;
 }
 
+void AgentGraph::SetToolRegistry(ToolRegistry* registry) {
+    toolRegistry = registry;
+}
+
 bool AgentGraph::DetectCycleDFS(
     const std::string& node,
     std::unordered_map<std::string, int>& visited) {
@@ -596,16 +744,18 @@ bool AgentGraph::DetectCycleDFS(
 
 ChainResult AgentGraph::ExecuteNode(
     const ChainNode& node,
-    const std::unordered_map<std::string, std::string>& inputs) {
+    const std::unordered_map<std::string, std::string>& vars) {
     
-    // Simplified execution - reuse chain logic
-    // In real implementation, would have proper graph execution
-    
-    ChainResult result;
-    result.success = true;
-    result.output = "Node " + node.id + " executed";
-    
-    return result;
+    // 與 chain 同一套節點調度——暫存 chain 掛上相同 client/registry,
+    // 以 inputs+上游輸出做 {var} 佔位的變數域
+    AgentChain execScope(name + "#" + node.id);
+    execScope.SetAIAgentManager(agentManager);
+    execScope.SetLLMClient(llmClient);
+    execScope.SetToolRegistry(toolRegistry);
+    for (const auto& pair : vars) {
+        execScope.SetVariable(pair.first, pair.second);
+    }
+    return execScope.ExecuteNode(node);
 }
 
 // ============================================================================
@@ -903,7 +1053,8 @@ std::unique_ptr<AgentChain> CreateMapReduceChain(
 
 ChainOrchestrator::ChainOrchestrator()
     : agentManager(nullptr)
-    , llmClient(nullptr) {
+    , llmClient(nullptr)
+    , toolRegistry(nullptr) {
     
     memset(&stats, 0, sizeof(stats));
 }
@@ -914,6 +1065,7 @@ ChainOrchestrator::~ChainOrchestrator() {
 void ChainOrchestrator::RegisterChain(std::unique_ptr<AgentChain> chain) {
     chain->SetAIAgentManager(agentManager);
     chain->SetLLMClient(llmClient);
+    chain->SetToolRegistry(toolRegistry);
     chains[chain->GetNodes().front().id] = std::move(chain);
 }
 
@@ -929,6 +1081,7 @@ AgentChain* ChainOrchestrator::GetChain(const std::string& name) {
 void ChainOrchestrator::RegisterGraph(std::unique_ptr<AgentGraph> graph) {
     graph->SetAIAgentManager(agentManager);
     graph->SetLLMClient(llmClient);
+    graph->SetToolRegistry(toolRegistry);
     graphs[graph->GetNodes().begin()->first] = std::move(graph);
 }
 
@@ -1016,6 +1169,16 @@ void ChainOrchestrator::SetLLMClient(ILLMClient* client) {
     }
     for (auto& pair : graphs) {
         pair.second->SetLLMClient(client);
+    }
+}
+
+void ChainOrchestrator::SetToolRegistry(ToolRegistry* registry) {
+    toolRegistry = registry;
+    for (auto& pair : chains) {
+        pair.second->SetToolRegistry(registry);
+    }
+    for (auto& pair : graphs) {
+        pair.second->SetToolRegistry(registry);
     }
 }
 

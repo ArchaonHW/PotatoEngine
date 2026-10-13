@@ -3,6 +3,8 @@
  */
 
 #include "LLMIntegration.h"
+#include "../Networking/HttpClient.h"
+#include "../Serialization/JsonParser.h"
 #include <iostream>
 #include <sstream>
 #include <chrono>
@@ -43,13 +45,80 @@ static std::string EscapeJson(const std::string& input) {
     return out;
 }
 
+// 組合 base 與 endpoint——base 結尾去 /、endpoint 開頭補 /
+static std::string JoinUrl(const std::string& base, const std::string& ep) {
+    std::string b = base;
+    while (!b.empty() && b.back() == '/') b.pop_back();
+    if (ep.empty() || ep.front() != '/') return b + "/" + ep;
+    return b + ep;
+}
+
+// 傳輸層失敗時回傳此 JSON——ParseResponse 會辨識 __transport_error
+static std::string TransportErrJson(const HttpResponse& r) {
+    return "{\"__transport_error\":\"" + EscapeJson(
+        r.error.empty()
+            ? ("HTTP " + std::to_string(r.status))
+            : r.error) + "\",\"__status\":" + std::to_string(r.status) + "}";
+}
+
+// OpenAI chat/completions 回應格式解析（Local/Ollama HTTP 模式共用）
+static LLMResponse ParseOpenAiChatJson(const std::string& jsonResponse) {
+    LLMResponse r;
+    JsonValue j;
+    if (!JsonValue::ParseOk(jsonResponse, j)) {
+        r.error = "LLM 回應非 JSON: " + jsonResponse.substr(0, 200);
+        return r;
+    }
+    if (j["__transport_error"].IsString() &&
+        !j["__transport_error"].AsString().empty()) {
+        r.error = j["__transport_error"].AsString();
+        return r;
+    }
+    if (j["error"].IsObject()) {
+        r.error = j["error"]["message"].AsString(
+            j["error"]["type"].AsString("API error"));
+        return r;
+    }
+    const JsonValue& choices = j["choices"];
+    if (choices.AsArray().empty()) {
+        r.error = "LLM 回應缺 choices";
+        return r;
+    }
+    const JsonValue& first = choices[0];
+    r.content = first["message"]["content"].AsString(
+        first["text"].AsString());
+    r.finishReason = first["finish_reason"].AsString("stop");
+    const JsonValue& usage = j["usage"];
+    r.promptTokens = usage["prompt_tokens"].AsInt(
+        usage["input_tokens"].AsInt());
+    r.completionTokens = usage["completion_tokens"].AsInt(
+        usage["output_tokens"].AsInt());
+    r.totalTokens = usage["total_tokens"].AsInt(
+        r.promptTokens + r.completionTokens);
+    r.success = true;
+    return r;
+}
+
+// OpenAI embeddings 回應解析——data[0].embedding → float vector
+static std::vector<float> ParseOpenAiEmbeddingJson(const std::string& json) {
+    JsonValue j;
+    if (!JsonValue::ParseOk(json, j)) return {};
+    const JsonValue& data = j["data"];
+    if (data.AsArray().empty()) return {};
+    std::vector<float> out;
+    for (const auto& v : data[0]["embedding"].AsArray()) {
+        out.push_back(v.AsFloat());
+    }
+    return out;
+}
+
 // ============================================================================
 // OpenAI Client Implementation
 // ============================================================================
 
-OpenAIClient::OpenAIClient(const std::string& key)
+OpenAIClient::OpenAIClient(const std::string& key, const std::string& base)
     : apiKey(key)
-    , baseURL("https://api.openai.com/v1") {
+    , baseURL(base.empty() ? "https://api.openai.com/v1" : base) {
 }
 
 OpenAIClient::~OpenAIClient() {
@@ -88,8 +157,7 @@ LLMResponse OpenAIClient::ChatCompletion(
     json << "\"top_p\":" << config.topP;
     json << "}";
     
-    // Make request (placeholder - would use HTTP client in real implementation)
-    std::string jsonResponse = MakeRequest("/chat/completions", json.str());
+    std::string jsonResponse = MakeRequest("/chat/completions", json.str(), config);
     response = ParseResponse(jsonResponse);
     
     return response;
@@ -143,7 +211,7 @@ LLMResponse OpenAIClient::ChatCompletionWithTools(
     json << "\"max_tokens\":" << config.maxTokens;
     json << "}";
     
-    std::string jsonResponse = MakeRequest("/chat/completions", json.str());
+    std::string jsonResponse = MakeRequest("/chat/completions", json.str(), config);
     response = ParseResponse(jsonResponse);
     
     return response;
@@ -174,14 +242,18 @@ std::future<LLMResponse> OpenAIClient::ChatCompletionAsync(
 std::vector<float> OpenAIClient::GenerateEmbedding(
     const std::string& text,
     const std::string& model) {
-    
-    // Placeholder - would call OpenAI embedding API
-    // Return dummy embedding for now
-    std::vector<float> embedding(1536, 0.0f);  // OpenAI ada-002 dimension
-    for (size_t i = 0; i < embedding.size(); i++) {
-        embedding[i] = static_cast<float>(rand()) / RAND_MAX;
-    }
-    return embedding;
+
+    std::string m = model.empty() ? "text-embedding-ada-002" : model;
+    std::stringstream body;
+    body << "{\"model\":\"" << EscapeJson(m) << "\","
+         << "\"input\":\"" << EscapeJson(text) << "\"}";
+    // embedding 沒有 config 可帶 baseURL——用建構時的 baseURL
+    HttpResponse r = HttpClient::Post(
+        JoinUrl(baseURL, "/embeddings"), body.str(),
+        {{"Authorization", "Bearer " + apiKey},
+         {"Content-Type", "application/json"}});
+    if (!r.Ok()) return {};
+    return ParseOpenAiEmbeddingJson(r.body);
 }
 
 std::vector<std::vector<float>> OpenAIClient::GenerateEmbeddings(
@@ -203,47 +275,30 @@ std::string OpenAIClient::GetDefaultModel() {
     return "gpt-4";
 }
 
-std::string OpenAIClient::MakeRequest(const std::string& endpoint, const std::string& jsonBody) {
-    // Placeholder - would use HTTP client (curl, libcurl, etc.)
-    // For now, return a mock response
-    return R"({
-        "choices": [{
-            "message": {
-                "role": "assistant",
-                "content": "This is a simulated response from OpenAI API."
-            },
-            "finish_reason": "stop"
-        }],
-        "usage": {
-            "prompt_tokens": 10,
-            "completion_tokens": 20,
-            "total_tokens": 30
-        }
-    })";
+std::string OpenAIClient::MakeRequest(const std::string& endpoint,
+                                      const std::string& jsonBody,
+                                      const LLMConfig& config) {
+    std::string base = !config.baseURL.empty() ? config.baseURL : baseURL;
+    std::string key = !config.apiKey.empty() ? config.apiKey : apiKey;
+    HttpResponse r = HttpClient::Post(
+        JoinUrl(base, endpoint), jsonBody,
+        {{"Authorization", "Bearer " + key},
+         {"Content-Type", "application/json"}});
+    if (!r.TransportOk()) return TransportErrJson(r);
+    return r.body;
 }
 
 LLMResponse OpenAIClient::ParseResponse(const std::string& jsonResponse) {
-    LLMResponse response;
-    
-    // Placeholder - would parse JSON properly
-    // For now, set mock values
-    response.content = "This is a simulated response from OpenAI API.";
-    response.success = true;
-    response.promptTokens = 10;
-    response.completionTokens = 20;
-    response.totalTokens = 30;
-    response.finishReason = "stop";
-    
-    return response;
+    return ParseOpenAiChatJson(jsonResponse);
 }
 
 // ============================================================================
 // Anthropic Client Implementation
 // ============================================================================
 
-AnthropicClient::AnthropicClient(const std::string& key)
+AnthropicClient::AnthropicClient(const std::string& key, const std::string& base)
     : apiKey(key)
-    , baseURL("https://api.anthropic.com") {
+    , baseURL(base.empty() ? "https://api.anthropic.com" : base) {
 }
 
 AnthropicClient::~AnthropicClient() {
@@ -255,30 +310,36 @@ LLMResponse AnthropicClient::ChatCompletion(
     
     LLMResponse response;
     
-    // Build JSON request for Anthropic API
+    // Build JSON request for Anthropic API——system 訊息拆到頂層
+    // "system" 欄位（/v1/messages 不接受 role=system 的 message）
     std::stringstream json;
     json << "{";
     json << "\"model\":\"" << EscapeJson(config.model) << "\",";
-    json << "\"max_tokens\":" << config.maxTokens << ",";
-    json << "\"messages\":[";
-    
-    for (size_t i = 0; i < messages.size(); i++) {
-        if (i > 0) json << ",";
-        json << "{";
-        json << "\"role\":\"";
-        switch (messages[i].role) {
-            case MessageRole::User: json << "user"; break;
-            case MessageRole::Assistant: json << "assistant"; break;
-            default: json << "user"; break;
+    json << "\"max_tokens\":" << config.maxTokens;
+
+    std::string systemPrompt;
+    std::stringstream msgs;
+    msgs << "\"messages\":[";
+    bool firstMsg = true;
+    for (const auto& m : messages) {
+        if (m.role == MessageRole::System) {
+            if (!systemPrompt.empty()) systemPrompt += "\n";
+            systemPrompt += m.content;
+            continue;
         }
-        json << "\",";
-        json << "\"content\":\"" << EscapeJson(messages[i].content) << "\"";
-        json << "}";
+        if (!firstMsg) msgs << ",";
+        firstMsg = false;
+        msgs << "{\"role\":\""
+             << (m.role == MessageRole::Assistant ? "assistant" : "user")
+             << "\",\"content\":\"" << EscapeJson(m.content) << "\"}";
     }
-    
-    json << "]}";
-    
-    std::string jsonResponse = MakeRequest("/v1/messages", json.str());
+    msgs << "]";
+    if (!systemPrompt.empty()) {
+        json << ",\"system\":\"" << EscapeJson(systemPrompt) << "\"";
+    }
+    json << "," << msgs.str() << "}";
+
+    std::string jsonResponse = MakeRequest("/v1/messages", json.str(), config);
     response = ParseResponse(jsonResponse);
     
     return response;
@@ -316,14 +377,11 @@ std::future<LLMResponse> AnthropicClient::ChatCompletionAsync(
 std::vector<float> AnthropicClient::GenerateEmbedding(
     const std::string& text,
     const std::string& model) {
-    
-    // Anthropic doesn't have a public embedding API yet
-    // Return dummy embedding
-    std::vector<float> embedding(1536, 0.0f);
-    for (size_t i = 0; i < embedding.size(); i++) {
-        embedding[i] = static_cast<float>(rand()) / RAND_MAX;
-    }
-    return embedding;
+
+    // Anthropic 無公開 embedding API——回空向量,
+    // RAG 端依空向量降級 keyword/BM25 檢索
+    (void)text; (void)model;
+    return {};
 }
 
 std::vector<std::vector<float>> AnthropicClient::GenerateEmbeddings(
@@ -345,34 +403,64 @@ std::string AnthropicClient::GetDefaultModel() {
     return "claude-3-opus-20240229";
 }
 
-std::string AnthropicClient::MakeRequest(const std::string& endpoint, const std::string& jsonBody) {
-    // Placeholder for HTTP request
-    return R"({
-        "content": [{
-            "type": "text",
-            "text": "This is a simulated response from Anthropic API."
-        }],
-        "stop_reason": "end_turn"
-    })";
+std::string AnthropicClient::MakeRequest(const std::string& endpoint,
+                                         const std::string& jsonBody,
+                                         const LLMConfig& config) {
+    std::string base = !config.baseURL.empty() ? config.baseURL : baseURL;
+    std::string key = !config.apiKey.empty() ? config.apiKey : apiKey;
+    HttpResponse r = HttpClient::Post(
+        JoinUrl(base, endpoint), jsonBody,
+        {{"x-api-key", key},
+         {"anthropic-version", "2023-06-01"},
+         {"Content-Type", "application/json"}});
+    if (!r.TransportOk()) return TransportErrJson(r);
+    return r.body;
 }
 
 LLMResponse AnthropicClient::ParseResponse(const std::string& jsonResponse) {
-    LLMResponse response;
-    response.content = "This is a simulated response from Anthropic API.";
-    response.success = true;
-    response.promptTokens = 10;
-    response.completionTokens = 20;
-    response.totalTokens = 30;
-    response.finishReason = "end_turn";
-    return response;
+    LLMResponse r;
+    JsonValue j;
+    if (!JsonValue::ParseOk(jsonResponse, j)) {
+        r.error = "Anthropic 回應非 JSON: " + jsonResponse.substr(0, 200);
+        return r;
+    }
+    if (j["__transport_error"].IsString() &&
+        !j["__transport_error"].AsString().empty()) {
+        r.error = j["__transport_error"].AsString();
+        return r;
+    }
+    if (j["error"].IsObject()) {
+        r.error = j["error"]["message"].AsString(
+            j["error"]["type"].AsString("API error"));
+        return r;
+    }
+    // content 為 block 陣列——串接所有 text block
+    for (const auto& block : j["content"].AsArray()) {
+        if (block["type"].AsString() == "text") {
+            r.content += block["text"].AsString();
+        }
+    }
+    if (r.content.empty()) {
+        r.error = "Anthropic 回應缺 content text";
+        return r;
+    }
+    r.finishReason = j["stop_reason"].AsString("end_turn");
+    const JsonValue& usage = j["usage"];
+    r.promptTokens = usage["input_tokens"].AsInt();
+    r.completionTokens = usage["output_tokens"].AsInt();
+    r.totalTokens = r.promptTokens + r.completionTokens;
+    r.success = true;
+    return r;
 }
 
 // ============================================================================
 // Local Model Client Implementation
 // ============================================================================
 
-LocalModelClient::LocalModelClient(const std::string& path)
+LocalModelClient::LocalModelClient(const std::string& path,
+                                   const std::string& base)
     : modelPath(path)
+    , baseURL(base)
     , modelHandle(nullptr) {
 }
 
@@ -383,9 +471,13 @@ LocalModelClient::~LocalModelClient() {
 LLMResponse LocalModelClient::ChatCompletion(
     const std::vector<ChatMessage>& messages,
     const LLMConfig& config) {
-    
+
+    // baseURL 有值 → OpenAI-compatible HTTP（Ollama/llama.cpp/vLLM）
+    std::string base = EffectiveBase(config);
+    if (!base.empty()) return ChatViaHttp(messages, config);
+
     LLMResponse response;
-    
+
     // Build prompt from messages
     std::stringstream prompt;
     for (const auto& msg : messages) {
@@ -442,13 +534,20 @@ std::future<LLMResponse> LocalModelClient::ChatCompletionAsync(
 std::vector<float> LocalModelClient::GenerateEmbedding(
     const std::string& text,
     const std::string& model) {
-    
-    // Local model embedding
-    std::vector<float> embedding(768, 0.0f);  // Common dimension
-    for (size_t i = 0; i < embedding.size(); i++) {
-        embedding[i] = static_cast<float>(rand()) / RAND_MAX;
-    }
-    return embedding;
+
+    // 無 HTTP 端點時沒有可用的 embedding 來源——回空向量
+    if (baseURL.empty()) return {};
+
+    std::string m = model.empty()
+        ? (modelPath.empty() ? "nomic-embed-text" : modelPath) : model;
+    std::stringstream body;
+    body << "{\"model\":\"" << EscapeJson(m) << "\","
+         << "\"input\":\"" << EscapeJson(text) << "\"}";
+    HttpResponse r = HttpClient::Post(
+        JoinUrl(baseURL, "/embeddings"), body.str(),
+        {{"Content-Type", "application/json"}});
+    if (!r.Ok()) return {};
+    return ParseOpenAiEmbeddingJson(r.body);
 }
 
 std::vector<std::vector<float>> LocalModelClient::GenerateEmbeddings(
@@ -484,9 +583,49 @@ void LocalModelClient::UnloadModel() {
     }
 }
 
+std::string LocalModelClient::EffectiveBase(const LLMConfig& config) const {
+    if (!config.baseURL.empty()) return config.baseURL;
+    return baseURL;
+}
+
+LLMResponse LocalModelClient::ChatViaHttp(
+    const std::vector<ChatMessage>& messages,
+    const LLMConfig& config) {
+
+    std::string base = EffectiveBase(config);
+    std::string model = !config.model.empty() ? config.model
+        : (modelPath.empty() ? "llama3" : modelPath);
+
+    std::stringstream json;
+    json << "{\"model\":\"" << EscapeJson(model) << "\","
+         << "\"messages\":[";
+    for (size_t i = 0; i < messages.size(); i++) {
+        if (i > 0) json << ",";
+        const char* role = "user";
+        switch (messages[i].role) {
+            case MessageRole::System:    role = "system"; break;
+            case MessageRole::Assistant: role = "assistant"; break;
+            case MessageRole::Tool:      role = "tool"; break;
+            default: break;
+        }
+        json << "{\"role\":\"" << role
+             << "\",\"content\":\"" << EscapeJson(messages[i].content)
+             << "\"}";
+    }
+    json << "],\"temperature\":" << config.temperature
+         << ",\"max_tokens\":" << config.maxTokens
+         << ",\"stream\":false}";
+
+    HttpResponse r = HttpClient::Post(
+        JoinUrl(base, "/chat/completions"), json.str(),
+        {{"Content-Type", "application/json"}});
+    if (!r.TransportOk()) return ParseOpenAiChatJson(TransportErrJson(r));
+    return ParseOpenAiChatJson(r.body);
+}
+
 std::string LocalModelClient::MakeLocalRequest(const std::string& prompt) {
-    // Placeholder for local model inference
-    // Would call llama.cpp or Ollama API
+    // 無 HTTP 端點時的模擬降級——真正的本地推論需掛 llama.cpp 後端
+    (void)prompt;
     return "This is a simulated response from local model.";
 }
 

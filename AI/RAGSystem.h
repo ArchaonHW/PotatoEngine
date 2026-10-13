@@ -109,6 +109,9 @@ public:
     virtual void Optimize() = 0;
     virtual size_t GetDocumentCount() = 0;
     virtual size_t GetChunkCount() = 0;
+
+    // 匯出用全量文件列舉
+    virtual std::vector<Document> ListDocuments() = 0;
 };
 
 /**
@@ -135,7 +138,8 @@ public:
     void Optimize() override;
     size_t GetDocumentCount() override;
     size_t GetChunkCount() override;
-    
+    std::vector<Document> ListDocuments() override;
+
 private:
     std::vector<DocumentChunk> chunks;
     std::unordered_map<std::string, Document> documents;
@@ -226,6 +230,13 @@ public:
     };
     RAGStats GetStats() const;
     void ResetStats();
+    
+    // 庫存量（KnowledgeBase::GetDocumentCount 轉接用）
+    size_t GetDocumentCount() const;
+    size_t GetChunkCount() const;
+
+    // 匯出用全量文件列舉（KnowledgeBase::Export 轉接用）
+    std::vector<Document> ListDocuments() const;
     
 private:
     std::unique_ptr<IVectorDatabase> vectorDB;

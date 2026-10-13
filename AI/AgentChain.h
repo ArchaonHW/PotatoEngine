@@ -17,6 +17,8 @@
 namespace Potato {
 namespace AI {
 
+class ToolRegistry;
+
 /**
  * Chain Node Type
  */
@@ -116,17 +118,26 @@ public:
     // Configuration
     void SetAIAgentManager(AIAgentManager* manager);
     void SetLLMClient(ILLMClient* client);
+    void SetToolRegistry(ToolRegistry* registry);
+
+    // 每個節點執行完（含條件/迴圈/並行的子例程節點）觸發——
+    // async 執行進度推播用；失敗節點 output 帶 "ERROR:" 前綴
+    std::function<void(const std::string& nodeId,
+                       const std::string& output)> onNodeComplete;
     
     // Validation
     bool Validate();
     std::vector<std::string> GetValidationErrors();
     
 private:
+    friend class AgentGraph;  // 圖節點執行共用 chain 的節點調度
+
     std::string name;
     std::vector<ChainNode> nodes;
     std::unordered_map<std::string, std::string> variables;
     AIAgentManager* agentManager;
     ILLMClient* llmClient;
+    ToolRegistry* toolRegistry;
     
     ChainResult ExecuteNode(const ChainNode& node);
     ChainResult ExecuteAgentNode(const ChainNode& node);
@@ -178,6 +189,7 @@ public:
     // Configuration
     void SetAIAgentManager(AIAgentManager* manager);
     void SetLLMClient(ILLMClient* client);
+    void SetToolRegistry(ToolRegistry* registry);
     
 private:
     std::string name;
@@ -185,6 +197,7 @@ private:
     std::unordered_map<std::string, std::vector<std::string>> edges;
     AIAgentManager* agentManager;
     ILLMClient* llmClient;
+    ToolRegistry* toolRegistry;
     
     bool DetectCycleDFS(
         const std::string& node,
@@ -302,6 +315,7 @@ public:
     // Configuration
     void SetAIAgentManager(AIAgentManager* manager);
     void SetLLMClient(ILLMClient* client);
+    void SetToolRegistry(ToolRegistry* registry);
     
     // Statistics
     struct OrchestratorStats {
@@ -318,6 +332,7 @@ private:
     std::unordered_map<std::string, std::unique_ptr<AgentGraph>> graphs;
     AIAgentManager* agentManager;
     ILLMClient* llmClient;
+    ToolRegistry* toolRegistry;
     OrchestratorStats stats;
 };
 
