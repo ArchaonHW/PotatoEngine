@@ -13,9 +13,11 @@
 //   預設           完整卡面（對齊 Python 版 render_card 的版面）
 //
 // 文字：以 ImGui 的 ImFontAtlas（stb_truetype）在 CPU 側點陣化
-//       C:/Windows/Fonts/msjhbd.ttc；找不到字型時跳過文字層仍輸出卡面。
+//       系統 CJK 字型（Platform/SystemFonts.h：Windows 微軟正黑體 → Linux Noto CJK → macOS，
+//       可用 POTATO_CJK_FONT / POTATO_CJK_FONT_BOLD 覆寫）；找不到字型時跳過文字層仍輸出卡面。
 
 #include "Serialization/JsonParser.h"
+#include "Platform/SystemFonts.h"
 #include "Rendering/ImageCodec.h"
 
 #include <imgui.h>
@@ -889,7 +891,7 @@ void PrintUsage() {
     printf("用法: PortraitBaker <card.json> <out.png> [--figure-only|--figure-full]\n");
     printf("      PortraitBaker --batch <cards_dir> <out_dir> [--figure-only|--figure-full]\n");
     printf("  --figure-full  全身立繪（頭到腳、落地影），512x768 透明底\n");
-    printf("  字型: C:/Windows/Fonts/msjhbd.ttc（缺檔時跳過文字層）\n");
+    printf("  字型: 系統 CJK 字型，可用 POTATO_CJK_FONT / POTATO_CJK_FONT_BOLD 指定（缺檔時跳過文字層）\n");
 }
 
 } // namespace
@@ -910,21 +912,22 @@ int main(int argc, char** argv) {
     }
 
     // 字型（四種字號，對齊 Python 版 font() 用法）
-    const char* kFontBold = "C:/Windows/Fonts/msjhbd.ttc";
-    const char* kFontReg = "C:/Windows/Fonts/msjh.ttc";
+    const std::string fontBoldPath = Potato::Platform::FindCjkBoldFont();
+    // Windows 保持原本的微軟正黑體；其他平台走通用 CJK 候選清單。
+    std::string fontRegPath = Potato::Platform::FirstExistingFont(
+        "POTATO_CJK_FONT", {"C:/Windows/Fonts/msjh.ttc"});
+    if (fontRegPath.empty()) fontRegPath = Potato::Platform::FindCjkFont();
+    const char* kFontBold = fontBoldPath.c_str();
+    const char* kFontReg = fontRegPath.c_str();
     TextRenderer titleFont, labelFont, smallFont, numFont;
-    bool fontOk = false;
-    {
-        std::ifstream test(kFontBold);
-        fontOk = test.good();
-    }
+    const bool fontOk = !fontBoldPath.empty() && !fontRegPath.empty();
     if (fontOk) {
         titleFont.Load(kFontBold, 58);
         labelFont.Load(kFontReg, 23);
         smallFont.Load(kFontReg, 20);
         numFont.Load(kFontBold, 18);
     } else {
-        printf("[警告] 找不到字型 %s，跳過文字層\n", kFontBold);
+        printf("[警告] 找不到 CJK 字型（可設 POTATO_CJK_FONT），跳過文字層\n");
     }
 
     // 收集輸入
