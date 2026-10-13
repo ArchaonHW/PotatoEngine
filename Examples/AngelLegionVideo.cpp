@@ -24,6 +24,12 @@
 #include <string>
 #include <iostream>
 
+// MSVC 的 pipe API 帶底線前綴；POSIX 名稱為 popen/pclose
+#ifdef _WIN32
+#define popen _popen
+#define pclose _pclose
+#endif
+
 using namespace Potato;
 
 // ============================================================================
@@ -441,7 +447,7 @@ int main(int argc, char** argv) {
         " -r " + std::to_string(fps) +
         " -i - -vf vflip -an -c:v libx264 -pix_fmt yuv420p -crf 18 -movflags +faststart \"" +
         outPath + "\" 2> ffmpeg_encode.log";
-    FILE* pipe = _popen(cmd.c_str(), "wb");
+    FILE* pipe = popen(cmd.c_str(), "wb");
     if (!pipe) {
         std::cerr << "Failed to open ffmpeg pipe" << std::endl;
         return 1;
@@ -610,7 +616,7 @@ int main(int argc, char** argv) {
     }
 
     std::cout << "Finalizing encode..." << std::endl;
-    _pclose(pipe);
+    pclose(pipe);
     renderer.Shutdown();
 
     std::cout << "Done: " << outPath << std::endl;
