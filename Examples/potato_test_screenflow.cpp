@@ -3,6 +3,7 @@
 // pause overlay flag, and the save gating that keeps I/O off the
 // tick path.
 #include "Game/Ui/EndingScreen.h"
+#include "Game/Ui/ActionNotice.h"
 #include "Game/Ui/ScreenFlow.h"
 #include "Game/Ui/PauseOverlay.h"
 #include "Game/Ui/SettingsForm.h"
@@ -11,6 +12,7 @@
 
 #include <cstdio>
 #include <filesystem>
+#include <string>
 
 namespace {
 
@@ -33,6 +35,35 @@ constexpr ScreenId kAll[] = {
 } // namespace
 
 int main() {
+    // ===== Persistence action feedback =====
+    {
+        Potato::Game::ActionNotice notice;
+        const auto saved = Potato::Gameplay::Ok(std::filesystem::path{});
+        Potato::Game::ShowActionResult(notice, saved, "存檔");
+        Check(notice.visible && notice.success &&
+                  notice.text == "存檔完成" &&
+                  notice.remainingMs ==
+                      Potato::Game::ACTION_NOTICE_LIFETIME_MS,
+              "successful persistence action produces visible feedback");
+
+        const auto failed = Potato::Gameplay::Fail<int>(
+            "io", "rename failed");
+        Potato::Game::ShowActionResult(notice, failed, "讀檔");
+        Check(notice.visible && !notice.success &&
+                  notice.text.find("讀檔失敗") == 0 &&
+                  notice.text.find("rename failed") != std::string::npos,
+              "failed persistence action exposes its reason");
+        Potato::Game::AdvanceActionNotice(notice, 1000);
+        Check(notice.visible &&
+                  notice.remainingMs ==
+                      Potato::Game::ACTION_NOTICE_LIFETIME_MS - 1000,
+              "notice remains visible for its configured interval");
+        Potato::Game::AdvanceActionNotice(
+            notice, Potato::Game::ACTION_NOTICE_LIFETIME_MS);
+        Check(!notice.visible && notice.text.empty(),
+              "expired notice clears its text");
+    }
+
     // ===== The table IS the spec — every (from,to) pair pinned =====
     {
         // Expected targets per screen (narrative moves only —

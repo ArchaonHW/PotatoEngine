@@ -18,6 +18,17 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
+
+#if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 
 using namespace Potato;
 using Potato::Gameplay::JsonValue;
@@ -114,13 +125,16 @@ int main() {
     {
         const CampaignState st = SampleState();
         const JsonValue good = st.ToJson().value;
+        CampaignState live = st;
+        const std::string liveBefore = live.ToJson().value.Emit();
 
         auto badSchema = good.Members();
         badSchema["schema"] = JsonValue::String("potato.campaign/1");
-        Check(!CampaignState::FromJson(
-                  JsonValue::MakeObject(std::move(badSchema)))
-                   .ok(),
-              "old-format /1 doc rejected by the /2 gate");
+        const auto rejectedSchema = CampaignState::FromJson(
+            JsonValue::MakeObject(std::move(badSchema)));
+        Check(!rejectedSchema.ok() &&
+                  live.ToJson().value.Emit() == liveBefore,
+              "bad schema rejects without mutating live campaign state");
 
         auto badChapter = good.Members();
         badChapter["chapter"] = JsonValue::Int(5);
@@ -284,6 +298,51 @@ int main() {
                       back.value.GetRoster().empty(),
                   "overwrite replaces prior save");
         }
+
+#if defined(_WIN32)
+        // Hold the committed file without delete sharing so the final
+        // temp-file rename fails on Windows. The last good save must
+        // remain readable; the completed temp is retained for recovery.
+        {
+            const fs::path dst = SaveSystem::SlotPath(dir, 0);
+            HANDLE lock = CreateFileW(
+                dst.c_str(), GENERIC_READ,
+                FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+            Check(lock != INVALID_HANDLE_VALUE,
+                  "open save without delete sharing");
+            if (lock != INVALID_HANDLE_VALUE) {
+                CampaignState replacement;
+                const auto failed = saves.Save(0, replacement);
+                const auto preserved = saves.Load(0);
+                Check(!failed.ok(),
+                      "locked destination rejects atomic replacement");
+                Check(preserved.ok() &&
+                          preserved.value.GetChapter().current == 1 &&
+                          preserved.value.GetRoster().empty(),
+                      "failed replacement preserves previous save");
+                std::string tmpText;
+                {
+                    std::ifstream tmpFile(
+                        SaveSystem::TmpPath(dir, 0), std::ios::binary);
+                    tmpText.assign(std::istreambuf_iterator<char>(tmpFile),
+                                   std::istreambuf_iterator<char>());
+                }
+                const auto tmpDoc = JsonValue::Parse(tmpText);
+                bool tmpRecoverable = false;
+                if (tmpDoc.ok()) {
+                    const auto recovered =
+                        CampaignState::FromJson(tmpDoc.value);
+                    tmpRecoverable = recovered.ok() &&
+                        recovered.value.GetChapter().current == 0;
+                }
+                Check(tmpRecoverable,
+                      "failed replacement retains a complete recoverable temp save");
+                CloseHandle(lock);
+                fs::remove(SaveSystem::TmpPath(dir, 0));
+            }
+        }
+#endif
 
         // Crash simulation: a stale .tmp must not shadow the
         // committed .json.

@@ -12,6 +12,7 @@
 #include "Campaign/State/CampaignState.h"
 #include "Campaign/World/Encounter.h"
 #include "Campaign/World/EncounterSettle.h"
+#include "Campaign/World/March.h"
 #include "Campaign/World/WorldMap.h"
 #include "Campaign/World/WorldState.h"
 #include "Gameplay/Doctrine/Doctrine.h"
@@ -555,8 +556,22 @@ int main() {
 
             CampaignState state;
             WorldState ws = WorldState::Init(fw, 17).value;
-            Check(ws.SetWarband("longmen", fw),
-                  "flow: warband reaches authored encounter node");
+            bool marchedToEncounter = ws.WarbandAt() == "kaifeng";
+            for (const char* destination : {"zhengzhou", "longmen"}) {
+                const auto march = Potato::Campaign::IssueMarch(
+                    ws, fw, state.GetLedger(), destination);
+                marchedToEncounter = marchedToEncounter && march.ok();
+                if (march.ok()) {
+                    for (std::int64_t day = 0;
+                         day < march.value.days; ++day) {
+                        marchedToEncounter =
+                            ws.ResolveBeats(fw, 1).ok() &&
+                            marchedToEncounter;
+                    }
+                }
+            }
+            Check(marchedToEncounter && ws.WarbandAt() == "longmen",
+                  "flow: legal marches and day ticks reach the authored arrival node");
             state.SetWorld(ws);
             Check(Potato::Campaign::Enlist(state, "先鋒營").ok(),
                   "flow: campaign roster enlisted");
@@ -635,8 +650,10 @@ int main() {
                     if (record.ok()) {
                         const auto replay =
                             Potato::Gameplay::Replay::Verify(record.value);
-                        Check(replay.ok() && replay.value.ok,
-                              "flow: sealed evidence replays bit-exact");
+                        Check(replay.ok() && replay.value.ok &&
+                                  replay.value.checksum ==
+                                      battle.Checksum(),
+                              "flow: replay reproduces the battle checksum bit-exact");
                     }
 
                     const std::string report =
