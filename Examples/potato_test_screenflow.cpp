@@ -4,11 +4,13 @@
 // tick path.
 #include "Game/Ui/EndingScreen.h"
 #include "Game/Ui/ActionNotice.h"
+#include "Game/Ui/AftermathScreen.h"
 #include "Game/Ui/ScreenFlow.h"
 #include "Game/Ui/PauseOverlay.h"
 #include "Game/Ui/SettingsForm.h"
 #include "Game/Ui/TitleScreen.h"
 #include "Campaign/Ledger/Ledger.h"
+#include "Campaign/World/EncounterSettle.h"
 
 #include <cstdio>
 #include <filesystem>
@@ -35,6 +37,34 @@ constexpr ScreenId kAll[] = {
 } // namespace
 
 int main() {
+    // ===== Settlement failures keep the report open =====
+    {
+        ScreenFlow flow;
+        flow.Request(ScreenId::Overworld);
+        flow.Request(ScreenId::Battle);
+        Potato::Game::ActionNotice notice;
+        const auto rejected = Potato::Gameplay::Fail<
+            Potato::Campaign::EncounterSettlement>(
+                "posting", "ledger lacks capacity");
+        const bool advanced = Potato::Game::PresentSettlementResult(
+            flow, notice, rejected);
+        Check(!advanced && flow.Screen() == ScreenId::Battle &&
+                  notice.visible && !notice.success &&
+                  notice.text.find("結算失敗") == 0 &&
+                  notice.text.find("ledger lacks capacity") !=
+                      std::string::npos,
+              "failed settlement explains rejection and keeps report open");
+
+        const auto committed = Potato::Gameplay::Ok(
+            Potato::Campaign::EncounterSettlement{});
+        const bool settled = Potato::Game::PresentSettlementResult(
+            flow, notice, committed);
+        Check(settled && flow.Screen() == ScreenId::Settlement &&
+                  notice.visible && notice.success &&
+                  notice.text == "結算完成",
+              "successful settlement reports completion and advances");
+    }
+
     // ===== Persistence action feedback =====
     {
         Potato::Game::ActionNotice notice;

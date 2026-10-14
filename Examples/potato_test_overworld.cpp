@@ -13,7 +13,9 @@
 #include "Game/Render/OverworldView.h"
 #include "Game/Render/SpriteAtlas.h"
 #include "Game/Render/WorldProjection.h"
+#include "Game/Ui/ActionNotice.h"
 #include "Game/Ui/CreationForm.h"
+#include "Game/Ui/EncounterLaunch.h"
 #include "Game/Ui/OrderMenu.h"
 #include "Game/Ui/OverworldHud.h"
 #include "Campaign/Characters/Character.h"
@@ -29,6 +31,8 @@
 #include "Campaign/World/WorldState.h"
 #include "Gameplay/Doctrine/Doctrine.h"
 #include "Gameplay/Json/JsonValue.h"
+#include "Gameplay/Map/BattleMap.h"
+#include "Gameplay/Squad/Squad.h"
 
 #include <cstdio>
 #include <filesystem>
@@ -710,6 +714,61 @@ int main() {
               "intent: confirm issues + clears");
         Check(!intent.Click(w, s, 100, "a"),
               "intent: no staging while marching");
+    }
+
+    // --- encounter launch errors stay visible and preflight-only ---
+    {
+        Potato::Campaign::EncounterDef enc;
+        enc.id = "test_encounter";
+        enc.node = "a";
+        enc.map = "field";
+        Potato::Gameplay::DoctrineLibrary cards;
+        Potato::Gameplay::SquadTemplateLibrary squads;
+        Potato::Game::BattleMapCatalog maps;
+        auto launchWs = WorldState::Init(w, 42).value;
+        const std::string nodeBefore = launchWs.WarbandAt();
+        const std::int64_t dayBefore = launchWs.Day();
+
+        auto missingMap = Potato::Game::PrepareEncounterLaunch(
+            enc, w, maps, squads, cards,
+            std::span<const Potato::Campaign::PlayerDeploy>{},
+            nullptr, 7);
+        Potato::Game::ActionNotice notice;
+        Potato::Game::ShowActionResult(notice, missingMap, "應戰");
+        Check(!missingMap.ok() && notice.visible &&
+                  !notice.success &&
+                  notice.text.find("找不到戰場地圖「field」") !=
+                      std::string::npos,
+              "encounter launch: missing map explains rejection");
+
+        const char* mapDoc = R"json({
+            "schema":"potato.map/1","id":"field",
+            "regions":[{"id":"r0"}],"edges":[]
+        })json";
+        auto battleMap = Potato::Gameplay::BattleMap::FromJson(
+            JsonValue::Parse(mapDoc).value);
+        Check(battleMap.ok(), "encounter launch: fixture map loads");
+        if (battleMap.ok()) {
+            maps.emplace(battleMap.value.Id(),
+                         std::move(battleMap.value));
+            auto rejectedMarshal =
+                Potato::Game::PrepareEncounterLaunch(
+                    enc, w, maps, squads, cards,
+                    std::span<const Potato::Campaign::PlayerDeploy>{},
+                    nullptr, 7);
+            Potato::Game::ShowActionResult(
+                notice, rejectedMarshal, "應戰");
+            Check(!rejectedMarshal.ok() && notice.visible &&
+                      !notice.success &&
+                      notice.text.find("編隊失敗") !=
+                          std::string::npos &&
+                      notice.text.find("no player deployment") !=
+                          std::string::npos,
+                  "encounter launch: marshal rejection explains cause");
+        }
+        Check(launchWs.WarbandAt() == nodeBefore &&
+                  launchWs.Day() == dayBefore,
+              "encounter launch: preflight leaves campaign untouched");
     }
 
     if (failures == 0) {
