@@ -15,6 +15,22 @@
 
 namespace Potato::Platform {
 
+inline std::string EnvironmentValue(const char* name) {
+#if defined(_MSC_VER)
+    char* value = nullptr;
+    std::size_t length = 0;
+    if (::_dupenv_s(&value, &length, name) != 0 || value == nullptr) {
+        return {};
+    }
+    std::string result(value);
+    std::free(value);
+    return result;
+#else
+    const char* value = std::getenv(name);
+    return value == nullptr ? std::string{} : std::string(value);
+#endif
+}
+
 inline bool FontFileExists(const std::string& path) {
     std::error_code ec;
     return !path.empty() && std::filesystem::is_regular_file(path, ec);
@@ -23,9 +39,8 @@ inline bool FontFileExists(const std::string& path) {
 inline std::string FirstExistingFont(const char* envOverride,
                                      std::initializer_list<const char*> candidates) {
     if (envOverride != nullptr) {
-        if (const char* env = std::getenv(envOverride)) {
-            if (FontFileExists(env)) return env;
-        }
+        const std::string env = EnvironmentValue(envOverride);
+        if (FontFileExists(env)) return env;
     }
     for (const char* p : candidates) {
         if (FontFileExists(p)) return p;
