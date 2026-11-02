@@ -17,6 +17,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <limits>
 #include <memory>
 #include <stdexcept>
 #include <vector>
@@ -208,6 +209,27 @@ int main() {
 
         d.SetProbabilities({0.0, 0.0, 1.0, 0.0, 0.0});
         Check(Near(d.Probability(2), 1.0), "qudit: SetProbabilities");
+
+        bool invalidProbabilityThrew = false;
+        try { d.SetProbabilities({1.0, -0.1, 0.0, 0.0, 0.0}); }
+        catch (const std::invalid_argument&) { invalidProbabilityThrew = true; }
+        Check(invalidProbabilityThrew,
+              "qudit: negative probability rejected");
+        invalidProbabilityThrew = false;
+        try {
+            d.SetProbabilities({1.0, std::numeric_limits<double>::quiet_NaN(),
+                                0.0, 0.0, 0.0});
+        } catch (const std::invalid_argument&) {
+            invalidProbabilityThrew = true;
+        }
+        Check(invalidProbabilityThrew,
+              "qudit: non-finite probability rejected");
+        Check(Near(d.Probability(2), 1.0),
+              "qudit: rejected input leaves state unchanged");
+
+        d.SetProbabilities({0.0, 0.0, 0.0, 0.0, 0.0});
+        Check(d.IsNormalized() && Near(d.Probability(0), 0.2),
+              "qudit: all-zero distribution remains uniform");
 
         Check(d.SetPhases({0.0, 0.5, 1.0, 1.5, 2.0}) &&
               !d.SetPhases({1.0, 2.0}),
