@@ -32,7 +32,12 @@ void Qudit::SetProbabilities(const std::vector<double>& probs) {
         throw std::invalid_argument("Qudit: 機率向量長度不符");
     }
     double total = 0.0;
-    for (double p : probs) total += p;
+    for (double p : probs) {
+        if (!std::isfinite(p) || p < 0.0) {
+            throw std::invalid_argument("Qudit: 機率必須是有限非負值");
+        }
+        total += p;
+    }
     if (total <= 0.0) {
         SetUniform();
         return;
